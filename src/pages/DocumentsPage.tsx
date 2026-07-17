@@ -1,5 +1,4 @@
-
-import { useState, useRef } from "react";   
+import { useState, useRef } from "react";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { InfoBanner } from "../app/components/common/InfoBanner";
 import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";

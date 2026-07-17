@@ -6,7 +6,7 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuLabel,
   DropdownMenuItem, DropdownMenuSeparator,
 } from "../ui/dropdown-menu";
-
+import getme from "../api/user"
 const NOTIF_STYLE: Record<string, string> = {
   warning: "text-amber-500", error: "text-red-500", success: "text-green-500", neutral: "text-slate-400",
 };
@@ -14,9 +14,15 @@ const NOTIF_DOT: Record<string, string> = {
   warning: "bg-amber-400", error: "bg-red-400", success: "bg-green-400", neutral: "bg-slate-300",
 };
 const attentionCount = UPLOAD_NOTIFICATIONS.filter(n => n.variant === "warning" || n.variant === "error").length;
-
-export function TopBar({ role, onNavigate, onLogout }: {
-  role: Role; onNavigate: (p: Page) => void; onLogout: () => void;
+type UserData = {
+    id: number;
+    name: string;
+    email: string;
+    role: string;
+    created_at: string;
+};
+export function TopBar({ role, user, onNavigate, onLogout }: {
+  role: Role; onNavigate: (p: Page) => void; onLogout: () => void; user: UserData | null;
 }) {
   const cfg = ROLES[role];
   return (
@@ -33,7 +39,7 @@ export function TopBar({ role, onNavigate, onLogout }: {
                 <User size={13} className="text-white" />
               </div>
               <div className="text-left leading-tight hidden sm:block">
-                <p className="text-xs font-medium text-slate-900">Иван Иванов</p>
+                <p className="text-xs font-medium text-slate-900">{user?.name ?? "Загрузка..."}</p>
                 <p className="text-[11px] text-slate-400">{cfg.full}</p>
               </div>
               <ChevronDown size={14} className="text-slate-400 flex-shrink-0" />
@@ -41,8 +47,8 @@ export function TopBar({ role, onNavigate, onLogout }: {
           </DropdownMenuTrigger>
           <DropdownMenuContent side="bottom" align="end" sideOffset={8} className="w-[196px]">
             <DropdownMenuLabel className="flex flex-col gap-0.5">
-              <span className="text-sm font-medium text-slate-900">Иван Иванов</span>
-              <span className="text-xs font-normal text-slate-400">ivan.ivanov@kerneu.kz</span>
+              <span className="text-sm font-medium text-slate-900">{user?.name ?? "Загрузка..."}</span>
+              <span className="text-xs font-normal text-slate-400">{user?.email ?? "Загрузка..."}</span>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onLogout} variant="destructive">

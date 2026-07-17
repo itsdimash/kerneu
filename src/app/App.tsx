@@ -43,25 +43,79 @@ import { TopBar } from "./components/layout/TopBar";
 import { AppShell } from "./components/layout/AppShell";
 import { LoginPage } from "../pages/LoginPage";
 import type { Receipt as ReceiptType } from "../types";
-
+import { getMe, logout } from "../api/user";
 // ─── Root ──────────────────────────────────────────────────
+type UserData = {
+    id: number;
+    name: string;
+    email: string;
+    role: string;
+    created_at: string;
+};
+
 export default function App() {
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [role, setRole] = useState<Role>("pm");
-  const [page, setPage] = useState<Page>("dashboard");
-  const [projectState, setProjectState] = useState<ProjectState>({
-    kpSent: false, kpApproved: false, contractGenerated: false, contractSigned: false,
-  });
-  const [receipts, setReceipts] = useState<ReceiptType[]>([]);
+    const [loggedIn, setLoggedIn] = useState(false);
+    const [role, setRole] = useState<Role>("pm");
+    const [page, setPage] = useState<Page>("dashboard");
+    const [projectState, setProjectState] = useState<ProjectState>({
+        kpSent: false,
+        kpApproved: false,
+        contractGenerated: false,
+        contractSigned: false,
+    });
 
-  if (!loggedIn) {
-    return <LoginPage onLogin={r => { setRole(r); setLoggedIn(true); }} />;
-  }
+    const [receipts, setReceipts] = useState<ReceiptType[]>([]);
 
-  return (
-    <AppShell role={role} page={page} onPage={setPage}
-      onLogout={() => { setLoggedIn(false); setPage("dashboard"); }}
-      projectState={projectState} setProjectState={setProjectState}
-      receipts={receipts} setReceipts={setReceipts} />
-  );
+    const [user, setUser] = useState<UserData | null>(null);
+        useEffect(() => {
+        const loadUser = async () => {
+            try {
+                const me = await getMe();
+                setUser(me);
+            } catch (err) {
+                console.error(err);
+            }
+        };
+
+        if (loggedIn) {
+            loadUser();
+        }
+    }, [loggedIn]);
+
+    const handleLogout = async () => {
+        try {
+            await logout();
+
+            setUser(null);
+            setLoggedIn(false);
+            setPage("dashboard");
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
+    if (!loggedIn) {
+        return (
+            <LoginPage
+                onLogin={(r) => {
+                    setRole(r);
+                    setLoggedIn(true);
+                }}
+            />
+        );
+    }
+
+    return (
+        <AppShell
+            role={role}
+            page={page}
+            onPage={setPage}
+            user={user}
+            onLogout={handleLogout}
+            projectState={projectState}
+            setProjectState={setProjectState}
+            receipts={receipts}
+            setReceipts={setReceipts}
+        />
+    );
 }

@@ -1,5 +1,5 @@
-import React from "react";
-import type { Role, Page, Receipt } from "../types";
+import React, { useState, useEffect } from "react";
+import type { Role, Page, Receipt, ContractStatus } from "../types";
 import { StatCard } from "../app/components/common/StatCard";
 import { SectionHeader } from "../app/components/common/SectionHeader";
 import { PageWrap } from "../app/components/common/PageWrap";
@@ -8,20 +8,416 @@ import { Chip } from "../app/components/common/Chip";
 import { ReceiptStatusBadge } from "../app/components/common/ReceiptStatusBadge";
 import { fmt, daysFromNow, deadlineBadge } from "../lib/format";
 import { PROJECTS } from "../data/projects";
-import { Plus, FolderOpen, Send, TrendingUp, AlertTriangle, Inbox, BarChart2, Clock, Check, X, CheckCircle2, XCircle, ChevronRight, MoreHorizontal } from "lucide-react";
-import type { ContractStatus } from "../types";
-import { Archive, Package, Truck, DollarSign } from "lucide-react";
 import { STOCK_INIT } from "../data/stock";
 import { INVOICES_INIT } from "../data/invoices";
+import { 
+  Plus, FolderOpen, Send, TrendingUp, AlertTriangle, Inbox, BarChart2, 
+  Clock, Check, X, CheckCircle2, XCircle, ChevronRight, MoreHorizontal,
+  Archive, Package, Truck, DollarSign, UploadCloud, FileText, Trash2
+} from "lucide-react";
+
+// Тип клиента, который приходит с бэкенда: только id и name используются для отображения
+type ClientDTO = {
+  id: number;
+  client_name: string;
+  [key: string]: unknown; // бэкенд может присылать и другие поля — они нам не нужны
+};
 
 export function DashboardPM({ onNavigate }: { onNavigate: (p: Page) => void }) {
+  // Стейты для модального окна
+  const [isKpModalOpen, setIsKpModalOpen] = useState(false);
+  const [isNewClient, setIsNewClient] = useState(false);
+  const [selectedClientId, setSelectedClientId] = useState("");
+  const [newClientForm, setNewClientForm] = useState({ name: "", email: "", phone: "" });
+
+  // Клиенты приходят с бэкенда: {id, name, ...}. Отображаем только name, id храним для сохранения.
+  const [clients, setClients] = useState<ClientDTO[]>([]);
+  const [clientsLoading, setClientsLoading] = useState(false);
+  const [clientsError, setClientsError] = useState<string | null>(null);
+
+  // Файл КП, прикреплённый пользователем
+  const [kpFile, setKpFile] = useState<File | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [projects, setProjects] = useState([]);
+  useEffect(() => {
+    loadProjects();
+}, []);
+  useEffect(() => {
+    if (!isKpModalOpen) return;
+
+    let cancelled = false;
+    setClientsLoading(true);
+    setClientsError(null);
+
+    fetch("http://localhost:8000/api/v1/clients/clients/select")
+      .then((res) => {
+        if (!res.ok) throw new Error(`Ошибка загрузки клиентов: ${res.status}`);
+        return res.json();
+      })
+      .then((data: ClientDTO[]) => {
+        if (!cancelled) setClients(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setClientsError(err.message ?? "Не удалось загрузить клиентов");
+      })
+      .finally(() => {
+        if (!cancelled) setClientsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isKpModalOpen]);
+const loadProjects = async () => {
+    try {
+        const response = await fetch(
+            "http://localhost:8000/api/v1/projects/",
+            {
+                credentials: "include",
+            }
+        );
+
+        const data = await response.json();
+
+        setProjects(data);
+
+    } catch (e) {
+        console.error(e);
+    }
+};
+  const selectedClientData = clients.find((c) => c.id === Number(selectedClientId));
   const contractIcon = (s: ContractStatus) => s === "unsigned" ? "🔒" : s === "pending" ? "⏳" : "🔓";
 
+  // Клиент "выбран", когда либо указан существующий клиент, либо введено имя нового
+  const isClientChosen = isNewClient ? newClientForm.name.trim().length > 0 : !!selectedClientId;
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] ?? null;
+    setKpFile(f);
+  };
+
+  const resetModal = () => {
+    setIsKpModalOpen(false);
+    setIsNewClient(false);
+    setSelectedClientId("");
+    setNewClientForm({ name: "", email: "", phone: "" });
+    setKpFile(null);
+  };
+
+ const handleSave = async () => {
+    try {
+        setIsSaving(true);
+
+        if (!kpFile) {
+            alert("Выберите файл КП");
+            return;
+        }
+
+        const uploadedFileUrl = `/uploads/${kpFile.name}`;
+
+        const payload = isNewClient
+            ? {
+                  is_new_client: true,
+                  new_client_name: newClientForm.name,
+                  new_client_phone: newClientForm.phone,
+                  new_client_email: newClientForm.email,
+
+                  invoice_amount: 0,
+                  invoice_status_id: 1,
+                  file_url: uploadedFileUrl,
+
+                  project_status_id: 1,
+                  planned_margin: 0,
+                  deadline: "2026-08-01",
+              }
+            : {
+                  is_new_client: false,
+                  client_id: Number(selectedClientId),
+
+                  invoice_amount: 0,
+                  invoice_status_id: 1,
+                  file_url: uploadedFileUrl,
+
+                  project_status_id: 1,
+                  pm_id: 1,
+                  planned_margin: 0,
+                  deadline: "2026-08-01",
+              };
+
+        // Создание проекта
+        const response = await fetch(
+            "http://localhost:8000/api/v1/projects/create-base",
+            {
+                method: "POST",
+                credentials: "include",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(await response.text());
+        }
+
+        const data = await response.json();
+        const projectId = data.project_id;
+
+        // Запуск парсера
+        // Запуск парсера
+const formData = new FormData();
+formData.append("file", kpFile);
+
+const parserResponse = await fetch(
+    `http://localhost:8000/api/v1/parser/projects/${projectId}/parse`,
+    {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+    }
+);
+
+if (!parserResponse.ok) {
+    throw new Error("Ошибка парсинга");
+}
+
+// Получаем Excel от парсера
+const parserBlob = await parserResponse.blob();
+const url = URL.createObjectURL(parserBlob);
+const a = document.createElement("a");
+a.href = url;
+a.download = "parser.xlsx";
+a.click();
+// Создаем File для ML
+const parserFile = new File(
+    [parserBlob],
+    "quotation.xlsx",
+    {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }
+);
+console.log("ML file name:", parserFile.name);
+console.log("ML file type:", parserFile.type);
+console.log("ML file size:", parserFile.size);
+// Отправляем Excel в ML
+const mlForm = new FormData();
+mlForm.append("file", parserFile);
+
+const mlResponse = await fetch(
+    "http://localhost:8000/api/v1/match-file",
+    {
+        method: "POST",
+        credentials: "include",
+        body: mlForm,
+    }
+);
+
+if (!mlResponse.ok) {
+    console.log(await mlResponse.json());
+    throw new Error("Ошибка ML");
+}
+
+// Получаем итоговый Excel после ML
+const finalBlob = await mlResponse.blob();
+
+const url1 = window.URL.createObjectURL(finalBlob);
+
+const a1 = document.createElement("a");
+a.href = url;
+a.download = "Коммерческое_предложение.xlsx";
+a.click();
+
+window.URL.revokeObjectURL(url);
+        // Обновляем список проектов
+        await loadProjects();
+
+        console.log("Проект создан:", projectId);
+
+        alert("Проект успешно создан!");
+
+        resetModal();
+
+    } catch (error) {
+        console.error(error);
+        alert("Ошибка создания проекта");
+    } finally {
+        setIsSaving(false);
+    }
+};
   return (
-    <PageWrap title="Дашборд PM" subtitle="Управление проектами и коммерческими предложениями"
-      actions={<button className="flex items-center gap-1.5 px-4 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#1d4ed8] transition-colors"><Plus size={14} /> Новое КП</button>}>
+    <PageWrap 
+      title="Дашборд PM" 
+      subtitle="Управление проектами и коммерческими предложениями"
+      actions={
+        <button 
+          onClick={() => setIsKpModalOpen(true)}
+          className="flex items-center gap-1.5 px-4 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#1d4ed8] transition-colors"
+        >
+          <Plus size={14} /> Новый проект 
+        </button>
+      }
+    >
+      {/* ── Модальное окно «Новое КП» ── */}
+      {isKpModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden max-h-[90vh] flex flex-col">
+            
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0] bg-slate-50 flex-shrink-0">
+              <h3 className="font-semibold text-slate-800">Создание нового КП</h3>
+              <button onClick={resetModal} className="text-slate-400 hover:text-slate-600 transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-5 overflow-y-auto">
+              <label className="flex items-center gap-2.5 cursor-pointer w-max">
+                <input
+                  type="checkbox"
+                  checked={isNewClient}
+                  onChange={(e) => setIsNewClient(e.target.checked)}
+                  className="w-4 h-4 text-[#2563EB] rounded border-slate-300 focus:ring-[#2563EB]"
+                />
+                <span className="text-sm font-medium text-slate-700">Новый клиент</span>
+              </label>
+
+              <div className="h-px w-full bg-slate-100" />
+
+              {isNewClient ? (
+                <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1.5">ФИО / Название компании</label>
+                    <input
+                      type="text"
+                      value={newClientForm.name}
+                      onChange={(e) => setNewClientForm({...newClientForm, name: e.target.value})}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
+                      placeholder="Например, ООО «Инновации»"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1.5">Email</label>
+                    <input
+                      type="email"
+                      value={newClientForm.email}
+                      onChange={(e) => setNewClientForm({...newClientForm, email: e.target.value})}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
+                      placeholder="client@example.com"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1.5">Номер телефона</label>
+                    <input
+                      type="tel"
+                      value={newClientForm.phone}
+                      onChange={(e) => setNewClientForm({...newClientForm, phone: e.target.value})}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
+                      placeholder="+7 (___) ___-__-__"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1.5">Выберите клиента</label>
+                    <select
+                      value={selectedClientId}
+                      onChange={(e) => setSelectedClientId(e.target.value)}
+                      disabled={clientsLoading || !!clientsError}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] bg-white disabled:bg-slate-50 disabled:text-slate-400"
+                    >
+                      <option value="" disabled>
+                        {clientsLoading ? "Загрузка клиентов..." : "-- Выберите из списка --"}
+                      </option>
+                      {/* С бэкенда приходят id и name — отображаем только name, id используем как value */}
+                      {clients.map((c) => (
+                        <option key={c.id} value={c.id}>{c.client_name}</option>
+                      ))}
+                    </select>
+                    {clientsError && (
+                      <p className="text-xs text-red-600 mt-1.5">{clientsError}</p>
+                    )}
+                  </div>
+
+                  {selectedClientData && (
+                    <div className="bg-slate-50/80 p-4 rounded-lg border border-[#E2E8F0] space-y-2 mt-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-slate-500">Клиент:</span>
+                        <span className="text-sm font-medium text-slate-900">{selectedClientData.client_name}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Загрузка файла КП: показывается только после выбора клиента ── */}
+              {isClientChosen && (
+              <>
+              <div className="h-px w-full bg-slate-100" />
+
+              <div className="animate-in fade-in slide-in-from-bottom-2 duration-200">
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Файл КП</label>
+                {!kpFile ? (
+                  <label
+                    htmlFor="kp-file-upload"
+                    className="flex flex-col items-center justify-center gap-1.5 w-full py-6 border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-[#2563EB] hover:bg-blue-50/30 transition-colors"
+                  >
+                    <UploadCloud size={20} className="text-slate-400" />
+                    <span className="text-sm text-slate-600">Нажмите, чтобы выбрать файл</span>
+                    <span className="text-xs text-slate-400">PDF, DOCX, XLSX до 10 МБ</span>
+                    <input
+                      id="kp-file-upload"
+                      type="file"
+                      accept=".pdf,.doc,.docx,.xls,.xlsx"
+                      onChange={handleFileChange}
+                      className="hidden"
+                    />
+                  </label>
+                ) : (
+                  <div className="flex items-center justify-between gap-3 px-3 py-2.5 border border-[#E2E8F0] rounded-lg bg-slate-50/80">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileText size={16} className="text-[#2563EB] flex-shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-800 truncate">{kpFile.name}</p>
+                        <p className="text-xs text-slate-400">{(kpFile.size / 1024).toFixed(0)} КБ</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setKpFile(null)}
+                      className="text-slate-400 hover:text-red-500 transition-colors flex-shrink-0"
+                      title="Удалить файл"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                )}
+              </div>
+              </>
+              )}
+            </div>
+
+            <div className="px-5 py-4 border-t border-[#E2E8F0] bg-slate-50 flex justify-end gap-3 flex-shrink-0">
+              <button
+                onClick={resetModal}
+                className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-[#E2E8F0] rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                Назад
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={!isClientChosen}
+                className="px-4 py-2 text-sm font-medium text-white bg-[#2563EB] rounded-lg hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Сохранить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Дашборд PM контент ── */}
       <div className="grid grid-cols-4 gap-4 mb-6">
-        <StatCard label="Активных проектов" value="12" sub="3 близко к дедлайну" delta="+2 за месяц" icon={FolderOpen} />
+        <StatCard label="Активных проектов" value="4" sub="3 близко к дедлайну" delta="+2 за месяц" icon={FolderOpen} />
         <StatCard label="КП на отправке" value="4" sub="Ожидают согласования" icon={Send} iconColor="text-amber-500" iconBg="bg-amber-50" />
         <StatCard label="Выручка (план)" value="54.5 млн ₸" sub="Июль 2024" delta="+18%" icon={TrendingUp} iconColor="text-green-500" iconBg="bg-green-50" />
         <StatCard label="Просрочено задач" value="2" sub="Требуют внимания" icon={AlertTriangle} iconColor="text-red-500" iconBg="bg-red-50" />
@@ -31,87 +427,129 @@ export function DashboardPM({ onNavigate }: { onNavigate: (p: Page) => void }) {
         <button className="text-xs text-[#2563EB] hover:underline flex items-center gap-1">Все проекты <ChevronRight size={12} /></button>
       } />
       <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden mb-6">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-              {["Проект", "Клиент", "Статус", "Этап", "Бюджет", "Дедлайн", "Ответственный", "Менеджер", ""].map(h => (
-                <th key={h} className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#E2E8F0]">
-            {PROJECTS.map(p => {
-              const days = daysFromNow(p.deadline);
-              return (
-                <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <span title={p.contractStatus === "unsigned" ? "Не подписан" : p.contractStatus === "pending" ? "Ожидает подписи" : "Подписан"}>
-                        {contractIcon(p.contractStatus)}
-                      </span>
-                      <button onClick={() => onNavigate("project")} className="text-sm font-medium text-[#2563EB] hover:underline text-left">
-                        {p.name}
-                      </button>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-slate-600">{p.client}</td>
-                  <td className="px-4 py-3"><Chip status={p.status} /></td>
-                  <td className="px-4 py-3"><Chip status={p.stage} /></td>
-                  <td className="px-4 py-3 text-sm text-slate-700 font-mono text-right">{fmt(p.budget)}</td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded ${deadlineBadge(p.deadline)}`}>
-                      {p.deadline}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-xs font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded">{p.responsible}</span>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-slate-600">{p.manager}</td>
-                  <td className="px-4 py-3">
-                    <button className="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-100 text-slate-400"><MoreHorizontal size={14} /></button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+          <table className="w-full border-collapse">
+              <thead>
+              <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
+                  {["Проект", "Клиент", "Статус", "Этап", "Бюджет", "Дедлайн", "Ответственный", "Менеджер", ""].map(h => (
+                      <th key={h}
+                          className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left">{h}</th>
+                  ))}
+              </tr>
+              </thead>
+              <tbody className="divide-y divide-[#E2E8F0]">
+              {projects.map((p: any) => {
+                  return (
+                      <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
+
+                          {/* Проект */}
+                          <td className="px-4 py-3">
+                              <div className="flex items-center gap-1.5">
+
+                                  {/* Пока заглушка, пока нет contractStatus */}
+                                  {contractIcon("signed")}
+
+                                  <button
+                                      onClick={() => onNavigate("project")}
+                                      className="text-sm font-medium text-[#2563EB] hover:underline text-left"
+                                  >
+                                      {p.name ?? `Проект №${p.id}`}
+                                  </button>
+
+                              </div>
+                          </td>
+
+                          {/* Клиент */}
+                          <td className="px-4 py-3 text-sm text-slate-600">
+                              {p.client?.client_name}
+                          </td>
+
+                          {/* Статус */}
+                          <td className="px-4 py-3">
+                              <Chip status={p.status?.status_name}/>
+                          </td>
+
+                          {/* Этап */}
+                          <td className="px-4 py-3">
+                              —
+                          </td>
+
+                          {/* Бюджет */}
+                          <td className="px-4 py-3 text-sm text-slate-700 font-mono text-right">
+                              {fmt(Number(p.invoice?.amount ?? 0))}
+                          </td>
+
+                          {/* Дедлайн */}
+                          <td className="px-4 py-3">
+          <span
+              className={`text-xs font-semibold px-2 py-0.5 rounded ${deadlineBadge(
+                  p.deadline
+              )}`}
+          >
+            {new Date(p.deadline).toLocaleDateString("ru-RU")}
+          </span>
+                          </td>
+
+                          {/* Ответственный */}
+                          <td className="px-4 py-3">
+          <span className="text-xs font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+            {p.pm?.name}
+          </span>
+                          </td>
+
+                          {/* Менеджер */}
+                          <td className="px-4 py-3 text-sm text-slate-600">
+                              {p.pm?.name}
+                          </td>
+
+                          <td className="px-4 py-3">
+                              <button
+                                  className="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-100 text-slate-400">
+                                  <MoreHorizontal size={14}/>
+                              </button>
+                          </td>
+
+                      </tr>
+                  );
+              })}
+              </tbody>
+          </table>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
-          <h3 className="text-sm font-semibold text-slate-900 mb-4">Ближайшие дедлайны</h3>
-          <div className="space-y-3">
-            {[
-              { name: "Реконструкция склада Nord",      deadline: "30.07.2024" },
-              { name: "Офисный комплекс «Башня»",       deadline: "15.08.2024" },
-              { name: "Торговый центр «Меридиан»",      deadline: "01.09.2024" },
-            ].map(item => {
-              const d = daysFromNow(item.deadline);
-              const color = d <= 7 ? "text-red-600 font-bold" : d <= 14 ? "text-orange-600 font-semibold" : "text-green-600 font-medium";
-              return (
-                <div key={item.name} className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-slate-700">{item.name}</p>
-                    <p className="text-xs text-slate-400">{item.deadline}</p>
-                  </div>
-                  <span className={`text-xs ${color}`}>{d > 0 ? `${d}д` : "Просрочен"}</span>
+        <div className="grid grid-cols-2 gap-4">
+            <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
+                <h3 className="text-sm font-semibold text-slate-900 mb-4">Ближайшие дедлайны</h3>
+                <div className="space-y-3">
+                    {[
+                        {name: "Реконструкция склада Nord", deadline: "30.07.2024"},
+                        {name: "Офисный комплекс «Башня»", deadline: "15.08.2024"},
+                        {name: "Торговый центр «Меридиан»", deadline: "01.09.2024"},
+                    ].map(item => {
+                        const d = daysFromNow(item.deadline);
+                        const color = d <= 7 ? "text-red-600 font-bold" : d <= 14 ? "text-orange-600 font-semibold" : "text-green-600 font-medium";
+                        return (
+                            <div key={item.name} className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-sm text-slate-700">{item.name}</p>
+                                    <p className="text-xs text-slate-400">{item.deadline}</p>
+                                </div>
+                                <span className={`text-xs ${color}`}>{d > 0 ? `${d}д` : "Просрочен"}</span>
+                            </div>
+                        );
+                    })}
                 </div>
-              );
-            })}
-          </div>
-        </div>
-        <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
-          <h3 className="text-sm font-semibold text-slate-900 mb-4">Активность</h3>
-          <div className="space-y-3">
-            {[
-              { text: "КП отправлено клиенту ООО «СтройТех»",      time: "2 дня назад" },
-              { text: "Новый счёт на согласование СФ-2024-0146",    time: "4 дня назад" },
-              { text: "Договор подписан: склад Nord",               time: "Вчера" },
-              { text: "Отгрузка ОТГ-0018 подтверждена",            time: "1 день назад" },
-            ].map((a, i) => (
-              <div key={i} className="flex items-start gap-2.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-[#2563EB] mt-2 flex-shrink-0" />
-                <div><p className="text-sm text-slate-700">{a.text}</p><p className="text-xs text-slate-400">{a.time}</p></div>
+            </div>
+            <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
+                <h3 className="text-sm font-semibold text-slate-900 mb-4">Активность</h3>
+                <div className="space-y-3">
+                    {[
+                        {text: "КП отправлено клиенту ООО «СтройТех»", time: "2 дня назад"},
+                        {text: "Новый счёт на согласование СФ-2024-0146", time: "4 дня назад"},
+                        {text: "Договор подписан: склад Nord", time: "Вчера"},
+                        {text: "Отгрузка ОТГ-0018 подтверждена", time: "1 день назад"},
+                    ].map((a, i) => (
+                        <div key={i} className="flex items-start gap-2.5">
+                            <div className="w-1.5 h-1.5 rounded-full bg-[#2563EB] mt-2 flex-shrink-0"/>
+                            <div><p className="text-sm text-slate-700">{a.text}</p><p className="text-xs text-slate-400">{a.time}</p></div>
               </div>
             ))}
           </div>

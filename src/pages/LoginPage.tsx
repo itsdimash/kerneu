@@ -5,6 +5,8 @@ import designImg from "../assets/design-illustration.jpg";
 import { ROLES, ROLE_EMAILS } from "../data/roles";
 import type { Role } from "../types";
 import { useCallback, useEffect } from "react";
+import {api} from "../api/api";
+import axios from "axios";
 export function LoginPage({ onLogin }: { onLogin: (r: Role) => void }) {
   const [role, setRole] = useState<Role>("pm");
   const [email, setEmail] = useState(ROLE_EMAILS["pm"]);
@@ -24,12 +26,38 @@ export function LoginPage({ onLogin }: { onLogin: (r: Role) => void }) {
     return () => { window.removeEventListener("keydown", handleKeyEvent); window.removeEventListener("keyup", handleKeyEvent); };
   }, [handleKeyEvent]);
 
-  const handleSignIn = () => {
+const handleSignIn = async () => {
     setAuthError(false);
-    if (!password) { setAuthError(true); return; }
+
+    if (!password) {
+        setAuthError(true);
+        return;
+    }
+
     setLoading(true);
-    setTimeout(() => { setLoading(false); onLogin(role); }, 1400);
-  };
+
+    try {
+        const response = await api.post("/auth/login", {
+            email,
+            password,
+        });
+        const { user } = response.data;
+        console.log("LOGIN RESPONSE:", response.data);
+
+        console.log("Calling onLogin...");
+        onLogin((user.role === "admin" ? "pm" : user.role) as Role);
+        console.log("onLogin called");
+        console.log(user);
+
+        onLogin((user.role === "admin" ? "pm" : user.role) as Role);
+
+    } catch (error) {
+        console.error(error);
+        setAuthError(true);
+    } finally {
+        setLoading(false);
+    }
+};
 
   const inputBase = "w-full px-3.5 py-2.5 text-sm border rounded-lg bg-white text-slate-900 placeholder-slate-400 transition-all focus:outline-none focus:ring-2";
   const inputNormal = `${inputBase} border-[#E2E8F0] focus:ring-[#2563EB]/20 focus:border-[#2563EB]`;
@@ -54,17 +82,6 @@ export function LoginPage({ onLogin }: { onLogin: (r: Role) => void }) {
           <h1 className="text-[22px] font-semibold text-slate-900 mb-1">Sign In</h1>
           <p className="text-sm text-slate-500 mb-7">Access your Kerneu Group workspace</p>
 
-          <div className="mb-6">
-            <div className="grid grid-cols-2 gap-2">
-              {(Object.entries(ROLES) as [Role, typeof ROLES[Role]][]).map(([key, cfg]) => (
-                <button key={key} onClick={() => handleRoleSelect(key)} aria-pressed={role === key}
-                  className={`text-left px-3 py-2.5 rounded-lg border transition-all text-sm focus:outline-none focus:ring-2 focus:ring-[#2563EB]/30 ${role === key ? "border-[#2563EB] bg-[#EFF6FF] text-blue-900" : "border-[#E2E8F0] bg-white text-slate-700 hover:border-slate-300"}`}>
-                  <div className="flex items-center gap-2"><div className={`w-2 h-2 rounded-full ${cfg.dot}`} /><span className="font-medium">{cfg.label}</span></div>
-                  <div className={`text-xs mt-0.5 ml-4 ${role === key ? "text-blue-500" : "text-slate-400"}`}>{cfg.full}</div>
-                </button>
-              ))}
-            </div>
-          </div>
 
           {authError && (
             <div className="flex items-start gap-2.5 px-3.5 py-3 mb-5 bg-red-50 border border-red-200 rounded-lg" role="alert">
