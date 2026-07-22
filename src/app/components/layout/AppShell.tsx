@@ -20,13 +20,17 @@ type UserData = {
 };
 
 
-export function AppShell({ role, page, onPage, user, onLogout, projectState, setProjectState, receipts, setReceipts }: {
-  role: Role; page: Page; onPage: (p: Page) => void;
+export function AppShell({ role, page, onPage, user, onLogout, projectState, setProjectState,selectedProjectId, setSelectedProjectId, receipts, setReceipts }: {
+  role: Role;
+  page: Page;
+  onPage: (p: Page) => void;
   onLogout: () => void;
   user: UserData | null;
   projectState: ProjectState;
   setProjectState: React.Dispatch<React.SetStateAction<ProjectState>>;
   receipts: Receipt[];
+  selectedProjectId: number | null;
+  setSelectedProjectId: React.Dispatch<React.SetStateAction<number | null>>;
   setReceipts: React.Dispatch<React.SetStateAction<Receipt[]>>;
 }) {
     const [projectItems, setProjectItems] = useState<ProjectItem[]>([]);
@@ -50,7 +54,7 @@ export function AppShell({ role, page, onPage, user, onLogout, projectState, set
           {page === "dashboard" && <DashboardPage role={role} onNavigate={onPage} receipts={receipts} />}
           {page === "project" && (
             <ProjectPage role={role} onNavigate={onPage} projectState={projectState} receipts={receipts}
-                         projectItems={projectItems}
+                         projectItems={projectItems}  onOpenProject={handleFindProject}
               onKpSent={() => setProjectState(ps => ({ ...ps, kpSent: true }))}
               onKpApproved={() => setProjectState(ps => ({ ...ps, kpApproved: true }))} />
           )}

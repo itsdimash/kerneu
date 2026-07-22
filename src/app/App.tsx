@@ -63,6 +63,7 @@ export default function App() {
         contractGenerated: false,
         contractSigned: false,
     });
+    const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
 
     const [receipts, setReceipts] = useState<ReceiptType[]>([]);
 
@@ -113,6 +114,8 @@ export default function App() {
             user={user}
             onLogout={handleLogout}
             projectState={projectState}
+            selectedProjectId={selectedProjectId}
+            setSelectedProjectId={setSelectedProjectId}
             setProjectState={setProjectState}
             receipts={receipts}
             setReceipts={setReceipts}

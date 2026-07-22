@@ -10,7 +10,7 @@ import { fmt, daysFromNow, deadlineBadge } from "../lib/format";
 import { PROJECTS } from "../data/projects";
 import { STOCK_INIT } from "../data/stock";
 import { INVOICES_INIT } from "../data/invoices";
-import { 
+import {
   Plus, FolderOpen, Send, TrendingUp, AlertTriangle, Inbox, BarChart2, 
   Clock, Check, X, CheckCircle2, XCircle, ChevronRight, MoreHorizontal,
   Archive, Package, Truck, DollarSign, UploadCloud, FileText, Trash2
@@ -35,10 +35,11 @@ export function DashboardPM({ onNavigate }: { onNavigate: (p: Page) => void }) {
   const [clientsLoading, setClientsLoading] = useState(false);
   const [clientsError, setClientsError] = useState<string | null>(null);
 
+
   // Файл КП, прикреплённый пользователем
   const [kpFile, setKpFile] = useState<File | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [projects, setProjects] = useState([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   useEffect(() => {
     loadProjects();
 }, []);
@@ -87,7 +88,7 @@ const loadProjects = async () => {
 };
   const selectedClientData = clients.find((c) => c.id === Number(selectedClientId));
   const contractIcon = (s: ContractStatus) => s === "unsigned" ? "🔒" : s === "pending" ? "⏳" : "🔓";
-
+  const [openMenu, setOpenMenu] = useState<number | null>(null);
   // Клиент "выбран", когда либо указан существующий клиент, либо введено имя нового
   const isClientChosen = isNewClient ? newClientForm.name.trim().length > 0 : !!selectedClientId;
 
@@ -184,11 +185,6 @@ if (!parserResponse.ok) {
 
 // Получаем Excel от парсера
 const parserBlob = await parserResponse.blob();
-const url = URL.createObjectURL(parserBlob);
-const a = document.createElement("a");
-a.href = url;
-a.download = "parser.xlsx";
-a.click();
 // Создаем File для ML
 const parserFile = new File(
     [parserBlob],
@@ -197,9 +193,6 @@ const parserFile = new File(
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     }
 );
-console.log("ML file name:", parserFile.name);
-console.log("ML file type:", parserFile.type);
-console.log("ML file size:", parserFile.size);
 // Отправляем Excel в ML
 const mlForm = new FormData();
 mlForm.append("file", parserFile);
@@ -221,14 +214,14 @@ if (!mlResponse.ok) {
 // Получаем итоговый Excel после ML
 const finalBlob = await mlResponse.blob();
 
-const url1 = window.URL.createObjectURL(finalBlob);
+const url = window.URL.createObjectURL(finalBlob);
 
-const a1 = document.createElement("a");
-a.href = url;
-a.download = "Коммерческое_предложение.xlsx";
-a.click();
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "Коммерческое_предложение.xlsx";
+            a.click();
 
-window.URL.revokeObjectURL(url);
+            window.URL.revokeObjectURL(url);
         // Обновляем список проектов
         await loadProjects();
 
@@ -243,6 +236,33 @@ window.URL.revokeObjectURL(url);
         alert("Ошибка создания проекта");
     } finally {
         setIsSaving(false);
+    }
+};
+const handleDelete = async (projectId: number) => {
+    if (!window.confirm("Вы действительно хотите удалить проект?")) {
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            `http://localhost:8000/api/v1/projects/${projectId}`,
+            {
+                method: "DELETE",
+                credentials: "include",
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(`Ошибка ${response.status}`);
+        }
+
+        setOpenMenu(null);
+
+        await loadProjects();
+
+    } catch (error) {
+        console.error(error);
+        alert("Ошибка удаления");
     }
 };
   return (
@@ -426,7 +446,7 @@ window.URL.revokeObjectURL(url);
       <SectionHeader title="Проекты" action={
         <button className="text-xs text-[#2563EB] hover:underline flex items-center gap-1">Все проекты <ChevronRight size={12} /></button>
       } />
-      <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden mb-6">
+      <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-visible mb-6">
           <table className="w-full border-collapse">
               <thead>
               <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
@@ -501,11 +521,41 @@ window.URL.revokeObjectURL(url);
                               {p.pm?.name}
                           </td>
 
-                          <td className="px-4 py-3">
+                          <td className="px-4 py-3 relative">
                               <button
-                                  className="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-100 text-slate-400">
+                                  onClick={() =>
+                                      setOpenMenu(openMenu === p.id ? null : p.id)
+                                  }
+                                  className="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-100 text-slate-400"
+                              >
                                   <MoreHorizontal size={14}/>
                               </button>
+
+                              {openMenu === p.id && (
+                                  <div
+                                      className="absolute right-0 top-full mt-2 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl z-50">
+                                      <button
+                                          onClick={() => {
+                                              setOpenMenu(null);
+                                              // открыть проект
+                                          }}
+                                          className="flex w-full items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-100 transition-colors"
+                                      >
+                                          <FolderOpen size={18} className="text-amber-500"/>
+                                          Открыть проект
+                                      </button>
+
+                                      <div className="h-px bg-slate-100"/>
+
+                                      <button
+                                          onClick={() => handleDelete(p.id)}
+                                          className="flex w-full items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                                      >
+                                          <Trash2 size={19}/>
+                                          Удалить
+                                      </button>
+                                  </div>
+                              )}
                           </td>
 
                       </tr>
@@ -739,7 +789,7 @@ export function DashboardWarehouse({ onNavigate }: { onNavigate: (p: Page) => vo
 }
 
 export function DashboardPage({ role, onNavigate, receipts }: { role: Role; onNavigate: (p: Page) => void; receipts: Receipt[] }) {
-  if (role === "pm")        return <DashboardPM onNavigate={onNavigate} />;
+  if (role === "pm")        return <DashboardPM onNavigate={onNavigate}  />;
   if (role === "director")  return <DashboardDirector onNavigate={onNavigate} receipts={receipts} />;
   if (role === "accountant")return <DashboardAccountant onNavigate={onNavigate} />;
   return <DashboardWarehouse onNavigate={onNavigate} />;
