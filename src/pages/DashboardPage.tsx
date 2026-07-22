@@ -13,7 +13,7 @@ import { INVOICES_INIT } from "../data/invoices";
 import {
   Plus, FolderOpen, Send, TrendingUp, AlertTriangle, Inbox, BarChart2, 
   Clock, Check, X, CheckCircle2, XCircle, ChevronRight, MoreHorizontal,
-  Archive, Package, Truck, DollarSign, UploadCloud, FileText, Trash2
+  Archive, Package, Truck, DollarSign, UploadCloud, FileText, Trash2, Loader2
 } from "lucide-react";
 
 // Тип клиента, который приходит с бэкенда: только id и name используются для отображения
@@ -281,11 +281,24 @@ const handleDelete = async (projectId: number) => {
       {/* ── Модальное окно «Новое КП» ── */}
       {isKpModalOpen && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden max-h-[90vh] flex flex-col">
-            
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden max-h-[90vh] flex flex-col relative">
+
+            {/* ── Оверлей загрузки: парсинг + сопоставление товаров ── */}
+            {isSaving && (
+              <div className="absolute inset-0 z-10 bg-white/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3 rounded-xl px-6 text-center">
+                <Loader2 size={28} className="text-[#2563EB] animate-spin" />
+                <p className="text-sm font-medium text-slate-800">Обработка файла...</p>
+                <p className="text-xs text-slate-500">Парсим документ и сопоставляем товары. Это может занять до пары минут — не закрывайте окно.</p>
+              </div>
+            )}
+
             <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0] bg-slate-50 flex-shrink-0">
               <h3 className="font-semibold text-slate-800">Создание нового КП</h3>
-              <button onClick={resetModal} className="text-slate-400 hover:text-slate-600 transition-colors">
+              <button
+                onClick={resetModal}
+                disabled={isSaving}
+                className="text-slate-400 hover:text-slate-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
                 <X size={18} />
               </button>
             </div>
@@ -419,16 +432,24 @@ const handleDelete = async (projectId: number) => {
             <div className="px-5 py-4 border-t border-[#E2E8F0] bg-slate-50 flex justify-end gap-3 flex-shrink-0">
               <button
                 onClick={resetModal}
-                className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-[#E2E8F0] rounded-lg hover:bg-slate-100 transition-colors"
+                disabled={isSaving}
+                className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-[#E2E8F0] rounded-lg hover:bg-slate-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Назад
               </button>
               <button
                 onClick={handleSave}
-                disabled={!isClientChosen}
-                className="px-4 py-2 text-sm font-medium text-white bg-[#2563EB] rounded-lg hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!isClientChosen || isSaving}
+                className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#2563EB] rounded-lg hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-w-[112px]"
               >
-                Сохранить
+                {isSaving ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    Сохранение...
+                  </>
+                ) : (
+                  "Сохранить"
+                )}
               </button>
             </div>
           </div>
