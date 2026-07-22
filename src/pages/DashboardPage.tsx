@@ -551,7 +551,7 @@ const handleDelete = async (projectId: number) => {
                                           onClick={() => handleDelete(p.id)}
                                           className="flex w-full items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition-colors"
                                       >
-                                          <Trash2 size={18}/>
+                                          <Trash2 size={19}/>
                                           Удалить
                                       </button>
                                   </div>
