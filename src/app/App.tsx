@@ -43,82 +43,56 @@ import { TopBar } from "./components/layout/TopBar";
 import { AppShell } from "./components/layout/AppShell";
 import { LoginPage } from "../pages/LoginPage";
 import type { Receipt as ReceiptType } from "../types";
-import { getMe, logout } from "../api/user";
+
+// ─── LocalStorage keys ─────────────────────────────────────
+const LS_LOGGED_IN = "kerneu_loggedIn";
+const LS_ROLE = "kerneu_role";
+const LS_PAGE = "kerneu_page";
+
 // ─── Root ──────────────────────────────────────────────────
-type UserData = {
-    id: number;
-    name: string;
-    email: string;
-    role: string;
-    created_at: string;
-};
-
 export default function App() {
-    const [loggedIn, setLoggedIn] = useState(false);
-    const [role, setRole] = useState<Role>("pm");
-    const [page, setPage] = useState<Page>("dashboard");
-    const [projectState, setProjectState] = useState<ProjectState>({
-        kpSent: false,
-        kpApproved: false,
-        contractGenerated: false,
-        contractSigned: false,
-    });
-    const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [loggedIn, setLoggedIn] = useState<boolean>(() => {
+    return localStorage.getItem(LS_LOGGED_IN) === "true";
+  });
+  const [role, setRole] = useState<Role>(() => {
+    return (localStorage.getItem(LS_ROLE) as Role) || "pm";
+  });
+  const [page, setPage] = useState<Page>(() => {
+    return (localStorage.getItem(LS_PAGE) as Page) || "dashboard";
+  });
+  const [projectState, setProjectState] = useState<ProjectState>({
+    kpSent: false, kpApproved: false, contractGenerated: false, contractSigned: false,
+  });
+  const [receipts, setReceipts] = useState<ReceiptType[]>([]);
 
-    const [receipts, setReceipts] = useState<ReceiptType[]>([]);
+  // Сохраняем состояние логина при каждом изменении
+  useEffect(() => {
+    localStorage.setItem(LS_LOGGED_IN, String(loggedIn));
+  }, [loggedIn]);
 
-    const [user, setUser] = useState<UserData | null>(null);
-        useEffect(() => {
-        const loadUser = async () => {
-            try {
-                const me = await getMe();
-                setUser(me);
-            } catch (err) {
-                console.error(err);
-            }
-        };
+  // Сохраняем роль при каждом изменении
+  useEffect(() => {
+    localStorage.setItem(LS_ROLE, role);
+  }, [role]);
 
-        if (loggedIn) {
-            loadUser();
-        }
-    }, [loggedIn]);
+  // Сохраняем текущую страницу при каждом изменении
+  useEffect(() => {
+    localStorage.setItem(LS_PAGE, page);
+  }, [page]);
 
-    const handleLogout = async () => {
-        try {
-            await logout();
+  if (!loggedIn) {
+    return <LoginPage onLogin={r => { setRole(r); setLoggedIn(true); }} />;
+  }
 
-            setUser(null);
-            setLoggedIn(false);
-            setPage("dashboard");
-        } catch (err) {
-            console.error(err);
-        }
-    };
-
-    if (!loggedIn) {
-        return (
-            <LoginPage
-                onLogin={(r) => {
-                    setRole(r);
-                    setLoggedIn(true);
-                }}
-            />
-        );
-    }
-
-    return (
-        <AppShell
-            role={role}
-            page={page}
-            onPage={setPage}
-            user={user}
-            onLogout={handleLogout}
-            projectState={projectState}
-            selectedProjectId={selectedProjectId}
-            setSelectedProjectId={setSelectedProjectId}
-            setProjectState={setProjectState}
-            receipts={receipts}
-            setReceipts={setReceipts}
-        />
-    );
+  return (
+    <AppShell role={role} page={page} onPage={setPage}
+      onLogout={() => {
+        setLoggedIn(false);
+        setPage("dashboard");
+        localStorage.removeItem(LS_LOGGED_IN);
+        localStorage.removeItem(LS_PAGE);
+      }}
+      projectState={projectState} setProjectState={setProjectState}
+      receipts={receipts} setReceipts={setReceipts} />
+  );
 }
