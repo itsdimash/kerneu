@@ -53,28 +53,60 @@ type UserData = {
     created_at: string;
 };
 
+// Ключ и хелпер для сохранения состояния приложения в localStorage,
+// чтобы F5 не сбрасывал пользователя на главный экран
+const LS_KEY = "kerneu:app-state";
+
+function loadPersistedState() {
+    try {
+        const raw = localStorage.getItem(LS_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch (err) {
+        console.error("Не удалось прочитать сохранённое состояние:", err);
+        return null;
+    }
+}
+
+const persisted = loadPersistedState();
+
 export default function App() {
-    const [loggedIn, setLoggedIn] = useState(false);
-    const [role, setRole] = useState<Role>("pm");
-    const [page, setPage] = useState<Page>("dashboard");
-    const [projectState, setProjectState] = useState<ProjectState>({
+    const [loggedIn, setLoggedIn] = useState(persisted?.loggedIn ?? false);
+    const [role, setRole] = useState<Role>(persisted?.role ?? "pm");
+    const [page, setPage] = useState<Page>(persisted?.page ?? "dashboard");
+    const [projectState, setProjectState] = useState<ProjectState>(persisted?.projectState ?? {
         kpSent: false,
         kpApproved: false,
         contractGenerated: false,
         contractSigned: false,
     });
-    const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+    const [selectedProjectId, setSelectedProjectId] = useState<number | null>(persisted?.selectedProjectId ?? null);
 
     const [receipts, setReceipts] = useState<ReceiptType[]>([]);
 
     const [user, setUser] = useState<UserData | null>(null);
-        useEffect(() => {
+
+    // Сохраняем ключевое состояние при каждом изменении —
+    // именно это восстанавливает экран после F5
+    useEffect(() => {
+        localStorage.setItem(LS_KEY, JSON.stringify({
+            loggedIn,
+            role,
+            page,
+            projectState,
+            selectedProjectId,
+        }));
+    }, [loggedIn, role, page, projectState, selectedProjectId]);
+
+    useEffect(() => {
         const loadUser = async () => {
             try {
                 const me = await getMe();
                 setUser(me);
             } catch (err) {
                 console.error(err);
+                // Сессия невалидна/истекла на сервере — выкидываем на логин,
+                // а не оставляем "залогиненное" состояние без данных пользователя
+                setLoggedIn(false);
             }
         };
 
@@ -90,6 +122,7 @@ export default function App() {
             setUser(null);
             setLoggedIn(false);
             setPage("dashboard");
+            localStorage.removeItem(LS_KEY);
         } catch (err) {
             console.error(err);
         }
