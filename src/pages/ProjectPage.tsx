@@ -15,9 +15,15 @@ import type { KPItem } from "../types";
 import { Check, FileCheck, XCircle } from "lucide-react";
 import { ReceiptStatusBadge } from "../app/components/common/ReceiptStatusBadge";
 import type { KPItemStatus } from "../types";
-import { ACTIVE_PROJECT } from "../data/projects";
-import { ProjectItem, fetchProjectDetails, ProjectResponse } from "../api/api";
-
+import {
+  ProjectItem,
+  fetchProjectDetails,
+  ProjectResponse,
+  MlImportDetailResponse,
+  getMlImport,
+  updateMlImportItem,
+  confirmMlImport,
+} from "../api/api";
 export function ProjectPagePM({
     onNavigate,
     projectState,
@@ -31,7 +37,7 @@ export function ProjectPagePM({
     onKpSent: () => void;
     receipts: Receipt[];
     projectItems: ProjectItem[];
-    projectId?: number;
+    projectId: number;
 }) {
   const [fileUploaded, setFileUploaded] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -44,30 +50,52 @@ export function ProjectPagePM({
   // Детали проекта, полученные с бэкенда
   const [project, setProject] = useState<ProjectResponse | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
+  const [mlImport, setMlImport] = useState<MlImportDetailResponse | null>(null);
+  const [mlImportLoading, setMlImportLoading] = useState(false);
+  const [mlImportError, setMlImportError] = useState<string | null>(null);
+  const [updatingItemId, setUpdatingItemId] = useState<number | null>(null);
+  const [confirmingImport, setConfirmingImport] = useState(false);
 
-  const resolvedProjectId = projectId ?? ACTIVE_PROJECT.id;
+  const resolvedProjectId = Number(projectId);
+  const hasValidProjectId =
+  Number.isInteger(resolvedProjectId) &&
+  resolvedProjectId > 0;
+useEffect(() => {
+  if (!hasValidProjectId) {
+    setProject(null);
+    setProjectError(
+      `Некорректный ID проекта: ${String(projectId)}`,
+    );
+    return;
+  }
 
-  useEffect(() => {
-    let cancelled = false;
+  let cancelled = false;
 
-    fetchProjectDetails(resolvedProjectId)
-      .then((data) => {
-        if (!cancelled) {
-          setProject(data);
-          setProjectError(null);
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setProjectError(e instanceof Error ? e.message : "Не удалось загрузить проект");
-        }
-      });
+  setProjectError(null);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [resolvedProjectId]);
+  fetchProjectDetails(resolvedProjectId)
+    .then((data) => {
+      if (!cancelled) {
+        setProject(data);
+        setProjectError(null);
+      }
+    })
+    .catch((error) => {
+      if (!cancelled) {
+        setProject(null);
 
+        setProjectError(
+          error instanceof Error
+            ? error.message
+            : "Не удалось загрузить проект",
+        );
+      }
+    });
+
+  return () => {
+    cancelled = true;
+  };
+}, [resolvedProjectId, hasValidProjectId]);
   useEffect(() => {
     const mapped = projectItems.map(item => ({
         id: item.id,
@@ -140,7 +168,81 @@ export function ProjectPagePM({
   const subtitle = project
       ? `${project.client?.client_name ?? "—"} · ${project.pm?.name ?? "—"} · ${project.deadline ? new Date(project.deadline).toLocaleDateString("ru-RU") : "—"}`
       : "ООО «СтройТех» · А. Петров · 15.08.2024";
+  useEffect(() => {
+  if (!hasValidProjectId) {
+    setMlImport(null);
+    setMlImportLoading(false);
+    return;
+  }
 
+  const storageKey =
+    `project:${resolvedProjectId}:mlImportId`;
+
+  const savedImportId =
+    localStorage.getItem(storageKey);
+
+  console.log("Открыт projectId:", resolvedProjectId);
+  console.log("Найден importId:", savedImportId);
+
+  if (!savedImportId) {
+    setMlImport(null);
+    setMlImportError(null);
+    setMlImportLoading(false);
+    return;
+  }
+
+  const importId = Number(savedImportId);
+
+  if (!Number.isInteger(importId) || importId <= 0) {
+    setMlImport(null);
+    setMlImportLoading(false);
+    setMlImportError(
+      `Некорректный ID ML-импорта: ${savedImportId}`,
+    );
+    return;
+  }
+
+  let cancelled = false;
+
+  setMlImportLoading(true);
+  setMlImportError(null);
+
+  getMlImport(importId)
+    .then((data) => {
+      if (cancelled) return;
+
+      // Дополнительная защита:
+      // импорт должен относиться к открытому проекту
+      if (data.project_id !== resolvedProjectId) {
+        throw new Error(
+          `ML-импорт ${importId} относится к проекту ` +
+          `${data.project_id}, а открыт проект ${resolvedProjectId}`,
+        );
+      }
+
+      setMlImport(data);
+    })
+    .catch((error) => {
+      if (cancelled) return;
+
+      setMlImport(null);
+
+      setMlImportError(
+        error instanceof Error
+          ? error.message
+          : "Не удалось загрузить ML-импорт",
+      );
+    })
+    .finally(() => {
+      if (!cancelled) {
+        setMlImportLoading(false);
+      }
+    });
+
+  return () => {
+    cancelled = true;
+  };
+}, [resolvedProjectId, hasValidProjectId]);
   const sidebarDetails: [string, string][] = project
       ? [
           ["Бюджет", fmt(Number(project.invoice?.amount ?? 0))],
@@ -154,7 +256,94 @@ export function ProjectPagePM({
           ["Бюджет", "12 500 000 ₸"], ["Маржа", "24.5%"], ["Дедлайн", "15.08.2024"],
           ["Менеджер", "А. Петров"], ["Клиент", "ООО «СтройТех»"], ["Договор", "ДГ-2024-0041"],
         ];
+  const handleMlItemUpdate = async (
+    itemId: number,
+    payload: {
+        selected_product_id?: number | null;
+        final_quantity?: number | null;
+        user_comment?: string | null;
+    },
+) => {
+  if (!mlImport) return;
 
+  try {
+    setUpdatingItemId(itemId);
+    setMlImportError(null);
+
+    const updatedItem = await updateMlImportItem(
+      mlImport.id,
+      itemId,
+      payload,
+    );
+
+    setMlImport((current) => {
+      if (!current) return current;
+
+      return {
+        ...current,
+        items: current.items.map((item) =>
+          item.id === updatedItem.id ? updatedItem : item,
+        ),
+      };
+    });
+  } catch (error) {
+    setMlImportError(
+      error instanceof Error
+        ? error.message
+        : "Не удалось изменить строку",
+    );
+  } finally {
+    setUpdatingItemId(null);
+  }
+};
+  const handleConfirmMlImport = async () => {
+  if (!mlImport || mlImport.status !== "draft") return;
+
+  try {
+    setConfirmingImport(true);
+    setMlImportError(null);
+
+    await confirmMlImport(mlImport.id);
+
+    const updatedImport = await getMlImport(mlImport.id);
+    setMlImport(updatedImport);
+  } catch (error) {
+    setMlImportError(
+      error instanceof Error
+        ? error.message
+        : "Не удалось подтвердить ML-импорт",
+    );
+  } finally {
+    setConfirmingImport(false);
+  }
+};
+  if (!hasValidProjectId) {
+  return (
+    <PageWrap
+      title="Проект не выбран"
+      subtitle="Не удалось определить ID проекта"
+    >
+      <div className="bg-red-50 border border-red-200 rounded-lg p-5">
+        <div className="flex items-start gap-3">
+          <AlertTriangle
+            size={18}
+            className="text-red-500 mt-0.5"
+          />
+
+          <div>
+            <p className="text-sm font-semibold text-red-700">
+              Некорректный ID проекта
+            </p>
+
+            <p className="text-sm text-red-600 mt-1">
+              Получено значение: {String(projectId)}
+            </p>
+          </div>
+        </div>
+      </div>
+    </PageWrap>
+  );
+}
   return (
       <PageWrap title={title} subtitle={subtitle}
                 actions={<div className="flex items-center gap-2"><Chip status={project?.status?.status_name ?? "active"}/><Chip status="kp"/></div>}>
@@ -360,60 +549,353 @@ export function ProjectPagePM({
           </div>
         </div>
 
-        {/* Чеки по проекту — only this project's receipts */}
-        <div className="mt-6">
-          <h3 className="text-sm font-semibold text-slate-900 mb-3">Чеки по проекту</h3>
-          {(() => {
-            const mine = receipts.filter(r => r.project === ACTIVE_PROJECT.name);
-            const rejected = mine.filter(r => r.status === "Отклонен").length;
-            return (
-                <>
-                  {rejected > 0 && (
-                      <div
-                          className="flex items-center gap-2 mb-3 px-3.5 py-2.5 bg-red-50 border border-red-200 rounded-lg">
-                        <AlertTriangle size={14} className="text-red-500 flex-shrink-0"/>
-                        <span className="text-sm text-red-700">Бухгалтерия отклонила {rejected} чек(а). Проверьте документы и загрузите корректные версии.</span>
-                      </div>
-                  )}
-                  <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
-                    <table className="w-full border-collapse">
-                      <thead>
-                      <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-                        {["Файл чека", "Дата", "Сумма", "Статус"].map((h, i) => (
-                            <th key={h}
-                                className={`px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide ${i === 2 ? "text-right" : "text-left"}`}>{h}</th>
-                        ))}
-                      </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[#E2E8F0]">
-                      {mine.length === 0 ? (
-                          <tr>
-                            <td colSpan={4} className="px-4 py-8 text-center text-sm text-slate-400">По этому проекту
-                              чеков пока нет
-                            </td>
-                          </tr>
-                      ) : mine.map(r => (
-                          <tr key={r.id}
-                              className={`transition-colors ${r.status === "Отклонен" ? "bg-red-50/40 ring-1 ring-inset ring-red-200" : "hover:bg-slate-50/50"}`}>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-2">
-                                <FileCheck size={14} className="text-slate-400 flex-shrink-0"/>
-                                <span
-                                    className="text-sm text-[#2563EB] hover:underline cursor-pointer">{r.fileName}</span>
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 text-sm text-slate-500 whitespace-nowrap">{r.uploadDate}</td>
-                            <td className="px-4 py-3 text-right text-sm font-mono font-semibold text-slate-800">{fmt(r.amount)}</td>
-                            <td className="px-4 py-3"><ReceiptStatusBadge status={r.status}/></td>
-                          </tr>
-                      ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-            );
-          })()}
-        </div>
+          {/* ML-импорт проекта */}
+            <div className="mt-6">
+                <div className="flex items-center justify-between gap-4 mb-3">
+                    <div>
+                        <h3 className="text-sm font-semibold text-slate-900">
+                            Результаты ML-импорта
+                        </h3>
+
+      {mlImport && (
+        <p className="text-xs text-slate-400 mt-1">
+          Файл: {mlImport.source_file_name}
+        </p>
+      )}
+    </div>
+
+    {mlImport && (
+      <span
+        className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+          mlImport.status === "confirmed"
+            ? "bg-green-50 text-green-700 ring-1 ring-green-200"
+            : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
+        }`}
+      >
+        {mlImport.status === "confirmed"
+          ? "Подтверждено"
+          : "Черновик"}
+      </span>
+    )}
+  </div>
+
+  {mlImportError && (
+    <div className="flex items-start gap-2.5 mb-3 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
+      <AlertTriangle
+        size={15}
+        className="text-red-500 mt-0.5 flex-shrink-0"
+      />
+
+      <div>
+        <p className="text-sm font-medium text-red-700">
+          Ошибка ML-импорта
+        </p>
+
+        <p className="text-xs text-red-600 mt-1">
+          {mlImportError}
+        </p>
+      </div>
+    </div>
+  )}
+
+  {mlImportLoading ? (
+    <div className="bg-white rounded-lg border border-[#E2E8F0] p-10 flex flex-col items-center">
+      <Loader2
+        size={26}
+        className="animate-spin text-[#2563EB] mb-3"
+      />
+
+      <p className="text-sm text-slate-600">
+        Загружаем результаты ML…
+      </p>
+    </div>
+  ) : !mlImport ? (
+    <div className="bg-white rounded-lg border border-[#E2E8F0] px-4 py-10 text-center">
+      <p className="text-sm text-slate-400">
+        Для этого проекта ML-импорт пока не найден
+      </p>
+    </div>
+  ) : (
+    <>
+      <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-x-auto">
+        <table className="w-full min-w-[1200px] border-collapse">
+          <thead>
+            <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
+              {[
+                "Исходный товар",
+                "Кол-во",
+                "Статус ML",
+                "Совпавший товар",
+                "Доступно",
+                "Ед.",
+                "Категория",
+                "Совпадение",
+                "ID товара",
+                "Итоговое кол-во",
+                "Комментарий",
+                "Статус",
+              ].map((heading) => (
+                <th
+                  key={heading}
+                  className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left whitespace-nowrap"
+                >
+                  {heading}
+                </th>
+              ))}
+            </tr>
+          </thead>
+
+          <tbody className="divide-y divide-[#E2E8F0]">
+            {mlImport.items.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={12}
+                  className="px-4 py-10 text-center text-sm text-slate-400"
+                >
+                  В ML-импорте нет товаров
+                </td>
+              </tr>
+            ) : (
+              mlImport.items.map((item) => {
+                const isUpdating = updatingItemId === item.id;
+                const similarity = Number(item.similarity_percent ?? 0);
+
+                return (
+                  <tr
+                    key={item.id}
+                    className={`transition-colors ${
+                      item.is_confirmed
+                        ? "bg-green-50/30"
+                        : item.selected_product_id
+                          ? "hover:bg-slate-50/60"
+                          : "bg-yellow-50/40"
+                    }`}
+                  >
+                    <td className="px-4 py-3">
+                      <p className="text-sm font-medium text-slate-800">
+                        {item.input_product}
+                      </p>
+                    </td>
+
+                    <td className="px-4 py-3 text-sm font-mono text-slate-700">
+                      {item.input_quantity}
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <span className="inline-flex px-2 py-0.5 text-xs font-medium rounded bg-blue-50 text-blue-700 ring-1 ring-blue-200">
+                        {item.ml_status}
+                      </span>
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <p className="text-sm text-slate-700">
+                        {item.matched_product ?? "—"}
+                      </p>
+
+                      {item.matched_external_id && (
+                        <p className="text-xs text-slate-400 mt-1">
+                          ML ID: {item.matched_external_id}
+                        </p>
+                      )}
+                    </td>
+
+                    <td className="px-4 py-3 text-sm font-mono text-slate-700">
+                      {item.available_quantity}
+                    </td>
+
+                    <td className="px-4 py-3 text-xs text-slate-500">
+                      {item.unit ?? "—"}
+                    </td>
+
+                    <td className="px-4 py-3 text-sm text-slate-600">
+                      {item.category ?? "—"}
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded ${
+                          similarity >= 80
+                            ? "bg-green-50 text-green-700"
+                            : similarity >= 50
+                              ? "bg-amber-50 text-amber-700"
+                              : "bg-red-50 text-red-700"
+                        }`}
+                      >
+                        {similarity.toFixed(1)}%
+                      </span>
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <input
+                        type="number"
+                        min={1}
+                        disabled={
+                          mlImport.status !== "draft" || isUpdating
+                        }
+                        value={item.selected_product_id ?? ""}
+                        placeholder="Product ID"
+                        onChange={(event) => {
+                          const rawValue = event.target.value;
+
+                          setMlImport((current) => {
+                            if (!current) return current;
+
+                            return {
+                              ...current,
+                              items: current.items.map((currentItem) =>
+                                currentItem.id === item.id
+                                  ? {
+                                      ...currentItem,
+                                      selected_product_id: rawValue
+                                        ? Number(rawValue)
+                                        : null,
+                                    }
+                                  : currentItem,
+                              ),
+                            };
+                          });
+                        }}
+                        onBlur={(event) => {
+                            const rawValue = event.target.value;
+                            const selectedProductId = rawValue
+                                ? Number(rawValue)
+                                : null;
+
+                            if (
+                                selectedProductId !== null &&
+                                (!Number.isInteger(selectedProductId) || selectedProductId <= 0)
+                            ) {setMlImportError("ID товара должен быть положительным целым числом",);
+                                return;
+                            }
+
+
+                            handleMlItemUpdate(item.id, {
+                                selected_product_id: selectedProductId,});
+                        }}
+                        className="w-28 px-2 py-1.5 text-sm border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
+                      />
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <input
+                        type="number"
+                        min={1}
+                        disabled={
+                          mlImport.status !== "draft" || isUpdating
+                        }
+                        defaultValue={
+                          item.final_quantity ??
+                          item.input_quantity
+                        }
+                        onBlur={(event) => {
+                          const quantity = Number(event.target.value);
+
+                          if (
+                            Number.isInteger(quantity) &&
+                            quantity > 0 &&
+                            quantity !== item.final_quantity
+                          ) {
+                            handleMlItemUpdate(item.id, {
+                              final_quantity: quantity,
+                            });
+                          }
+                        }}
+                        className="w-24 px-2 py-1.5 text-sm border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
+                      />
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <input
+                        type="text"
+                        maxLength={1000}
+                        disabled={
+                          mlImport.status !== "draft" || isUpdating
+                        }
+                        defaultValue={item.user_comment ?? ""}
+                        placeholder="Комментарий"
+                        onBlur={(event) => {
+                          const comment =
+                            event.target.value.trim() || null;
+
+                          if (comment !== item.user_comment) {
+                            handleMlItemUpdate(item.id, {
+                              user_comment: comment,
+                            });
+                          }
+                        }}
+                        className="w-44 px-2 py-1.5 text-sm border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
+                      />
+                    </td>
+
+                    <td className="px-4 py-3">
+                      {isUpdating ? (
+                        <Loader2
+                          size={16}
+                          className="animate-spin text-[#2563EB]"
+                        />
+                      ) : item.is_confirmed ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
+                          <CheckCircle2 size={14} />
+                          Добавлен
+                        </span>
+                      ) : item.selected_product_id ? (
+                        <span className="text-xs font-medium text-blue-700">
+                          Выбран
+                        </span>
+                      ) : (
+                        <span className="text-xs font-medium text-amber-700">
+                          Требует выбора
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex items-center justify-between gap-4 mt-4">
+        <p className="text-xs text-slate-400">
+          Перед подтверждением у каждой строки должен быть указан ID
+          товара из таблицы products.
+        </p>
+
+        <button
+          type="button"
+          onClick={handleConfirmMlImport}
+          disabled={
+            mlImport.status !== "draft" ||
+            confirmingImport ||
+            mlImport.items.length === 0 ||
+            mlImport.items.some(
+              (item) => item.selected_product_id === null,
+            )
+          }
+          className="flex items-center gap-2 px-5 py-2.5 bg-[#2563EB] text-white text-sm font-semibold rounded-lg hover:bg-[#1D4ED8] transition-colors disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed"
+        >
+          {confirmingImport ? (
+            <>
+              <Loader2 size={15} className="animate-spin" />
+              Подтверждение…
+            </>
+          ) : mlImport.status === "confirmed" ? (
+            <>
+              <CheckCircle2 size={15} />
+              Импорт подтверждён
+            </>
+          ) : (
+            <>
+              <Check size={15} />
+              Подтвердить импорт
+            </>
+          )}
+        </button>
+      </div>
+    </>
+  )}
+</div>
       </PageWrap>
   );
 }
@@ -552,7 +1034,7 @@ export function ProjectPage({
     onKpApproved: () => void,
     receipts: Receipt[],
     projectItems: ProjectItem[],
-    projectId?: number,
+    projectId: number,
     onOpenProject?: (projectId: number) => Promise<void>
 }) {
   if (role === "pm")        return <ProjectPagePM onNavigate={onNavigate} projectState={projectState} onKpSent={onKpSent} receipts={receipts} projectItems={projectItems} projectId={projectId}/>;
