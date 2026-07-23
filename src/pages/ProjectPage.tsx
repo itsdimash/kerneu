@@ -300,11 +300,36 @@ export function ProjectPagePM({
                               }`}>
                         {sending ? <><Loader2 size={14} className="animate-spin"/>Отправка…</> :
                             sent ? <><CheckCircle2 size={14}/>КП отправлено</> :
-                                <><Send size={14}/>Отправить Комдиру на утверждение</>}
+                                <><Send size={14}/>Отправить Комдиру</>}
                       </button>
                     </AppTooltip>
                     {!canSend && !sent && <p className="text-xs text-slate-400">Заполните цены для всех позиций</p>}
                   </div>
+
+                  {/* KP Generator — открывается после одобрения Комдиром */}
+                  {sent && (
+                      <div className={`rounded-lg border p-5 ${projectState.kpApproved ? "bg-green-50 border-green-200" : "bg-slate-50 border-[#E2E8F0]"}`}>
+                        {projectState.kpApproved ? (
+                            <div className="flex items-center justify-between gap-4">
+                              <div className="flex items-center gap-2">
+                                <CheckCircle2 size={16} className="text-green-600 flex-shrink-0"/>
+                                <p className="text-sm font-medium text-green-800">Комдир подтвердил КП. Можно сформировать документ.</p>
+                              </div>
+                              <button
+                                  onClick={() => onNavigate("kp-generator" as Page)}
+                                  className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-[#2563EB] text-white text-sm font-semibold rounded-lg hover:bg-[#1d4ed8] transition-colors"
+                              >
+                                <FileCheck size={14}/> Открыть KP Generator
+                              </button>
+                            </div>
+                        ) : (
+                            <div className="flex items-center gap-2 text-sm text-slate-500">
+                              <Loader2 size={14} className="animate-spin text-slate-400"/>
+                              Ожидаем подтверждения Комдира…
+                            </div>
+                        )}
+                      </div>
+                  )}
                 </>
             )}
           </div>
@@ -436,11 +461,11 @@ export function ProjectPageDirector({ projectState, onKpApproved }: {
               <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={15} className="animate-spin text-[#2563EB]" />Сохранение решения…</div>
             ) : decision === null ? (
               <div className="flex items-center gap-3">
-                <button onClick={() => decide(true)} className="flex items-center gap-2 px-5 py-2.5 bg-[#16A34A] text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"><CheckCircle2 size={15} /> Одобрить КП</button>
+                <button onClick={() => decide(true)} className="flex items-center gap-2 px-5 py-2.5 bg-[#16A34A] text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"><CheckCircle2 size={15} /> Подтверждаю</button>
                 <button onClick={() => decide(false)} className="flex items-center gap-2 px-5 py-2.5 bg-white text-red-600 text-sm font-medium rounded-lg border border-[#E2E8F0] hover:bg-red-50 transition-colors"><XCircle size={15} /> Отклонить КП</button>
               </div>
             ) : decision ? (
-              <div className="flex items-center gap-2 px-4 py-3 bg-green-50 rounded-lg border border-green-200"><CheckCircle2 size={16} className="text-green-600" /><span className="text-sm font-medium text-green-700">КП одобрено · 17.07.2024</span></div>
+              <div className="flex items-center gap-2 px-4 py-3 bg-green-50 rounded-lg border border-green-200"><CheckCircle2 size={16} className="text-green-600" /><span className="text-sm font-medium text-green-700">КП подтверждено · 17.07.2024</span></div>
             ) : (
               <div className="flex items-center gap-2 px-4 py-3 bg-red-50 rounded-lg border border-red-200"><XCircle size={16} className="text-red-600" /><span className="text-sm font-medium text-red-700">КП отклонено · 17.07.2024</span></div>
             )}
