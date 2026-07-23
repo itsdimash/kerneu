@@ -15,6 +15,7 @@ import {
   Clock, Check, X, CheckCircle2, XCircle, ChevronRight, MoreHorizontal,
   Archive, Package, Truck, DollarSign, UploadCloud, FileText, Trash2, Loader2
 } from "lucide-react";
+import { fetchDashboardStats, DashboardStats } from "../api/api";
 
 // Тип клиента, который приходит с бэкенда: только id и name используются для отображения
 type ClientDTO = {
@@ -40,8 +41,14 @@ export function DashboardPM({ onNavigate }: { onNavigate: (p: Page) => void }) {
   const [kpFile, setKpFile] = useState<File | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
+
+  // Статистика дашборда (карточки сверху)
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
+
   useEffect(() => {
     loadProjects();
+    loadStats();
 }, []);
   useEffect(() => {
     if (!isKpModalOpen) return;
@@ -86,6 +93,18 @@ const loadProjects = async () => {
         console.error(e);
     }
 };
+
+const loadStats = async () => {
+  try {
+    const data = await fetchDashboardStats();
+    setStats(data);
+    setStatsError(null);
+  } catch (e) {
+    console.error(e);
+    setStatsError(e instanceof Error ? e.message : "Не удалось загрузить статистику");
+  }
+};
+
   const selectedClientData = clients.find((c) => c.id === Number(selectedClientId));
   const contractIcon = (s: ContractStatus) => s === "unsigned" ? "🔒" : s === "pending" ? "⏳" : "🔓";
   const [openMenu, setOpenMenu] = useState<number | null>(null);
@@ -224,6 +243,7 @@ const url = window.URL.createObjectURL(finalBlob);
             window.URL.revokeObjectURL(url);
         // Обновляем список проектов
         await loadProjects();
+        await loadStats();
 
         console.log("Проект создан:", projectId);
 
@@ -259,6 +279,7 @@ const handleDelete = async (projectId: number) => {
         setOpenMenu(null);
 
         await loadProjects();
+        await loadStats();
 
     } catch (error) {
         console.error(error);
@@ -458,11 +479,41 @@ const handleDelete = async (projectId: number) => {
 
       {/* ── Дашборд PM контент ── */}
       <div className="grid grid-cols-4 gap-4 mb-6">
-        <StatCard label="Активных проектов" value="4" sub="3 близко к дедлайну" delta="+2 за месяц" icon={FolderOpen} />
-        <StatCard label="КП на отправке" value="4" sub="Ожидают согласования" icon={Send} iconColor="text-amber-500" iconBg="bg-amber-50" />
-        <StatCard label="Выручка (план)" value="54.5 млн ₸" sub="Июль 2024" delta="+18%" icon={TrendingUp} iconColor="text-green-500" iconBg="bg-green-50" />
-        <StatCard label="Просрочено задач" value="2" sub="Требуют внимания" icon={AlertTriangle} iconColor="text-red-500" iconBg="bg-red-50" />
+        <StatCard
+          label="Активных проектов"
+          value={stats ? String(stats.active_projects) : "—"}
+          sub="Всего в работе"
+          icon={FolderOpen}
+        />
+        <StatCard
+          label="КП на отправке"
+          value={stats ? String(stats.pending_kp) : "—"}
+          sub="Ожидают согласования"
+          icon={Send}
+          iconColor="text-amber-500"
+          iconBg="bg-amber-50"
+        />
+        <StatCard
+          label="Выручка (план)"
+          value={stats ? fmt(stats.planned_revenue) : "—"}
+          sub="Текущий месяц"
+          delta={stats ? `+${stats.revenue_growth}%` : undefined}
+          icon={TrendingUp}
+          iconColor="text-green-500"
+          iconBg="bg-green-50"
+        />
+        <StatCard
+          label="Близко к дедлайну"
+          value={stats ? String(stats.deadline_projects) : "—"}
+          sub={stats ? `+${stats.new_projects_month} новых за месяц` : "Загрузка..."}
+          icon={AlertTriangle}
+          iconColor="text-amber-500"
+          iconBg="bg-amber-50"
+        />
       </div>
+      {statsError && (
+        <p className="text-xs text-red-600 mb-4">{statsError}</p>
+      )}
 
       <SectionHeader title="Проекты" action={
         <button className="text-xs text-[#2563EB] hover:underline flex items-center gap-1">Все проекты <ChevronRight size={12} /></button>
