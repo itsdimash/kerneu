@@ -54,7 +54,7 @@ const formatTenge = (n: number) => `${n.toLocaleString("ru-RU")} ₸`;
 
 // ─── Mock data (screen-local; swap for API later) ─────────
 const MOCK_QUEUE: UploadedFile[] = [
-  { id: "f1", filename: "КП_Башня_v3.xlsx",        project: "Офисный комплекс «Башня»",  uploadedAt: "10:32", totalItems: 12, missingPrices: 3, status: "needs_input", size: "248 КБ" },
+  { id: "f1", filename: "КП_Башня_v.xlsx",        project: "Офисный комплекс «Башня»",  uploadedAt: "10:32", totalItems: 12, missingPrices: 3, status: "needs_input", size: "248 КБ" },
   { id: "f2", filename: "КП_Меридиан_final.xlsx",  project: "Торговый центр «Меридиан»", uploadedAt: "10:15", totalItems:  8, missingPrices: 0, status: "ready",       size: "192 КБ" },
   { id: "f3", filename: "Спецификация_Nord.pdf",   project: "Реконструкция склада Nord", uploadedAt: "09:58", totalItems:  0, missingPrices: 0, status: "error",       size: "1.2 МБ", errorMessage: "Не удалось распознать таблицу в документе" },
   { id: "f4", filename: "КП_Парковый_v1.xlsx",     project: "Жилой комплекс «Парковый»", uploadedAt: "09:41", totalItems: 15, missingPrices: 5, status: "needs_input", size: "310 КБ" },
@@ -102,6 +102,45 @@ function FileStatusChip({ status }: { status: FileStatus }) {
     </Badge>
   );
 }
+        const handleGenerateKP = async () => {
+    if (!excelFile) return;
+
+    const formData = new FormData();
+    formData.append("file", excelFile);
+
+    formData.append(
+        "contract_data",
+        JSON.stringify({
+            "{{company_name}}": companyName,
+            "{{total_sum}}": totalSum,
+            "{{delivery_days}}": deliveryDays,
+        })
+    );
+
+    const response = await fetch(
+        "http://localhost:8000/api/v1/kp/generate",
+        {
+            method: "POST",
+            body: formData,
+        }
+    );
+
+    if (!response.ok) {
+        alert(await response.text());
+        return;
+    }
+
+    const blob = await response.blob();
+
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "KP.docx";
+    a.click();
+
+    URL.revokeObjectURL(url);
+};
 
 // ─── KPI card ─────────────────────────────────────────────
 function KpiCard({ label, value, icon: Icon, iconColor, iconBg }: {
@@ -241,7 +280,9 @@ function BulkPriceDialog({ open, onOpenChange, items, onSave }: {
         </div>
 
         <DialogFooter className="border-t border-border px-6 py-4">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
+          <Button onClick={handleGenerateKP}>
+            Сгенерировать КП
+          </Button>
           <GuardedAction tip={!allFilled ? "Заполните все поля" : ""} disabled={!allFilled}>
             <Button
               onClick={handleSave}
@@ -369,7 +410,7 @@ export function UploadCenter() {
         <div>
           <h1 className="mb-0.5 text-[22px] font-semibold text-slate-900">Центр загрузки КП</h1>
           <p className="text-sm text-slate-500">
-            Пакетная загрузка и обработка коммерческих предложений · до 50 файлов за раз
+            Пакетная загрузка и обработка коммерческих предложений
           </p>
         </div>
         {attention > 0 && (

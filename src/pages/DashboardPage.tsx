@@ -15,9 +15,12 @@ import {
   Clock, Check, X, CheckCircle2, XCircle, ChevronRight, MoreHorizontal,
   Archive, Package, Truck, DollarSign, UploadCloud, FileText, Trash2, Loader2
 } from "lucide-react";
-import { fetchDashboardStats, DashboardStats } from "../api/api";
-
-// Тип клиента, который приходит с бэкенда: только id и name используются для отображения
+import {
+  fetchDashboardStats,
+  type DashboardStats,
+  createMlImport,
+  getMlImport,
+} from "../api/api";// Тип клиента, который приходит с бэкенда: только id и name используются для отображения
 type ClientDTO = {
   id: number;
   client_name: string;
@@ -124,140 +127,269 @@ const loadStats = async () => {
     setKpFile(null);
   };
 
- const handleSave = async () => {
-    try {
-        setIsSaving(true);
+const handleSave = async () => {
+  try {
+    setIsSaving(true);
 
-        if (!kpFile) {
-            alert("Выберите файл КП");
-            return;
+    if (!kpFile) {
+      alert("Выберите файл КП");
+      return;
+    }
+
+    const uploadedFileUrl = `/uploads/${kpFile.name}`;
+
+    const payload = isNewClient
+      ? {
+          is_new_client: true,
+          new_client_name: newClientForm.name,
+          new_client_phone: newClientForm.phone,
+          new_client_email: newClientForm.email,
+
+          invoice_amount: 0,
+          invoice_status_id: 1,
+          file_url: uploadedFileUrl,
+
+          project_status_id: 1,
+          planned_margin: 0,
+          deadline: "2026-08-01",
         }
+      : {
+          is_new_client: false,
+          client_id: Number(selectedClientId),
 
-        const uploadedFileUrl = `/uploads/${kpFile.name}`;
+          invoice_amount: 0,
+          invoice_status_id: 1,
+          file_url: uploadedFileUrl,
 
-        const payload = isNewClient
-            ? {
-                  is_new_client: true,
-                  new_client_name: newClientForm.name,
-                  new_client_phone: newClientForm.phone,
-                  new_client_email: newClientForm.email,
+          project_status_id: 1,
+          pm_id: 1,
+          planned_margin: 0,
+          deadline: "2026-08-01",
+        };
 
-                  invoice_amount: 0,
-                  invoice_status_id: 1,
-                  file_url: uploadedFileUrl,
-
-                  project_status_id: 1,
-                  planned_margin: 0,
-                  deadline: "2026-08-01",
-              }
-            : {
-                  is_new_client: false,
-                  client_id: Number(selectedClientId),
-
-                  invoice_amount: 0,
-                  invoice_status_id: 1,
-                  file_url: uploadedFileUrl,
-
-                  project_status_id: 1,
-                  pm_id: 1,
-                  planned_margin: 0,
-                  deadline: "2026-08-01",
-              };
-
-        // Создание проекта
-        const response = await fetch(
-            "http://localhost:8000/api/v1/projects/create-base",
-            {
-                method: "POST",
-                credentials: "include",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify(payload),
-            }
-        );
-
-        if (!response.ok) {
-            throw new Error(await response.text());
-        }
-
-        const data = await response.json();
-        const projectId = data.project_id;
-
-        // Запуск парсера
-        // Запуск парсера
-const formData = new FormData();
-formData.append("file", kpFile);
-
-const parserResponse = await fetch(
-    `http://localhost:8000/api/v1/parser/projects/${projectId}/parse`,
-    {
+    /*
+     * 1. Создаём проект
+     */
+    const projectResponse = await fetch(
+      "http://localhost:8000/api/v1/projects/create-base",
+      {
         method: "POST",
         credentials: "include",
-        body: formData,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      },
+    );
+
+    if (!projectResponse.ok) {
+      const errorText = await projectResponse.text();
+
+      throw new Error(
+        errorText || "Ошибка создания проекта",
+      );
     }
-);
 
-if (!parserResponse.ok) {
-    throw new Error("Ошибка парсинга");
-}
+    const projectData = await projectResponse.json();
 
-// Получаем Excel от парсера
-const parserBlob = await parserResponse.blob();
-// Создаем File для ML
-const parserFile = new File(
-    [parserBlob],
-    "quotation.xlsx",
-    {
+    // Твой backend возвращает project_id
+    const projectId = Number(projectData.project_id);
+
+    if (!Number.isInteger(projectId) || projectId <= 0) {
+      console.error("Ответ создания проекта:", projectData);
+
+      throw new Error(
+        "Backend не вернул корректный project_id",
+      );
+    }
+
+    console.log("Проект создан:", projectId);
+
+    /*
+     * 2. Отправляем исходный файл в парсер
+     */
+    const parserFormData = new FormData();
+    parserFormData.append("file", kpFile);
+
+    const parserResponse = await fetch(
+      `http://localhost:8000/api/v1/parser/projects/${projectId}/parse`,
+      {
+        method: "POST",
+        credentials: "include",
+        body: parserFormData,
+      },
+    );
+
+    if (!parserResponse.ok) {
+      const errorText = await parserResponse.text();
+
+      throw new Error(
+        errorText || "Ошибка парсинга файла",
+      );
+    }
+
+    /*
+     * 3. Получаем Excel от парсера
+     */
+    const parserBlob = await parserResponse.blob();
+
+    const parserFile = new File(
+      [parserBlob],
+      "quotation.xlsx",
+      {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    }
-);
-// Отправляем Excel в ML
-const mlForm = new FormData();
-mlForm.append("file", parserFile);
+      },
+    );
 
-const mlResponse = await fetch(
-    "http://localhost:8000/api/v1/match-file",
-    {
+    console.log(
+      "Excel от парсера получен:",
+      parserFile.name,
+      parserFile.size,
+    );
+
+    /*
+     * 4. Отправляем Excel от парсера в ML
+     */
+    const mlFormData = new FormData();
+    mlFormData.append("file", parserFile);
+
+    const mlResponse = await fetch(
+      "http://localhost:8000/api/v1/match-file",
+      {
         method: "POST",
         credentials: "include",
-        body: mlForm,
+        body: mlFormData,
+      },
+    );
+
+    if (!mlResponse.ok) {
+      const errorText = await mlResponse.text();
+
+      throw new Error(
+        errorText || "Ошибка обработки файла в ML",
+      );
     }
-);
 
-if (!mlResponse.ok) {
-    console.log(await mlResponse.json());
-    throw new Error("Ошибка ML");
-}
+    /*
+     * 5. Получаем готовый Excel от ML
+     */
+    const mlBlob = await mlResponse.blob();
 
-// Получаем итоговый Excel после ML
-const finalBlob = await mlResponse.blob();
+    const contentDisposition =
+      mlResponse.headers.get("content-disposition");
 
-const url = window.URL.createObjectURL(finalBlob);
+    let mlFilename = "ml_result.xlsx";
 
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = "Коммерческое_предложение.xlsx";
-            a.click();
+    if (contentDisposition) {
+      const utf8Match = contentDisposition.match(
+        /filename\*=UTF-8''([^;]+)/i,
+      );
 
-            window.URL.revokeObjectURL(url);
-        // Обновляем список проектов
-        await loadProjects();
-        await loadStats();
+      const normalMatch = contentDisposition.match(
+        /filename="?([^";]+)"?/i,
+      );
 
-        console.log("Проект создан:", projectId);
-
-        alert("Проект успешно создан!");
-
-        resetModal();
-
-    } catch (error) {
-        console.error(error);
-        alert("Ошибка создания проекта");
-    } finally {
-        setIsSaving(false);
+      if (utf8Match?.[1]) {
+        mlFilename = decodeURIComponent(
+          utf8Match[1],
+        );
+      } else if (normalMatch?.[1]) {
+        mlFilename = normalMatch[1].trim();
+      }
     }
-};
+
+    const mlFile = new File(
+      [mlBlob],
+      mlFilename,
+      {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      },
+    );
+
+    console.log(
+      "Excel от ML получен:",
+      mlFile.name,
+      mlFile.size,
+    );
+
+    /*
+     * 6. Сохраняем ML Excel в ml_imports
+     * и ml_import_items
+     */
+    const createdImport = await createMlImport(
+      projectId,
+      mlFile,
+    );
+
+    console.log(
+      "ML import создан:",
+      createdImport,
+    );
+
+    /*
+     * 7. Получаем сохранённые строки импорта
+     */
+    const importDetails = await getMlImport(
+      createdImport.id,
+    );
+
+    console.log(
+      "Строки ML-импорта:",
+      importDetails.items,
+    );
+
+    /*
+     * Сохраняем связь projectId → importId.
+     * ProjectPage сможет получить этот импорт.
+     */
+    localStorage.setItem(
+      `project:${projectId}:mlImportId`,
+      String(createdImport.id),
+    );
+
+    /*
+     * 8. Автоматически скачиваем готовый ML Excel
+     */
+    const downloadUrl =
+      URL.createObjectURL(mlBlob);
+
+    const anchor =
+      document.createElement("a");
+
+    anchor.href = downloadUrl;
+    anchor.download = mlFilename;
+
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+
+    URL.revokeObjectURL(downloadUrl);
+
+    /*
+     * 9. Обновляем frontend
+     */
+    await loadProjects();
+    await loadStats();
+
+    alert("Проект и ML-импорт успешно созданы!");
+
+    resetModal();
+  } catch (error) {
+    console.error(
+      "Ошибка создания проекта:",
+      error,
+    );
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Неизвестная ошибка";
+
+    alert(`Ошибка создания проекта: ${message}`);
+  } finally {
+    setIsSaving(false);
+  }
+    };
 const handleDelete = async (projectId: number) => {
     if (!window.confirm("Вы действительно хотите удалить проект?")) {
         return;

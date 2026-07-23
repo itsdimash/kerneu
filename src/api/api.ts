@@ -5,7 +5,7 @@ export const api = axios.create({
     withCredentials: true, // очень важно для Cookie
 });
 export interface ProjectItem {
-  id: number;
+id: number;
   project_id: number;
   item_name: string;
   quantity: number;
@@ -66,4 +66,117 @@ export async function fetchProjectDetails(projectId: number): Promise<ProjectRes
   console.log("Тело ответа:", text);
   if (!res.ok) throw new Error(`Ошибка загрузки проекта: ${res.status}`);
   return JSON.parse(text);
+}
+export interface MlImportCreateResponse {
+  id: number;
+  project_id: number;
+  source_file_name: string;
+  status: string;
+}
+
+export interface MlSimilarVariant {
+  product_id?: number;
+  id?: number;
+  matched_id?: number | string;
+  product_name?: string;
+  name?: string;
+  similarity?: number;
+  similarity_percent?: number;
+  [key: string]: unknown;
+}
+
+export interface MlImportItemResponse {
+  id: number;
+  input_product: string;
+  input_quantity: number;
+  ml_status: string;
+  matched_product: string | null;
+  matched_external_id: string | null;
+  available_quantity: number;
+  unit: string | null;
+  category: string | null;
+
+  // Decimal из FastAPI приходит в JSON как число или строка
+  similarity_percent: number | string;
+
+  similar_variants: MlSimilarVariant[];
+  selected_product_id: number | null;
+  final_quantity: number | null;
+  user_comment: string | null;
+  is_confirmed: boolean;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface MlImportDetailResponse {
+  id: number;
+  project_id: number;
+  source_file_name: string;
+  status: string;
+  created_by: number | null;
+  created_at: string;
+  confirmed_by: number | null;
+  confirmed_at: string | null;
+  items: MlImportItemResponse[];
+}
+
+export interface MlImportItemUpdate {
+  selected_product_id?: number | null;
+  final_quantity?: number | null;
+  user_comment?: string | null;
+}
+
+export async function createMlImport(
+  projectId: number,
+  file: File,
+): Promise<MlImportCreateResponse> {
+  const formData = new FormData();
+
+  formData.append("project_id", String(projectId));
+  formData.append("file", file);
+
+  const { data } = await api.post<MlImportCreateResponse>(
+    "/ml-imports",
+    formData,
+    {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    },
+  );
+
+  return data;
+}
+
+export async function getMlImport(
+  importId: number,
+): Promise<MlImportDetailResponse> {
+  const { data } = await api.get<MlImportDetailResponse>(
+    `/ml-imports/${importId}`,
+  );
+
+  return data;
+}
+
+export async function updateMlImportItem(
+  importId: number,
+  itemId: number,
+  payload: MlImportItemUpdate,
+): Promise<MlImportItemResponse> {
+  const { data } = await api.patch<MlImportItemResponse>(
+    `/ml-imports/${importId}/items/${itemId}`,
+    payload,
+  );
+
+  return data;
+}
+
+export async function confirmMlImport(
+  importId: number,
+): Promise<MlImportCreateResponse> {
+  const { data } = await api.post<MlImportCreateResponse>(
+    `/ml-imports/${importId}/confirm`,
+  );
+
+  return data;
 }
