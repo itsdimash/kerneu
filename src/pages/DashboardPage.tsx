@@ -7,6 +7,7 @@ import { InfoBanner } from "../app/components/common/InfoBanner";
 import { Chip } from "../app/components/common/Chip";
 import { ReceiptStatusBadge } from "../app/components/common/ReceiptStatusBadge";
 import { fmt, daysFromNow, deadlineBadge } from "../lib/format";
+import { getStageMeta } from "../lib/projectStage";
 import { PROJECTS } from "../data/projects";
 import { STOCK_INIT } from "../data/stock";
 import { INVOICES_INIT } from "../data/invoices";
@@ -522,7 +523,7 @@ const handleDelete = async (projectId: number) => {
           <table className="w-full border-collapse">
               <thead>
               <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-                  {["Проект", "Клиент", "Статус", "Этап", "Бюджет", "Дедлайн", "Ответственный", "Менеджер", ""].map(h => (
+                  {["Проект", "Клиент", "Этап", "Бюджет", "Дедлайн", "Ответственный", "Менеджер", ""].map(h => (
                       <th key={h}
                           className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left">{h}</th>
                   ))}
@@ -555,14 +556,16 @@ const handleDelete = async (projectId: number) => {
                               {p.client?.client_name}
                           </td>
 
-                          {/* Статус */}
-                          <td className="px-4 py-3">
-                              <Chip status={p.status?.status_name}/>
-                          </td>
-
                           {/* Этап */}
                           <td className="px-4 py-3">
-                              —
+                              {(() => {
+                                  const stage = getStageMeta(p.status?.status_name);
+                                  return (
+                                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${stage.cls}`}>
+                                          {stage.label}
+                                      </span>
+                                  );
+                              })()}
                           </td>
 
                           {/* Бюджет */}
