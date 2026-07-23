@@ -15,7 +15,6 @@ import type { KPItem } from "../types";
 import { Check, FileCheck, XCircle } from "lucide-react";
 import { ReceiptStatusBadge } from "../app/components/common/ReceiptStatusBadge";
 import type { KPItemStatus } from "../types";
-import { ACTIVE_PROJECT } from "../data/projects";
 import {
   ProjectItem,
   fetchProjectDetails,
@@ -38,7 +37,7 @@ export function ProjectPagePM({
     onKpSent: () => void;
     receipts: Receipt[];
     projectItems: ProjectItem[];
-    projectId?: number;
+    projectId: number;
 }) {
   const [fileUploaded, setFileUploaded] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -57,29 +56,46 @@ export function ProjectPagePM({
   const [updatingItemId, setUpdatingItemId] = useState<number | null>(null);
   const [confirmingImport, setConfirmingImport] = useState(false);
 
-  const resolvedProjectId = projectId ?? ACTIVE_PROJECT.id;
+  const resolvedProjectId = Number(projectId);
+  const hasValidProjectId =
+  Number.isInteger(resolvedProjectId) &&
+  resolvedProjectId > 0;
+useEffect(() => {
+  if (!hasValidProjectId) {
+    setProject(null);
+    setProjectError(
+      `Некорректный ID проекта: ${String(projectId)}`,
+    );
+    return;
+  }
 
-  useEffect(() => {
-    let cancelled = false;
+  let cancelled = false;
 
-    fetchProjectDetails(resolvedProjectId)
-      .then((data) => {
-        if (!cancelled) {
-          setProject(data);
-          setProjectError(null);
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setProjectError(e instanceof Error ? e.message : "Не удалось загрузить проект");
-        }
-      });
+  setProjectError(null);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [resolvedProjectId]);
+  fetchProjectDetails(resolvedProjectId)
+    .then((data) => {
+      if (!cancelled) {
+        setProject(data);
+        setProjectError(null);
+      }
+    })
+    .catch((error) => {
+      if (!cancelled) {
+        setProject(null);
 
+        setProjectError(
+          error instanceof Error
+            ? error.message
+            : "Не удалось загрузить проект",
+        );
+      }
+    });
+
+  return () => {
+    cancelled = true;
+  };
+}, [resolvedProjectId, hasValidProjectId]);
   useEffect(() => {
     const mapped = projectItems.map(item => ({
         id: item.id,
@@ -153,19 +169,36 @@ export function ProjectPagePM({
       ? `${project.client?.client_name ?? "—"} · ${project.pm?.name ?? "—"} · ${project.deadline ? new Date(project.deadline).toLocaleDateString("ru-RU") : "—"}`
       : "ООО «СтройТех» · А. Петров · 15.08.2024";
   useEffect(() => {
-  const savedImportId = localStorage.getItem(
-    `project:${resolvedProjectId}:mlImportId`,
-  );
+  if (!hasValidProjectId) {
+    setMlImport(null);
+    setMlImportLoading(false);
+    return;
+  }
+
+  const storageKey =
+    `project:${resolvedProjectId}:mlImportId`;
+
+  const savedImportId =
+    localStorage.getItem(storageKey);
+
+  console.log("Открыт projectId:", resolvedProjectId);
+  console.log("Найден importId:", savedImportId);
 
   if (!savedImportId) {
     setMlImport(null);
+    setMlImportError(null);
+    setMlImportLoading(false);
     return;
   }
 
   const importId = Number(savedImportId);
 
   if (!Number.isInteger(importId) || importId <= 0) {
-    setMlImportError("Некорректный ID ML-импорта");
+    setMlImport(null);
+    setMlImportLoading(false);
+    setMlImportError(
+      `Некорректный ID ML-импорта: ${savedImportId}`,
+    );
     return;
   }
 
@@ -176,18 +209,29 @@ export function ProjectPagePM({
 
   getMlImport(importId)
     .then((data) => {
-      if (!cancelled) {
-        setMlImport(data);
-      }
-    })
-    .catch((error) => {
-      if (!cancelled) {
-        setMlImportError(
-          error instanceof Error
-            ? error.message
-            : "Не удалось загрузить ML-импорт",
+      if (cancelled) return;
+
+      // Дополнительная защита:
+      // импорт должен относиться к открытому проекту
+      if (data.project_id !== resolvedProjectId) {
+        throw new Error(
+          `ML-импорт ${importId} относится к проекту ` +
+          `${data.project_id}, а открыт проект ${resolvedProjectId}`,
         );
       }
+
+      setMlImport(data);
+    })
+    .catch((error) => {
+      if (cancelled) return;
+
+      setMlImport(null);
+
+      setMlImportError(
+        error instanceof Error
+          ? error.message
+          : "Не удалось загрузить ML-импорт",
+      );
     })
     .finally(() => {
       if (!cancelled) {
@@ -198,7 +242,7 @@ export function ProjectPagePM({
   return () => {
     cancelled = true;
   };
-}, [resolvedProjectId]);
+}, [resolvedProjectId, hasValidProjectId]);
   const sidebarDetails: [string, string][] = project
       ? [
           ["Бюджет", fmt(Number(project.invoice?.amount ?? 0))],
@@ -213,12 +257,12 @@ export function ProjectPagePM({
           ["Менеджер", "А. Петров"], ["Клиент", "ООО «СтройТех»"], ["Договор", "ДГ-2024-0041"],
         ];
   const handleMlItemUpdate = async (
-  itemId: number,
-  payload: {
-    selected_product_id?: number | null;
-    final_quantity?: number | null;
-    user_comment?: string | null;
-  },
+    itemId: number,
+    payload: {
+        selected_product_id?: number | null;
+        final_quantity?: number | null;
+        user_comment?: string | null;
+    },
 ) => {
   if (!mlImport) return;
 
@@ -273,6 +317,33 @@ export function ProjectPagePM({
     setConfirmingImport(false);
   }
 };
+  if (!hasValidProjectId) {
+  return (
+    <PageWrap
+      title="Проект не выбран"
+      subtitle="Не удалось определить ID проекта"
+    >
+      <div className="bg-red-50 border border-red-200 rounded-lg p-5">
+        <div className="flex items-start gap-3">
+          <AlertTriangle
+            size={18}
+            className="text-red-500 mt-0.5"
+          />
+
+          <div>
+            <p className="text-sm font-semibold text-red-700">
+              Некорректный ID проекта
+            </p>
+
+            <p className="text-sm text-red-600 mt-1">
+              Получено значение: {String(projectId)}
+            </p>
+          </div>
+        </div>
+      </div>
+    </PageWrap>
+  );
+}
   return (
       <PageWrap title={title} subtitle={subtitle}
                 actions={<div className="flex items-center gap-2"><Chip status={project?.status?.status_name ?? "active"}/><Chip status="kp"/></div>}>
@@ -685,19 +756,21 @@ export function ProjectPagePM({
                           });
                         }}
                         onBlur={(event) => {
-                          const selectedProductId = event.target.value
-                            ? Number(event.target.value)
-                            : null;
+                            const rawValue = event.target.value;
+                            const selectedProductId = rawValue
+                                ? Number(rawValue)
+                                : null;
 
-                          if (
-                            selectedProductId ===
-                            item.selected_product_id
-                          ) {
+                            if (
+                                selectedProductId !== null &&
+                                (!Number.isInteger(selectedProductId) || selectedProductId <= 0)
+                            ) {setMlImportError("ID товара должен быть положительным целым числом",);
+                                return;
+                            }
+
+
                             handleMlItemUpdate(item.id, {
-                              selected_product_id:
-                                selectedProductId,
-                            });
-                          }
+                                selected_product_id: selectedProductId,});
                         }}
                         className="w-28 px-2 py-1.5 text-sm border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
                       />
@@ -961,7 +1034,7 @@ export function ProjectPage({
     onKpApproved: () => void,
     receipts: Receipt[],
     projectItems: ProjectItem[],
-    projectId?: number,
+    projectId: number,
     onOpenProject?: (projectId: number) => Promise<void>
 }) {
   if (role === "pm")        return <ProjectPagePM onNavigate={onNavigate} projectState={projectState} onKpSent={onKpSent} receipts={receipts} projectItems={projectItems} projectId={projectId}/>;
