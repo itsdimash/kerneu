@@ -11,6 +11,7 @@ import { WarehousePage } from "../../../pages/WarehousePage";
 import { DocumentsPage } from "../../../pages/DocumentsPage";
 import { ReceiptStoragePage } from "../../../pages/ReceiptStoragePage";
 import { UploadCenter } from "../screens/UploadCenter";
+
 type UserData = {
     id: number;
     name: string;
@@ -19,8 +20,7 @@ type UserData = {
     created_at: string;
 };
 
-
-export function AppShell({ role, page, onPage, user, onLogout, projectState, setProjectState,selectedProjectId, setSelectedProjectId, receipts, setReceipts }: {
+export function AppShell({ role, page, onPage, user, onLogout, projectState, setProjectState, selectedProjectId, setSelectedProjectId, receipts, setReceipts }: {
   role: Role;
   page: Page;
   onPage: (p: Page) => void;
@@ -34,43 +34,59 @@ export function AppShell({ role, page, onPage, user, onLogout, projectState, set
   setReceipts: React.Dispatch<React.SetStateAction<Receipt[]>>;
 }) {
     const [projectItems, setProjectItems] = useState<ProjectItem[]>([]);
+
     const handleFindProject = async (projectId: number) => {
-    try {
-        const data = await getProjectItems(projectId);
+        try {
+            const data = await getProjectItems(projectId);
 
-        setProjectItems(data);
+            setProjectItems(data);
+            setSelectedProjectId(projectId);
 
-        onPage("project");
-    } catch (error) {
-        console.error("Ошибка загрузки проекта:", error);
-    }
-};
-  return (
-    <div className="flex h-screen bg-[#F8FAFC] overflow-hidden" style={{ fontFamily: "'Inter', sans-serif" }}>
-      <Sidebar page={page} onPage={onPage} role={role} projectState={projectState} onFindProject={handleFindProject}/>
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <TopBar role={role} user = {user} onNavigate={onPage} onLogout={onLogout} />
-        <main className="flex-1 overflow-y-auto">
-          {page === "dashboard" && <DashboardPage role={role} onNavigate={onPage} receipts={receipts} />}
-          {page === "project" && (
-            <ProjectPage role={role} onNavigate={onPage} projectState={projectState} receipts={receipts}
-                         projectItems={projectItems}  onOpenProject={handleFindProject}
-              onKpSent={() => setProjectState(ps => ({ ...ps, kpSent: true }))}
-              onKpApproved={() => setProjectState(ps => ({ ...ps, kpApproved: true }))} />
-          )}
-          {page === "contract" && (
-            <ContractPage onNavigate={onPage} projectState={projectState}
-              onContractGenerated={() => setProjectState(ps => ({ ...ps, contractGenerated: true }))}
-              onContractSigned={() => setProjectState(ps => ({ ...ps, contractSigned: true }))} />
-          )}
-          {page === "procurement" && <ProcurementPage role={role} projectState={projectState} />}
-          {page === "warehouse" && <WarehousePage projectState={projectState} />}
-          {page === "documents" && <DocumentsPage onNavigate={onPage} projectState={projectState} />}
-          {page === "receipts" && role === "accountant" && <ReceiptStoragePage receipts={receipts} setReceipts={setReceipts} />}
-          {page === "upload" && role === "pm" && <UploadCenter />}
-        </main>
-      </div>
-    </div>
+            onPage("project");
+        } catch (error) {
+            console.error("Ошибка загрузки проекта:", error);
+        }
+    };
 
-  );
+    return (
+        <div className="flex h-screen bg-[#F8FAFC] overflow-hidden" style={{ fontFamily: "'Inter', sans-serif" }}>
+          <Sidebar page={page} onPage={onPage} role={role} projectState={projectState} onFindProject={handleFindProject}/>
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <TopBar role={role} user={user} onNavigate={onPage} onLogout={onLogout} />
+            <main className="flex-1 overflow-y-auto">
+              {page === "dashboard" && (
+                <DashboardPage
+                  role={role}
+                  onNavigate={onPage}
+                  receipts={receipts}
+                  onOpenProject={handleFindProject}
+                />
+              )}
+              {page === "project" && (
+                <ProjectPage
+                  role={role}
+                  onNavigate={onPage}
+                  projectState={projectState}
+                  receipts={receipts}
+                  projectItems={projectItems}
+                  onOpenProject={handleFindProject}
+                  projectId={selectedProjectId ?? undefined}
+                  onKpSent={() => setProjectState(ps => ({ ...ps, kpSent: true }))}
+                  onKpApproved={() => setProjectState(ps => ({ ...ps, kpApproved: true }))}
+                />
+              )}
+              {page === "contract" && (
+                <ContractPage onNavigate={onPage} projectState={projectState}
+                  onContractGenerated={() => setProjectState(ps => ({ ...ps, contractGenerated: true }))}
+                  onContractSigned={() => setProjectState(ps => ({ ...ps, contractSigned: true }))} />
+              )}
+              {page === "procurement" && <ProcurementPage role={role} projectState={projectState} />}
+              {page === "warehouse" && <WarehousePage projectState={projectState} />}
+              {page === "documents" && <DocumentsPage onNavigate={onPage} projectState={projectState} />}
+              {page === "receipts" && role === "accountant" && <ReceiptStoragePage receipts={receipts} setReceipts={setReceipts} />}
+              {page === "upload" && role === "pm" && <UploadCenter />}
+            </main>
+          </div>
+        </div>
+    );
 }

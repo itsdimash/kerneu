@@ -16,7 +16,7 @@ import { Check, FileCheck, XCircle } from "lucide-react";
 import { ReceiptStatusBadge } from "../app/components/common/ReceiptStatusBadge";
 import type { KPItemStatus } from "../types";
 import { ACTIVE_PROJECT } from "../data/projects";
-import {ProjectItem} from "../api/api";
+import { ProjectItem, fetchProjectDetails, ProjectResponse } from "../api/api";
 
 export function ProjectPagePM({
     onNavigate,
@@ -24,12 +24,14 @@ export function ProjectPagePM({
     onKpSent,
     receipts,
     projectItems,
+    projectId,
 }: {
     onNavigate: (p: Page) => void;
     projectState: ProjectState;
     onKpSent: () => void;
     receipts: Receipt[];
     projectItems: ProjectItem[];
+    projectId?: number;
 }) {
   const [fileUploaded, setFileUploaded] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -38,6 +40,34 @@ export function ProjectPagePM({
   const [isDragOver, setIsDragOver] = useState(false);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(projectState.kpSent);
+
+  // Детали проекта, полученные с бэкенда
+  const [project, setProject] = useState<ProjectResponse | null>(null);
+  const [projectError, setProjectError] = useState<string | null>(null);
+
+  const resolvedProjectId = projectId ?? ACTIVE_PROJECT.id;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchProjectDetails(resolvedProjectId)
+      .then((data) => {
+        if (!cancelled) {
+          setProject(data);
+          setProjectError(null);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setProjectError(e instanceof Error ? e.message : "Не удалось загрузить проект");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedProjectId]);
+
   useEffect(() => {
     const mapped = projectItems.map(item => ({
         id: item.id,
@@ -50,7 +80,8 @@ export function ProjectPagePM({
     }));
 
     setKpItems(mapped);
-}, [projectItems]);
+  }, [projectItems]);
+
   const hasMissingPrice = kpItems.some(i => i.price === 0);
   const canSend = fileUploaded && !hasMissingPrice && !sent;
 
@@ -61,7 +92,7 @@ export function ProjectPagePM({
     setTimeout(() => {
         setAnalyzing(false);
     }, 1800);
-};
+  };
 
   const updatePrice = (id: number, price: number) => {
     setKpItems(prev =>
@@ -71,7 +102,7 @@ export function ProjectPagePM({
                 : item
         )
     );
-};
+  };
 
   const handleSend = () => {
     if (!canSend) return;
@@ -83,7 +114,7 @@ export function ProjectPagePM({
         setSent(true);
         onKpSent();
     }, 1500);
-};
+  };
 
   const displayed = showOnlyMissing ? kpItems.filter(i => i.price === 0) : kpItems;
   const total = kpItems.reduce((s, i) => s + i.total, 0);
@@ -104,9 +135,29 @@ export function ProjectPagePM({
     {label: "Документы", done: false},
   ];
 
+  // Данные для шапки и сайдбара: реальные, если проект загружен, иначе — заглушки из старого дизайна
+  const title = project?.name ?? "Офисный комплекс «Башня»";
+  const subtitle = project
+      ? `${project.client?.client_name ?? "—"} · ${project.pm?.name ?? "—"} · ${project.deadline ? new Date(project.deadline).toLocaleDateString("ru-RU") : "—"}`
+      : "ООО «СтройТех» · А. Петров · 15.08.2024";
+
+  const sidebarDetails: [string, string][] = project
+      ? [
+          ["Бюджет", fmt(Number(project.invoice?.amount ?? 0))],
+          ["Маржа", project.planned_margin != null ? `${project.planned_margin}%` : "—"],
+          ["Дедлайн", project.deadline ? new Date(project.deadline).toLocaleDateString("ru-RU") : "—"],
+          ["Менеджер", project.pm?.name ?? "—"],
+          ["Клиент", project.client?.client_name ?? "—"],
+          ["Договор", project.contract_number ?? "—"],
+        ]
+      : [
+          ["Бюджет", "12 500 000 ₸"], ["Маржа", "24.5%"], ["Дедлайн", "15.08.2024"],
+          ["Менеджер", "А. Петров"], ["Клиент", "ООО «СтройТех»"], ["Договор", "ДГ-2024-0041"],
+        ];
+
   return (
-      <PageWrap title="Офисный комплекс «Башня»" subtitle="ООО «СтройТех» · А. Петров · 15.08.2024"
-                actions={<div className="flex items-center gap-2"><Chip status="active"/><Chip status="kp"/></div>}>
+      <PageWrap title={title} subtitle={subtitle}
+                actions={<div className="flex items-center gap-2"><Chip status={project?.status?.status_name ?? "active"}/><Chip status="kp"/></div>}>
 
         {/* Stage timeline */}
         <div className="bg-white rounded-lg border border-[#E2E8F0] p-5 mb-6 overflow-x-auto">
@@ -287,14 +338,24 @@ export function ProjectPagePM({
           <div className="space-y-4">
             <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
               <h3 className="text-sm font-semibold text-slate-900 mb-3">Детали проекта</h3>
-              <dl className="space-y-2.5">
-                {[["Бюджет", "12 500 000 ₸"], ["Маржа", "24.5%"], ["Дедлайн", "15.08.2024"], ["Менеджер", "А. Петров"], ["Клиент", "ООО «СтройТех»"], ["Договор", "ДГ-2024-0041"]].map(([l, v]) => (
-                    <div key={l} className="flex items-start justify-between gap-3">
-                      <dt className="text-xs text-slate-400">{l}</dt>
-                      <dd className="text-xs font-medium text-slate-700 text-right">{v}</dd>
-                    </div>
-                ))}
-              </dl>
+              {projectError ? (
+                <div className="flex items-start gap-2.5 text-red-600">
+                  <AlertTriangle size={15} className="mt-0.5 flex-shrink-0"/>
+                  <div>
+                    <p className="text-sm font-medium">Не удалось загрузить детали проекта</p>
+                    <p className="text-xs text-red-500 mt-1">{projectError}</p>
+                  </div>
+                </div>
+              ) : (
+                <dl className="space-y-2.5">
+                  {sidebarDetails.map(([l, v]) => (
+                      <div key={l} className="flex items-start justify-between gap-3">
+                        <dt className="text-xs text-slate-400">{l}</dt>
+                        <dd className="text-xs font-medium text-slate-700 text-right">{v}</dd>
+                      </div>
+                  ))}
+                </dl>
+              )}
             </div>
           </div>
         </div>
@@ -481,6 +542,7 @@ export function ProjectPage({
                                 onKpApproved,
                                 receipts,
                                 projectItems,
+                                projectId,
                                 onOpenProject
                             }: {
     role: Role,
@@ -490,9 +552,10 @@ export function ProjectPage({
     onKpApproved: () => void,
     receipts: Receipt[],
     projectItems: ProjectItem[],
+    projectId?: number,
     onOpenProject?: (projectId: number) => Promise<void>
 }) {
-  if (role === "pm")        return <ProjectPagePM onNavigate={onNavigate} projectState={projectState} onKpSent={onKpSent} receipts={receipts} projectItems={projectItems}/>;
+  if (role === "pm")        return <ProjectPagePM onNavigate={onNavigate} projectState={projectState} onKpSent={onKpSent} receipts={receipts} projectItems={projectItems} projectId={projectId}/>;
   if (role === "director")  return <ProjectPageDirector projectState={projectState} onKpApproved={onKpApproved} />;
   if (role === "accountant")return <ProjectPageAccountant />;
   return <ProjectPageWarehouse />;

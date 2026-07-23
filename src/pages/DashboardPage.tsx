@@ -24,7 +24,7 @@ type ClientDTO = {
   [key: string]: unknown; // бэкенд может присылать и другие поля — они нам не нужны
 };
 
-export function DashboardPM({ onNavigate }: { onNavigate: (p: Page) => void }) {
+export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Page) => void; onOpenProject: (projectId: number) => void }) {
   // Стейты для модального окна
   const [isKpModalOpen, setIsKpModalOpen] = useState(false);
   const [isNewClient, setIsNewClient] = useState(false);
@@ -541,7 +541,7 @@ const handleDelete = async (projectId: number) => {
                                   {contractIcon("signed")}
 
                                   <button
-                                      onClick={() => onNavigate("project")}
+                                      onClick={() => onOpenProject(p.id)}
                                       className="text-sm font-medium text-[#2563EB] hover:underline text-left"
                                   >
                                       {p.name ?? `Проект №${p.id}`}
@@ -609,7 +609,7 @@ const handleDelete = async (projectId: number) => {
                                       <button
                                           onClick={() => {
                                               setOpenMenu(null);
-                                              // открыть проект
+                                              onOpenProject(p.id);
                                           }}
                                           className="flex w-full items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-100 transition-colors"
                                       >
@@ -860,8 +860,13 @@ export function DashboardWarehouse({ onNavigate }: { onNavigate: (p: Page) => vo
   );
 }
 
-export function DashboardPage({ role, onNavigate, receipts }: { role: Role; onNavigate: (p: Page) => void; receipts: Receipt[] }) {
-  if (role === "pm")        return <DashboardPM onNavigate={onNavigate}  />;
+export function DashboardPage({ role, onNavigate, receipts, onOpenProject }: {
+  role: Role;
+  onNavigate: (p: Page) => void;
+  receipts: Receipt[];
+  onOpenProject: (projectId: number) => void;
+}) {
+  if (role === "pm")        return <DashboardPM onNavigate={onNavigate} onOpenProject={onOpenProject} />;
   if (role === "director")  return <DashboardDirector onNavigate={onNavigate} receipts={receipts} />;
   if (role === "accountant")return <DashboardAccountant onNavigate={onNavigate} />;
   return <DashboardWarehouse onNavigate={onNavigate} />;
