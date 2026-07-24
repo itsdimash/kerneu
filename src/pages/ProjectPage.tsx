@@ -840,6 +840,38 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
   const subtitle = project
       ? `${project.client?.client_name ?? "—"} · Проверка КП`
       : "ООО «СтройТех» · Проверка КП";
+  const sidebarDetails: [string, string][] = [
+  [
+    "Сумма КП",
+    project?.invoice?.amount != null
+      ? fmt(Number(project.invoice.amount))
+      : "—",
+  ],
+  [
+    "Маржа",
+    project?.planned_margin != null
+      ? `${project.planned_margin}%`
+      : "—",
+  ],
+  [
+    "Клиент",
+    project?.client?.client_name ?? "—",
+  ],
+  [
+    "PM",
+    project?.pm?.name ?? "—",
+  ],
+  [
+    "Дедлайн",
+    project?.deadline
+      ? new Date(project.deadline).toLocaleDateString("ru-RU")
+      : "—",
+  ],
+  [
+    "Договор",
+    project?.contract_number ?? "—",
+  ],
+];
 
   return (
     <PageWrap 
@@ -924,11 +956,41 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
         <div className="space-y-4">
           <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
             <h3 className="text-sm font-semibold text-slate-900 mb-3">Детали</h3>
-            <dl className="space-y-2.5">
-              {[["Сумма КП","2 760 000 ₸"],["Маржа","24.5%"],["Клиент","ООО «СтройТех»"],["PM","А. Петров"],["Дедлайн","15.08.2024"]].map(([l,v]) => (
-                <div key={l} className="flex justify-between gap-3"><dt className="text-xs text-slate-400">{l}</dt><dd className="text-xs font-medium text-slate-700">{v}</dd></div>
-              ))}
-            </dl>
+            {projectError ? (
+  <div className="flex items-start gap-2.5 text-red-600">
+    <AlertTriangle
+      size={15}
+      className="mt-0.5 flex-shrink-0"
+    />
+
+    <div>
+      <p className="text-sm font-medium">
+        Не удалось загрузить детали проекта
+      </p>
+
+      <p className="mt-1 text-xs text-red-500">
+        {projectError}
+      </p>
+    </div>
+  </div>
+) : (
+  <dl className="space-y-2.5">
+    {sidebarDetails.map(([label, value]) => (
+      <div
+        key={label}
+        className="flex items-start justify-between gap-3"
+      >
+        <dt className="text-xs text-slate-400">
+          {label}
+        </dt>
+
+        <dd className="text-right text-xs font-medium text-slate-700">
+          {value}
+        </dd>
+      </div>
+    ))}
+  </dl>
+)}
           </div>
         </div>
       </div>
@@ -952,7 +1014,7 @@ export function ProjectPageAccountant({ projectId }: { projectId: number }) {
 
   return (
     <PageWrap 
-      title="Офисный комплекс «Башня»" 
+      title="Офисный комплекс «Башня»"
       subtitle="ООО «СтройТех» · Счета и оплата"
       actions={
         <div className="flex items-center gap-2">
