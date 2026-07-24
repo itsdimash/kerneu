@@ -26,7 +26,8 @@ export function LoginPage({ onLogin }: { onLogin: (r: Role) => void }) {
     return () => { window.removeEventListener("keydown", handleKeyEvent); window.removeEventListener("keyup", handleKeyEvent); };
   }, [handleKeyEvent]);
 
-const handleSignIn = async () => {
+const handleSignIn = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     setAuthError(false);
 
     if (!password) {
@@ -90,41 +91,43 @@ const handleSignIn = async () => {
             </div>
           )}
 
-          <div className="space-y-4 mb-5">
-            <div>
-              <label htmlFor="login-email" className="block text-sm font-medium text-slate-700 mb-1.5">Email</label>
-              <input id="login-email" type="email" value={email} onChange={e => { setEmail(e.target.value); setAuthError(false); }}
-                autoComplete="email" className={authError ? inputError : inputNormal} />
-            </div>
-            <div>
-              <div className="mb-1.5">
-                <label htmlFor="login-password" className="text-sm font-medium text-slate-700">Password</label>
+          <form onSubmit={handleSignIn}>
+            <div className="space-y-4 mb-5">
+              <div>
+                <label htmlFor="login-email" className="block text-sm font-medium text-slate-700 mb-1.5">Email</label>
+                <input id="login-email" type="email" value={email} onChange={e => { setEmail(e.target.value); setAuthError(false); }}
+                  autoComplete="email" className={authError ? inputError : inputNormal} />
               </div>
-              <div className="relative">
-                <input id="login-password" type={showPassword ? "text" : "password"} value={password}
-                  onChange={e => { setPassword(e.target.value); setAuthError(false); }}
-                  onKeyDown={e => { if (e.getModifierState) setCapsLock(e.getModifierState("CapsLock")); }}
-                  placeholder="••••••••" autoComplete="current-password"
-                  className={`${authError ? inputError : inputNormal} pr-10`} />
-                <button type="button" onClick={() => setShowPassword(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
-                  aria-label={showPassword ? "Hide password" : "Show password"}>
-                  {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
-                </button>
+              <div>
+                <div className="mb-1.5">
+                  <label htmlFor="login-password" className="text-sm font-medium text-slate-700">Password</label>
+                </div>
+                <div className="relative">
+                  <input id="login-password" type={showPassword ? "text" : "password"} value={password}
+                    onChange={e => { setPassword(e.target.value); setAuthError(false); }}
+                    onKeyDown={e => { if (e.getModifierState) setCapsLock(e.getModifierState("CapsLock")); }}
+                    placeholder="••••••••" autoComplete="current-password"
+                    className={`${authError ? inputError : inputNormal} pr-10`} />
+                  <button type="button" onClick={() => setShowPassword(v => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                    aria-label={showPassword ? "Hide password" : "Show password"}>
+                    {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+                {capsLock && (
+                  <p className="flex items-center gap-1.5 mt-1.5 text-xs text-amber-600" role="status">
+                    <AlertTriangle size={11} /> Caps Lock is ON
+                  </p>
+                )}
               </div>
-              {capsLock && (
-                <p className="flex items-center gap-1.5 mt-1.5 text-xs text-amber-600" role="status">
-                  <AlertTriangle size={11} /> Caps Lock is ON
-                </p>
-              )}
             </div>
-          </div>
 
-          <button type="button" onClick={handleSignIn} disabled={loading}
-            className="w-full py-2.5 bg-[#265B92] hover:bg-[#1f4c7a] disabled:bg-[#265B92]/70 text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-[#265B92]/40 focus:ring-offset-2"
-            aria-busy={loading}>
-            {loading ? (<><Loader2 size={15} className="animate-spin" />Signing in...</>) : (<>Sign In<ArrowRight size={15} /></>)}
-          </button>
+            <button type="submit" disabled={loading}
+              className="w-full py-2.5 bg-[#265B92] hover:bg-[#1f4c7a] disabled:bg-[#265B92]/70 text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-[#265B92]/40 focus:ring-offset-2"
+              aria-busy={loading}>
+              {loading ? (<><Loader2 size={15} className="animate-spin" />Signing in...</>) : (<>Sign In<ArrowRight size={15} /></>)}
+            </button>
+          </form>
 
           <div className="lg:hidden mt-8 pt-6 border-t border-[#E2E8F0] text-center">
             <p className="text-xs text-slate-400">© 2026 Kerneu Group · Internal ERP System</p>
