@@ -257,12 +257,14 @@ useEffect(() => {
           ["Менеджер", "А. Петров"], ["Клиент", "ООО «СтройТех»"], ["Договор", "ДГ-2024-0041"],
         ];
   const handleMlItemUpdate = async (
-    itemId: number,
-    payload: {
-        selected_product_id?: number | null;
-        final_quantity?: number | null;
-        user_comment?: string | null;
-    },
+  itemId: number,
+  payload: {
+    selected_product_id?: number | null;
+    final_quantity?: number | null;
+    price?: number | null;
+    price_cost?: number | null;
+    user_comment?: string | null;
+  },
 ) => {
   if (!mlImport) return;
 
@@ -344,6 +346,20 @@ useEffect(() => {
     </PageWrap>
   );
 }
+  const formatMoney = (
+  value: number | string | null | undefined,
+) => {
+  const amount = Number(value ?? 0);
+
+  if (!Number.isFinite(amount)) {
+    return "0 ₸";
+  }
+
+  return new Intl.NumberFormat("ru-KZ", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(amount) + " ₸";
+};
   return (
       <PageWrap title={title} subtitle={subtitle}
                 actions={<div className="flex items-center gap-2"><Chip status={project?.status?.status_name ?? "active"}/><Chip status="kp"/></div>}>
@@ -618,23 +634,27 @@ useEffect(() => {
   ) : (
     <>
       <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-x-auto">
-        <table className="w-full min-w-[1200px] border-collapse">
+        <table className="w-full min-w-[1700px] border-collapse">
           <thead>
             <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
               {[
-                "Исходный товар",
-                "Кол-во",
-                "Статус ML",
-                "Совпавший товар",
-                "Доступно",
-                "Ед.",
-                "Категория",
-                "Совпадение",
-                "ID товара",
-                "Итоговое кол-во",
-                "Комментарий",
-                "Статус",
-              ].map((heading) => (
+  "Исходный товар",
+  "Кол-во",
+  "Статус ML",
+  "Совпавший товар",
+  "Себестоимость",
+  "Цена",
+  "Сумма",
+  "Маржа",
+  "Доступно",
+  "Ед.",
+  "Категория",
+                  "Совпадение",
+                    "ID товара",
+                    "Итоговое кол-во",
+                  "Комментарий",
+                    "Статус",
+                ].map((heading) => (
                 <th
                   key={heading}
                   className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left whitespace-nowrap"
@@ -649,7 +669,7 @@ useEffect(() => {
             {mlImport.items.length === 0 ? (
               <tr>
                 <td
-                  colSpan={12}
+                  colSpan={16}
                   className="px-4 py-10 text-center text-sm text-slate-400"
                 >
                   В ML-импорте нет товаров
@@ -659,6 +679,11 @@ useEffect(() => {
               mlImport.items.map((item) => {
                 const isUpdating = updatingItemId === item.id;
                 const similarity = Number(item.similarity_percent ?? 0);
+                const priceCost = Number(item.price_cost ?? 0);
+                const price = Number(item.price ?? 0);
+                const totalAmount = Number(item.total_amount ?? 0);
+                const margin = Number(item.margin ?? 0);
+                const marginPercent = margin * 100;
 
                 return (
                   <tr
@@ -698,7 +723,86 @@ useEffect(() => {
                         </p>
                       )}
                     </td>
+                      {/* Себестоимость */}
+<td className="px-4 py-3">
+  <input
+    type="number"
+    min={0}
+    step="0.01"
+    disabled={mlImport.status !== "draft" || isUpdating}
+    defaultValue={priceCost}
+    onBlur={(event) => {
+      const newPriceCost = Number(event.target.value);
 
+      if (!Number.isFinite(newPriceCost) || newPriceCost < 0) {
+        setMlImportError(
+          "Себестоимость должна быть числом больше или равным нулю",
+        );
+        return;
+      }
+
+      if (newPriceCost !== priceCost) {
+        handleMlItemUpdate(item.id, {
+          price_cost: newPriceCost,
+        });
+      }
+    }}
+    className="w-32 px-2 py-1.5 text-sm font-mono border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
+  />
+</td>
+
+{/* Цена продажи */}
+<td className="px-4 py-3">
+  <input
+    type="number"
+    min={0}
+    step="0.01"
+    disabled={mlImport.status !== "draft" || isUpdating}
+    defaultValue={price}
+    onBlur={(event) => {
+      const newPrice = Number(event.target.value);
+
+      if (!Number.isFinite(newPrice) || newPrice < 0) {
+        setMlImportError(
+          "Цена должна быть числом больше или равным нулю",
+        );
+        return;
+      }
+
+      if (newPrice !== price) {
+        handleMlItemUpdate(item.id, {
+          price: newPrice,
+        });
+      }
+    }}
+    className="w-32 px-2 py-1.5 text-sm font-mono border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
+  />
+</td>
+
+{/* Итоговая сумма */}
+                            <td className="px-4 py-3 whitespace-nowrap">
+  <span className="text-sm font-semibold font-mono text-slate-800">
+    {formatMoney(totalAmount)}
+  </span>
+</td>
+
+{/* Маржа */}
+<td className="px-4 py-3">
+  <span
+    className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${
+      marginPercent >= 20
+        ? "bg-green-50 text-green-700 ring-1 ring-green-200"
+        : marginPercent > 0
+          ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
+          : marginPercent < 0
+            ? "bg-red-50 text-red-700 ring-1 ring-red-200"
+            : "bg-slate-100 text-slate-600 ring-1 ring-slate-200"
+    }`}
+  >
+    
+      {marginPercent.toFixed(1)}%
+    </span>
+</td>
                     <td className="px-4 py-3 text-sm font-mono text-slate-700">
                       {item.available_quantity}
                     </td>

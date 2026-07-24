@@ -78,32 +78,47 @@ export interface MlSimilarVariant {
   product_id?: number;
   id?: number;
   matched_id?: number | string;
+
   product_name?: string;
   name?: string;
+
   similarity?: number;
   similarity_percent?: number;
+
   [key: string]: unknown;
 }
 
 export interface MlImportItemResponse {
   id: number;
+
   input_product: string;
   input_quantity: number;
+
   ml_status: string;
+
   matched_product: string | null;
   matched_external_id: string | null;
+
+  price_cost: number | string;
+  price: number | string;
+  total_amount: number | string;
+  margin: number | string;
+
   available_quantity: number;
+
   unit: string | null;
   category: string | null;
 
-  // Decimal из FastAPI приходит в JSON как число или строка
   similarity_percent: number | string;
 
   similar_variants: MlSimilarVariant[];
+
   selected_product_id: number | null;
   final_quantity: number | null;
+
   user_comment: string | null;
   is_confirmed: boolean;
+
   created_at: string;
   updated_at: string | null;
 }
@@ -111,18 +126,26 @@ export interface MlImportItemResponse {
 export interface MlImportDetailResponse {
   id: number;
   project_id: number;
+
   source_file_name: string;
   status: string;
+
   created_by: number | null;
   created_at: string;
+
   confirmed_by: number | null;
   confirmed_at: string | null;
+
   items: MlImportItemResponse[];
 }
 
 export interface MlImportItemUpdate {
   selected_product_id?: number | null;
   final_quantity?: number | null;
+
+  price?: number | null;
+  price_cost?: number | null;
+
   user_comment?: string | null;
 }
 
