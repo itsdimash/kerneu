@@ -4,8 +4,9 @@ export const api = axios.create({
     baseURL: "http://localhost:8000/api/v1",
     withCredentials: true, // очень важно для Cookie
 });
+
 export interface ProjectItem {
-id: number;
+  id: number;
   project_id: number;
   item_name: string;
   quantity: number;
@@ -20,7 +21,6 @@ export const getProjectItems = async (projectId: number) => {
 
   return data;
 };
-
 
 export interface DashboardStats {
   active_projects: number;
@@ -67,6 +67,7 @@ export async function fetchProjectDetails(projectId: number): Promise<ProjectRes
   if (!res.ok) throw new Error(`Ошибка загрузки проекта: ${res.status}`);
   return JSON.parse(text);
 }
+
 export interface MlImportCreateResponse {
   id: number;
   project_id: number;
@@ -244,3 +245,36 @@ export const shipProjectItems = async (projectId: number) => {
   const { data } = await api.post(`/warehouse/projects/${projectId}/ship`);
   return data;
 };
+
+// ==========================================
+// WORKFLOW (Согласование Комдиром)
+// ==========================================
+
+export interface WorkflowResponse {
+  message: string;
+  project_id: number;
+  status: string;
+  reason?: string | null;
+}
+
+export async function sendProjectToDirector(projectId: number): Promise<WorkflowResponse> {
+  const { data } = await api.post<WorkflowResponse>(
+    `/projects/${projectId}/send-to-director`
+  );
+  return data;
+}
+
+export async function approveProjectDirector(projectId: number): Promise<WorkflowResponse> {
+  const { data } = await api.post<WorkflowResponse>(
+    `/projects/${projectId}/approve`
+  );
+  return data;
+}
+
+export async function rejectProjectDirector(projectId: number, reason?: string): Promise<WorkflowResponse> {
+  const { data } = await api.post<WorkflowResponse>(
+    `/projects/${projectId}/reject`,
+    { reason: reason || null }
+  );
+  return data;
+}
