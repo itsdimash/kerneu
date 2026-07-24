@@ -10,21 +10,23 @@ import { AlertTriangle, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Down
 import { KP_ITEMS_INIT } from "../data/kpItems";
 import {
   fetchProjectDetails,
+  fetchProjectItems,
   getMlImport,
   updateMlImportItem,
   confirmMlImport,
   sendProjectToDirector,
   approveProjectDirector,
   rejectProjectDirector,
+  downloadProjectExcel,
+  downloadKpDocument,
 } from "../api/api";
 
 import type {
   ProjectItem,
   ProjectResponse,
+  ProjectItemResponse,
   MlImportDetailResponse,
   MlImportItemUpdate,
-  downloadProjectExcel,
-  downloadKpDocument
 } from "../api/api";
 
 type MlStatus =
@@ -756,7 +758,14 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
 
   const resolvedProjectId = Number(projectId);
   const hasValidProjectId = Number.isInteger(resolvedProjectId) && resolvedProjectId > 0;
+  const [projectItems, setProjectItems] =
+  useState<ProjectItemResponse[]>([]);
 
+const [projectItemsLoading, setProjectItemsLoading] =
+  useState(false);
+
+const [projectItemsError, setProjectItemsError] =
+  useState<string | null>(null);
   useEffect(() => {
     if (!hasValidProjectId) {
       setProject(null);
@@ -784,6 +793,52 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
     return () => { cancelled = true; };
   }, [resolvedProjectId, hasValidProjectId]);
 
+  useEffect(() => {
+  if (!hasValidProjectId) {
+    setProjectItems([]);
+    setProjectItemsError(
+      `Некорректный ID проекта: ${String(projectId)}`,
+    );
+    return;
+  }
+
+  let cancelled = false;
+
+  setProjectItemsLoading(true);
+  setProjectItemsError(null);
+
+  fetchProjectItems(resolvedProjectId)
+    .then((data) => {
+      if (cancelled) return;
+
+      setProjectItems(data);
+      setProjectItemsError(null);
+    })
+    .catch((error) => {
+      if (cancelled) return;
+
+      setProjectItems([]);
+
+      setProjectItemsError(
+        error instanceof Error
+          ? error.message
+          : "Не удалось загрузить позиции проекта",
+      );
+    })
+    .finally(() => {
+      if (!cancelled) {
+        setProjectItemsLoading(false);
+      }
+    });
+
+  return () => {
+    cancelled = true;
+  };
+}, [
+  resolvedProjectId,
+  hasValidProjectId,
+  projectId,
+]);
   const currentStatus = project?.status?.status_name || "На согласовании у Комдира";
 
   // РАНЬШЕ: `decision` был чисто локальным useState<null|boolean>(null), который
@@ -840,6 +895,38 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
   const subtitle = project
       ? `${project.client?.client_name ?? "—"} · Проверка КП`
       : "ООО «СтройТех» · Проверка КП";
+  const sidebarDetails: [string, string][] = [
+  [
+    "Сумма КП",
+    project?.invoice?.amount != null
+      ? fmt(Number(project.invoice.amount))
+      : "—",
+  ],
+  [
+    "Маржа",
+    project?.planned_margin != null
+      ? `${project.planned_margin}%`
+      : "—",
+  ],
+  [
+    "Клиент",
+    project?.client?.client_name ?? "—",
+  ],
+  [
+    "PM",
+    project?.pm?.name ?? "—",
+  ],
+  [
+    "Дедлайн",
+    project?.deadline
+      ? new Date(project.deadline).toLocaleDateString("ru-RU")
+      : "—",
+  ],
+  [
+    "Договор",
+    project?.contract_number ?? "—",
+  ],
+];
 
   return (
     <PageWrap 
@@ -873,33 +960,112 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
         <div className="col-span-2 space-y-5">
           <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
             <table className="w-full border-collapse">
-              <thead><tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-                {["Наименование","Кол-во","Ед.","Себестоимость","Цена","Сумма","Маржа"].map(h => (
-                  <th key={h} className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
+              <thead>
+              <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
+                {["Наименование", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа"].map(h => (
+                    <th key={h}
+                        className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
                 ))}
-              </tr></thead>
+              </tr>
+              </thead>
               <tbody className="divide-y divide-[#E2E8F0]">
-                {KP_ITEMS_INIT.filter(i => i.price > 0).map(item => {
-                  // Fallbacks: If your KP_ITEMS_INIT doesn't have a cost property, we fake it for the UI preview
-                  const priceCost = (item as any).cost || (item.price * 0.755); 
-                  const margin = item.price > 0 ? ((item.price - priceCost) / item.price) * 100 : 0;
-                  
-                  return (
-                    <tr key={item.id} className="hover:bg-slate-50/50">
-                      <td className="px-4 py-3 text-sm text-slate-700">{item.name}</td>
-                      <td className="px-4 py-3 text-sm font-mono">{item.qty.toLocaleString("ru-RU")}</td>
-                      <td className="px-4 py-3 text-xs text-slate-500">{item.unit}</td>
-                      <td className="px-4 py-3 text-sm font-mono">{priceCost.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</td>
-                      <td className="px-4 py-3 text-sm font-mono">{item.price.toLocaleString("ru-RU")}</td>
-                      <td className="px-4 py-3 text-sm font-mono font-semibold">{item.total.toLocaleString("ru-RU")}</td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : "bg-red-50 text-red-700 ring-1 ring-red-200"}`}>
-                          {margin.toFixed(1)}%
-                        </span>
-                      </td>
-                    </tr>
-                  )
-                })}
+              {projectItemsLoading ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-10 text-center">
+                      <div className="flex items-center justify-center gap-2 text-sm text-slate-500">
+                        <Loader2
+                            size={16}
+                            className="animate-spin text-[#2563EB]"
+                        />
+                        Загрузка позиций проекта…
+                      </div>
+                    </td>
+                  </tr>
+              ) : projectItemsError ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-10">
+                      <div className="flex items-center justify-center gap-2 text-sm text-red-600">
+                        <AlertTriangle size={16}/>
+                        {projectItemsError}
+                      </div>
+                    </td>
+                  </tr>
+              ) : projectItems.length === 0 ? (
+                  <tr>
+                    <td
+                        colSpan={7}
+                        className="px-4 py-10 text-center text-sm text-slate-400"
+                    >
+                      У проекта пока нет позиций
+                    </td>
+                  </tr>
+              ) : (
+                  projectItems.map((item) => {
+                    const quantity = Number(item.required_quantity ?? 0);
+                    const salePrice = Number(item.sale_price ?? 0);
+                    const costPrice = Number(item.product?.cost_price ?? 0);
+                    const totalSum = Number(item.total_sum ?? salePrice * quantity);
+
+                    const marginPercent =
+                        salePrice > 0
+                            ? ((salePrice - costPrice) / salePrice) * 100
+                            : 0;
+
+                    return (
+                        <tr
+                            key={item.id}
+                            className="hover:bg-slate-50/50"
+                        >
+                          <td className="px-4 py-3 text-sm text-slate-700">
+                            {item.product?.name ?? "—"}
+                          </td>
+
+                          <td className="px-4 py-3 text-sm font-mono">
+                            {quantity.toLocaleString("ru-RU")}
+                          </td>
+
+                          <td className="px-4 py-3 text-xs text-slate-500">
+                            {item.product?.unit ?? "шт"}
+                          </td>
+
+                          <td className="px-4 py-3 text-sm font-mono">
+                            {costPrice.toLocaleString("ru-RU", {
+                              minimumFractionDigits: 0,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+
+                          <td className="px-4 py-3 text-sm font-mono">
+                            {salePrice.toLocaleString("ru-RU", {
+                              minimumFractionDigits: 0,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+
+                          <td className="px-4 py-3 text-sm font-mono font-semibold">
+                            {totalSum.toLocaleString("ru-RU", {
+                              minimumFractionDigits: 0,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+
+                          <td className="px-4 py-3">
+            <span
+                className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${
+                    marginPercent >= 20
+                        ? "bg-green-50 text-green-700 ring-1 ring-green-200"
+                        : marginPercent > 0
+                            ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
+                            : "bg-red-50 text-red-700 ring-1 ring-red-200"
+                }`}
+            >
+              {marginPercent.toFixed(1)}%
+            </span>
+                          </td>
+                        </tr>
+                    );
+                  })
+              )}
               </tbody>
             </table>
           </div>
@@ -907,16 +1073,28 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
           <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
             <h3 className="text-sm font-semibold text-slate-900 mb-4">Решение по КП</h3>
             {deciding ? (
-              <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={15} className="animate-spin text-[#2563EB]" />Сохранение решения…</div>
+                <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={15}
+                                                                                         className="animate-spin text-[#2563EB]"/>Сохранение
+                  решения…</div>
             ) : decision === null ? (
-              <div className="flex items-center gap-3">
-                <button onClick={() => decide(true)} disabled={!project} className="flex items-center gap-2 px-5 py-2.5 bg-[#16A34A] text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"><CheckCircle2 size={15} /> Подтверждаю</button>
-                <button onClick={() => decide(false)} disabled={!project} className="flex items-center gap-2 px-5 py-2.5 bg-white text-red-600 text-sm font-medium rounded-lg border border-[#E2E8F0] hover:bg-red-50 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"><XCircle size={15} /> Отклонить КП</button>
-              </div>
+                <div className="flex items-center gap-3">
+                  <button onClick={() => decide(true)} disabled={!project}
+                          className="flex items-center gap-2 px-5 py-2.5 bg-[#16A34A] text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+                    <CheckCircle2 size={15}/> Подтверждаю
+                  </button>
+                  <button onClick={() => decide(false)} disabled={!project}
+                          className="flex items-center gap-2 px-5 py-2.5 bg-white text-red-600 text-sm font-medium rounded-lg border border-[#E2E8F0] hover:bg-red-50 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+                    <XCircle size={15}/> Отклонить КП
+                  </button>
+                </div>
             ) : decision ? (
-              <div className="flex items-center gap-2 px-4 py-3 bg-green-50 rounded-lg border border-green-200"><CheckCircle2 size={16} className="text-green-600" /><span className="text-sm font-medium text-green-700">КП подтверждено</span></div>
+                <div className="flex items-center gap-2 px-4 py-3 bg-green-50 rounded-lg border border-green-200">
+                  <CheckCircle2 size={16} className="text-green-600"/><span
+                    className="text-sm font-medium text-green-700">КП подтверждено</span></div>
             ) : (
-              <div className="flex items-center gap-2 px-4 py-3 bg-red-50 rounded-lg border border-red-200"><XCircle size={16} className="text-red-600" /><span className="text-sm font-medium text-red-700">КП отклонено</span></div>
+                <div className="flex items-center gap-2 px-4 py-3 bg-red-50 rounded-lg border border-red-200"><XCircle
+                    size={16} className="text-red-600"/><span
+                    className="text-sm font-medium text-red-700">КП отклонено</span></div>
             )}
           </div>
         </div>
@@ -924,11 +1102,41 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
         <div className="space-y-4">
           <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
             <h3 className="text-sm font-semibold text-slate-900 mb-3">Детали</h3>
-            <dl className="space-y-2.5">
-              {[["Сумма КП","2 760 000 ₸"],["Маржа","24.5%"],["Клиент","ООО «СтройТех»"],["PM","А. Петров"],["Дедлайн","15.08.2024"]].map(([l,v]) => (
-                <div key={l} className="flex justify-between gap-3"><dt className="text-xs text-slate-400">{l}</dt><dd className="text-xs font-medium text-slate-700">{v}</dd></div>
-              ))}
-            </dl>
+            {projectError ? (
+                <div className="flex items-start gap-2.5 text-red-600">
+                  <AlertTriangle
+                      size={15}
+                      className="mt-0.5 flex-shrink-0"
+                  />
+
+                  <div>
+                    <p className="text-sm font-medium">
+                      Не удалось загрузить детали проекта
+                    </p>
+
+                    <p className="mt-1 text-xs text-red-500">
+                      {projectError}
+                    </p>
+                  </div>
+                </div>
+            ) : (
+                <dl className="space-y-2.5">
+                  {sidebarDetails.map(([label, value]) => (
+                      <div
+                          key={label}
+                          className="flex items-start justify-between gap-3"
+                      >
+                        <dt className="text-xs text-slate-400">
+                          {label}
+                        </dt>
+
+                        <dd className="text-right text-xs font-medium text-slate-700">
+                          {value}
+                        </dd>
+                      </div>
+                  ))}
+                </dl>
+            )}
           </div>
         </div>
       </div>
@@ -936,7 +1144,7 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
   );
 }
 
-export function ProjectPageAccountant({ projectId }: { projectId: number }) {
+export function ProjectPageAccountant({projectId}: { projectId: number }) {
   const [isExporting, setIsExporting] = useState(false);
 
   const handleExportExcel = async () => {
@@ -952,7 +1160,7 @@ export function ProjectPageAccountant({ projectId }: { projectId: number }) {
 
   return (
     <PageWrap 
-      title="Офисный комплекс «Башня»" 
+      title="Офисный комплекс «Башня»"
       subtitle="ООО «СтройТех» · Счета и оплата"
       actions={
         <div className="flex items-center gap-2">
