@@ -7,7 +7,6 @@ import { fmt } from "../lib/format";
 import { INVOICES_INIT } from "../data/invoices";
 import { STOCK_INIT } from "../data/stock";
 import { AlertTriangle, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText } from "lucide-react";
-import { KP_ITEMS_INIT } from "../data/kpItems";
 import {
   fetchProjectDetails,
   fetchProjectItems,
@@ -820,27 +819,50 @@ const [projectItemsError, setProjectItemsError] =
               </tr>
               </thead>
               <tbody className="divide-y divide-[#E2E8F0]">
-                {KP_ITEMS_INIT.filter(i => i.price > 0).map(item => {
-                  // Fallbacks: If your KP_ITEMS_INIT doesn't have a cost property, we fake it for the UI preview
-                  const priceCost = (item as any).cost || (item.price * 0.755); 
-                  const margin = item.price > 0 ? ((item.price - priceCost) / item.price) * 100 : 0;
-                  
-                  return (
-                    <tr key={item.id} className="hover:bg-slate-50/50">
-                      <td className="px-4 py-3 text-sm text-slate-700">{item.name}</td>
-                      <td className="px-4 py-3 text-sm font-mono">{item.qty.toLocaleString("ru-RU")}</td>
-                      <td className="px-4 py-3 text-xs text-slate-500">{item.unit}</td>
-                      <td className="px-4 py-3 text-sm font-mono">{priceCost.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</td>
-                      <td className="px-4 py-3 text-sm font-mono">{item.price.toLocaleString("ru-RU")}</td>
-                      <td className="px-4 py-3 text-sm font-mono font-semibold">{item.total.toLocaleString("ru-RU")}</td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : "bg-red-50 text-red-700 ring-1 ring-red-200"}`}>
-                          {margin.toFixed(1)}%
-                        </span>
-                      </td>
-                    </tr>
-                  )
-                })}
+                {projectItemsLoading ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-400">
+                      <Loader2 size={16} className="inline-block animate-spin text-[#2563EB] mr-2" />
+                      Загружаем позиции проекта…
+                    </td>
+                  </tr>
+                ) : projectItemsError ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-10 text-center text-sm text-red-500">
+                      {projectItemsError}
+                    </td>
+                  </tr>
+                ) : projectItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-400">
+                      В проекте нет позиций
+                    </td>
+                  </tr>
+                ) : (
+                  projectItems.map(item => {
+                    const qty = Number(item.required_quantity ?? 0);
+                    const price = Number(item.sale_price ?? 0);
+                    const priceCost = Number(item.product?.cost_price ?? 0);
+                    const total = item.total_sum != null ? Number(item.total_sum) : qty * price;
+                    const margin = price > 0 ? ((price - priceCost) / price) * 100 : 0;
+
+                    return (
+                      <tr key={item.id} className="hover:bg-slate-50/50">
+                        <td className="px-4 py-3 text-sm text-slate-700">{item.product?.name ?? "—"}</td>
+                        <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
+                        <td className="px-4 py-3 text-xs text-slate-500">{item.product?.unit ?? "шт"}</td>
+                        <td className="px-4 py-3 text-sm font-mono">{priceCost.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</td>
+                        <td className="px-4 py-3 text-sm font-mono">{price.toLocaleString("ru-RU")}</td>
+                        <td className="px-4 py-3 text-sm font-mono font-semibold">{total.toLocaleString("ru-RU")}</td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : "bg-red-50 text-red-700 ring-1 ring-red-200"}`}>
+                            {margin.toFixed(1)}%
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
               </tbody>
             </table>
           </div>
