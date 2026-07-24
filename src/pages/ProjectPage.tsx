@@ -897,8 +897,9 @@ export function ProjectPage({
   receipts,
   projectItems,
   projectId,
+  onOpenProject,
 }: {
-  role: Role;
+  role: Role | string;
   onNavigate: (p: Page) => void;
   projectState: ProjectState;
   onKpSent: () => void;
@@ -906,26 +907,7 @@ export function ProjectPage({
   receipts: Receipt[];
   projectItems: ProjectItem[];
   projectId: number;
-  onOpenProject?: (
-    role,
-    onNavigate,
-    projectState,
-    onKpSent,
-    onKpApproved,
-    receipts,
-    projectItems,
-    projectId,
-    onOpenProject
-}: {
-    role: Role | string,
-    onNavigate: (p: Page) => void,
-    projectState: ProjectState,
-    onKpSent: () => void,
-    onKpApproved: () => void,
-    receipts: Receipt[],
-    projectItems: ProjectItem[],
-    projectId: number,
-  ) => Promise<void>;
+  onOpenProject?: (projectId: number) => Promise<void>;
 }) {
   if (role === "pm") {
     return (
@@ -940,7 +922,7 @@ export function ProjectPage({
     );
   }
 
-  if (role === "director") {
+  if (role === "commercial_director" || role === "director") {
     return (
       <ProjectPageDirector
         projectState={projectState}
@@ -951,11 +933,8 @@ export function ProjectPage({
   }
 
   if (role === "accountant") {
-    return <ProjectPageAccountant />;
+    return <ProjectPageAccountant projectId={projectId} />;
   }
 
-  if (role === "pm")        return <ProjectPagePM onNavigate={onNavigate} projectState={projectState} onKpSent={onKpSent} receipts={receipts} projectItems={projectItems} projectId={projectId}/>;
-  if (role === "commercial_director" || role === "director")  return <ProjectPageDirector projectState={projectState} onKpApproved={onKpApproved} projectId={projectId} />;
-  if (role === "accountant")return <ProjectPageAccountant projectId={projectId} />;
   return <ProjectPageWarehouse />;
 }
