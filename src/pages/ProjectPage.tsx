@@ -37,7 +37,6 @@ export function ProjectPagePM({
     projectId: number;
 }) {
   const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(projectState.kpSent);
 
   // Детали проекта
   const [project, setProject] = useState<ProjectResponse | null>(null);
@@ -134,6 +133,28 @@ export function ProjectPagePM({
 
   const currentStatus = project?.status?.status_name || "Новый";
 
+  // Страхуемся от рассинхронизации: если статус проекта меняется (например,
+  // Комдир отклонил КП), но у нас уже есть локальный mlImport в состоянии —
+  // подтягиваем его заново с сервера. Без этого, если backend действительно
+  // сбросил ml_import.status на "draft" при отклонении, но эта вкладка не
+  // перезагружалась, PM продолжит видеть устаревший бейдж "Подтверждено" и
+  // задизейбленные поля, хотя по факту редактирование уже разблокировано.
+  useEffect(() => {
+    if (!mlImport) return;
+    let cancelled = false;
+
+    getMlImport(mlImport.id)
+      .then((data) => {
+        if (!cancelled) setMlImport(data);
+      })
+      .catch(() => {
+        // тихо игнорируем — это фоновая ресинхронизация, а не первичная загрузка
+      });
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStatus]);
+
   const statusToIndex: Record<string, number> = {
     "Новый": 0,
     "В редактировании": 1,
@@ -148,7 +169,25 @@ export function ProjectPagePM({
   };
 
   const currentIndex = statusToIndex[currentStatus] ?? 0;
-  const isKpApproved = currentIndex >= 3 || projectState.kpApproved;
+  // ВАЖНО: раньше isKpApproved доверял projectState.kpApproved (флаг из
+  // родительского компонента) как fallback ИЛИ-условие. Проблема: этот флаг
+  // не сбрасывается при отклонении — если проект хоть раз был одобрен (или
+  // родитель проинициализировал его как true), кнопка навсегда показывает
+  // "КП одобрено", даже когда backend вернул "Отклонено Комдиром". Как только
+  // у нас есть реальные данные проекта с сервера, статус с backend'а — это
+  // единственный источник истины; projectState.kpApproved используется только
+  // как временная заглушка, пока project ещё не загрузился.
+  const isKpApproved = project ? currentIndex >= 3 : projectState.kpApproved;
+
+  // ВАЖНО: currentIndex используется только для степпера (визуальный прогресс),
+  // поэтому "Отклонено Комдиром" там намеренно на одном уровне с "На согласовании".
+  // Но для логики кнопки это два разных состояния — раньше `sent` было true
+  // в обоих случаях (currentIndex >= 2), из-за чего отклонённый проект показывал
+  // "КП на согласовании" и кнопка оставалась заблокированной навсегда.
+  const isPendingDirector = currentStatus === "На согласовании у Комдира";
+  const isRejected = currentStatus === "Отклонено Комдиром";
+  const isApproved = isKpApproved;
+  const sent = isPendingDirector;
 
   const STAGES = [
     { label: "Новый", done: currentIndex > 0, active: currentIndex === 0 },
@@ -220,7 +259,6 @@ export function ProjectPagePM({
     setSending(true);
     try {
       const response = await sendProjectToDirector(project.id);
-      setSent(true);
       onKpSent();
       setProject(prev => prev ? { 
         ...prev, 
@@ -355,11 +393,20 @@ export function ProjectPagePM({
           </div>
         </div>
 
-        {sent && !isKpApproved && (
+        {sent && !isApproved && (
             <div className="mb-6 rounded-lg border p-5 bg-slate-50 border-[#E2E8F0]">
                 <div className="flex items-center gap-2 text-sm text-slate-500">
                   <Loader2 size={14} className="animate-spin text-slate-400"/>
                   Ожидаем подтверждения Комдира…
+                </div>
+            </div>
+        )}
+
+        {isRejected && (
+            <div className="mb-6 rounded-lg border p-5 bg-red-50 border-red-200">
+                <div className="flex items-center gap-2 text-sm text-red-700">
+                  <XCircle size={14}/>
+                  КП отклонено Комдиром. Отредактируйте товары ниже и отправьте повторно.
                 </div>
             </div>
         )}
@@ -393,17 +440,26 @@ export function ProjectPagePM({
                     </button>
                   </AppTooltip>
 
-                  <AppTooltip text={(!mlImport || mlImport.status !== "confirmed") ? "Сначала подтвердите импорт товаров" : ""}>
+                  <AppTooltip text={
+                    !mlImport ? "Сначала подтвердите импорт товаров" :
+                    mlImport.status !== "confirmed" ? (isRejected ? "Сначала подтвердите изменённый импорт товаров" : "Сначала подтвердите импорт товаров") :
+                    ""
+                  }>
                     <button 
                       onClick={handleSendToDirector} 
-                      disabled={!mlImport || mlImport.status !== "confirmed" || sending || sent}
+                      disabled={!mlImport || mlImport.status !== "confirmed" || sending || sent || isApproved}
                       className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${
                           sent ? "bg-green-600 text-white cursor-default" :
-                          (mlImport?.status === "confirmed" && !sending) ? "bg-[#2563EB] hover:bg-[#1d4ed8] text-white" :
+                          isApproved ? "bg-green-700 text-white cursor-default" :
+                          mlImport?.status !== "confirmed" ? "bg-slate-200 text-slate-400 cursor-not-allowed" :
+                          isRejected ? "bg-red-600 hover:bg-red-700 text-white" :
+                          !sending ? "bg-[#2563EB] hover:bg-[#1d4ed8] text-white" :
                           "bg-slate-200 text-slate-400 cursor-not-allowed"
                       }`}>
                       {sending ? <><Loader2 size={14} className="animate-spin"/>Отправка…</> :
                           sent ? <><CheckCircle2 size={14}/>КП на согласовании</> :
+                          isApproved ? <><CheckCircle2 size={14}/>КП одобрено</> :
+                          isRejected ? <><XCircle size={14}/>Отправить повторно</> :
                               <><Send size={14}/>Отправить Комдиру</>}
                     </button>
                   </AppTooltip>
@@ -598,21 +654,72 @@ export function ProjectPagePM({
 export function ProjectPageDirector({ projectState, onKpApproved, projectId }: {
   projectState: ProjectState; onKpApproved: () => void; projectId: number;
 }) {
-  const [decision, setDecision] = useState<null | boolean>(null);
+  const [project, setProject] = useState<ProjectResponse | null>(null);
+  const [projectError, setProjectError] = useState<string | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
 
+  const resolvedProjectId = Number(projectId);
+  const hasValidProjectId = Number.isInteger(resolvedProjectId) && resolvedProjectId > 0;
+
+  useEffect(() => {
+    if (!hasValidProjectId) {
+      setProject(null);
+      setProjectError(`Некорректный ID проекта: ${String(projectId)}`);
+      return;
+    }
+
+    let cancelled = false;
+    setProjectError(null);
+
+    fetchProjectDetails(resolvedProjectId)
+      .then((data) => {
+        if (!cancelled) {
+          setProject(data);
+          setProjectError(null);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setProject(null);
+          setProjectError(error instanceof Error ? error.message : "Не удалось загрузить проект");
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [resolvedProjectId, hasValidProjectId]);
+
+  const currentStatus = project?.status?.status_name || "На согласовании у Комдира";
+
+  // РАНЬШЕ: `decision` был чисто локальным useState<null|boolean>(null), который
+  // сбрасывался в null при каждом монтировании компонента — то есть не имел
+  // никакой связи с реальным статусом проекта на backend. Именно поэтому после
+  // обновления страницы или повторного входа Комдир снова видел кнопки
+  // "Подтверждаю" / "Отклонить", даже если решение уже было сохранено на
+  // сервере. Теперь решение выводится напрямую из статуса проекта с backend'а.
+  const decision: null | boolean =
+    currentStatus === "Одобрено Комдиром" ? true :
+    currentStatus === "Отклонено Комдиром" ? false :
+    null;
+
   const decide = async (approve: boolean) => {
+    if (!project) return;
     setDeciding(true);
     try {
       if (approve) {
-        await approveProjectDirector(projectId);
-        setDecision(true);
+        const response = await approveProjectDirector(project.id);
+        setProject((prev) => prev ? {
+          ...prev,
+          status: { id: prev.status?.id || 0, status_name: response.status },
+        } : prev);
         onKpApproved();
       } else {
         const reason = window.prompt("Укажите причину отклонения (необязательно):") || undefined;
-        await rejectProjectDirector(projectId, reason);
-        setDecision(false);
+        const response = await rejectProjectDirector(project.id, reason);
+        setProject((prev) => prev ? {
+          ...prev,
+          status: { id: prev.status?.id || 0, status_name: response.status },
+        } : prev);
       }
     } catch (error) {
       console.error("Ошибка при принятии решения:", error);
@@ -623,9 +730,10 @@ export function ProjectPageDirector({ projectState, onKpApproved, projectId }: {
   };
 
   const handleExportExcel = async () => {
+    if (!project) return;
     try {
       setIsExporting(true);
-      await downloadProjectExcel(projectId);
+      await downloadProjectExcel(project.id);
     } catch (error) {
       console.error("Ошибка при скачивании:", error);
     } finally {
@@ -633,17 +741,22 @@ export function ProjectPageDirector({ projectState, onKpApproved, projectId }: {
     }
   };
 
+  const title = project?.name ?? "Офисный комплекс «Башня»";
+  const subtitle = project
+      ? `${project.client?.client_name ?? "—"} · Проверка КП`
+      : "ООО «СтройТех» · Проверка КП";
+
   return (
     <PageWrap 
-      title="Офисный комплекс «Башня»" 
-      subtitle="ООО «СтройТех» · Проверка КП"
+      title={title} 
+      subtitle={subtitle}
       actions={
         <div className="flex items-center gap-2">
-          <Chip status="review" />
+          <Chip status={currentStatus} />
           <Chip status="kp" />
           <button 
             onClick={handleExportExcel}
-            disabled={isExporting}
+            disabled={isExporting || !project}
             className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors whitespace-nowrap disabled:opacity-50"
           >
             {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />} 
@@ -652,6 +765,15 @@ export function ProjectPageDirector({ projectState, onKpApproved, projectId }: {
         </div>
       }
     >
+      {projectError && (
+        <div className="mb-6 flex items-start gap-2.5 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
+          <AlertTriangle size={15} className="text-red-500 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-red-700">Не удалось загрузить проект</p>
+            <p className="text-xs text-red-600 mt-1">{projectError}</p>
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-3 gap-6">
         <div className="col-span-2 space-y-5">
           <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
@@ -693,8 +815,8 @@ export function ProjectPageDirector({ projectState, onKpApproved, projectId }: {
               <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={15} className="animate-spin text-[#2563EB]" />Сохранение решения…</div>
             ) : decision === null ? (
               <div className="flex items-center gap-3">
-                <button onClick={() => decide(true)} className="flex items-center gap-2 px-5 py-2.5 bg-[#16A34A] text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"><CheckCircle2 size={15} /> Подтверждаю</button>
-                <button onClick={() => decide(false)} className="flex items-center gap-2 px-5 py-2.5 bg-white text-red-600 text-sm font-medium rounded-lg border border-[#E2E8F0] hover:bg-red-50 transition-colors whitespace-nowrap"><XCircle size={15} /> Отклонить КП</button>
+                <button onClick={() => decide(true)} disabled={!project} className="flex items-center gap-2 px-5 py-2.5 bg-[#16A34A] text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"><CheckCircle2 size={15} /> Подтверждаю</button>
+                <button onClick={() => decide(false)} disabled={!project} className="flex items-center gap-2 px-5 py-2.5 bg-white text-red-600 text-sm font-medium rounded-lg border border-[#E2E8F0] hover:bg-red-50 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"><XCircle size={15} /> Отклонить КП</button>
               </div>
             ) : decision ? (
               <div className="flex items-center gap-2 px-4 py-3 bg-green-50 rounded-lg border border-green-200"><CheckCircle2 size={16} className="text-green-600" /><span className="text-sm font-medium text-green-700">КП подтверждено</span></div>
