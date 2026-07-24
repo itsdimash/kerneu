@@ -9,38 +9,95 @@ import { STOCK_INIT } from "../data/stock";
 import { AlertTriangle, CheckCircle2, Loader2, Send, Truck, Check, FileCheck, XCircle } from "lucide-react";
 import { KP_ITEMS_INIT } from "../data/kpItems";
 import {
-  ProjectItem,
   fetchProjectDetails,
-  ProjectResponse,
-  MlImportDetailResponse,
   getMlImport,
   updateMlImportItem,
   confirmMlImport,
   sendProjectToDirector,
   approveProjectDirector,
-  rejectProjectDirector
+  rejectProjectDirector,
 } from "../api/api";
 
+import type {
+  ProjectItem,
+  ProjectResponse,
+  MlImportDetailResponse,
+  MlImportItemUpdate,
+} from "../api/api";
+
+type MlStatus =
+  | "Нет в системе"
+  | "Есть в системе (недостаточно)"
+  | "На складе";
+
+const ML_STATUS_STYLES: Record<
+  MlStatus,
+  {
+    badge: string;
+    row: string;
+  }
+> = {
+  "Нет в системе": {
+    badge:
+      "bg-red-100 text-red-800 border border-red-300",
+    row:
+      "bg-red-50 hover:bg-red-100/60",
+  },
+
+  "Есть в системе (недостаточно)": {
+    badge:
+      "bg-yellow-100 text-yellow-800 border border-yellow-300",
+    row:
+      "bg-yellow-50 hover:bg-yellow-100/60",
+  },
+
+  "На складе": {
+    badge:
+      "bg-green-100 text-green-800 border border-green-300",
+    row:
+      "bg-green-50 hover:bg-green-100/60",
+  },
+};
+
+const normalizeMlStatus = (
+  status: string | null | undefined,
+): MlStatus => {
+  const normalized = status?.trim();
+
+  if (normalized === "На складе") {
+    return "На складе";
+  }
+
+  if (
+    normalized ===
+    "Есть в системе (недостаточно)"
+  ) {
+    return "Есть в системе (недостаточно)";
+  }
+
+  return "Нет в системе";
+};
+
 export function ProjectPagePM({
-    onNavigate,
-    projectState,
-    onKpSent,
-    projectId,
+  onNavigate,
+  projectState,
+  onKpSent,
+  projectId,
 }: {
-    onNavigate: (p: Page) => void;
-    projectState: ProjectState;
-    onKpSent: () => void;
-    receipts: Receipt[];
-    projectItems: ProjectItem[];
-    projectId: number;
-}) {
+  onNavigate: (p: Page) => void;
+  projectState: ProjectState;
+  onKpSent: () => void;
+  receipts: Receipt[];
+  projectItems: ProjectItem[];
+  projectId: number;
+})  {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(projectState.kpSent);
 
   // Детали проекта
   const [project, setProject] = useState<ProjectResponse | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
-  
+
   // ML Import
   const [mlImport, setMlImport] = useState<MlImportDetailResponse | null>(null);
   const [mlImportLoading, setMlImportLoading] = useState(false);
@@ -50,7 +107,6 @@ export function ProjectPagePM({
 
   const resolvedProjectId = Number(projectId);
   const hasValidProjectId = Number.isInteger(resolvedProjectId) && resolvedProjectId > 0;
-
   useEffect(() => {
     if (!hasValidProjectId) {
       setProject(null);
@@ -136,8 +192,8 @@ export function ProjectPagePM({
   const statusToIndex: Record<string, number> = {
     "Новый": 0,
     "В редактировании": 1,
-    "На согласовании у Комдира": 2, 
-    "Отклонено Комдиром": 2, 
+    "На согласовании у Комдира": 2,
+    "Отклонено Комдиром": 2,
     "Одобрено Комдиром": 3,
     "Ожидание подписания": 3,
     "Активный закуп": 4,
@@ -178,24 +234,39 @@ export function ProjectPagePM({
           ["Менеджер", "А. Петров"], ["Клиент", "ООО «СтройТех»"], ["Договор", "ДГ-2024-0041"],
         ];
 
-  const handleMlItemUpdate = async (itemId: number, payload: any) => {
-    if (!mlImport) return;
-    try {
-      setUpdatingItemId(itemId);
-      setMlImportError(null);
-      const updatedItem = await updateMlImportItem(mlImport.id, itemId, payload);
-      setMlImport((current) => {
-        if (!current) return current;
-        return {
-          ...current,
-          items: current.items.map((item) => item.id === updatedItem.id ? updatedItem : item),
-        };
-      });
-    } catch (error) {
-      setMlImportError(error instanceof Error ? error.message : "Не удалось изменить строку");
-    } finally {
-      setUpdatingItemId(null);
-    }
+  const handleMlItemUpdate = async (itemId: number, payload: MlImportItemUpdate,) => {
+  if (!mlImport) return;
+  try {
+    setUpdatingItemId(itemId);
+    setMlImportError(null);
+
+    const updatedItem = await updateMlImportItem(
+      mlImport.id,
+      itemId,
+      payload,
+    );
+
+    setMlImport((current) => {
+      if (!current) return current;
+
+      return {
+        ...current,
+        items: current.items.map((item) =>
+          item.id === updatedItem.id
+            ? updatedItem
+            : item,
+        ),
+      };
+    });
+  } catch (error) {
+    setMlImportError(
+      error instanceof Error
+        ? error.message
+        : "Не удалось изменить строку",
+    );
+  } finally {
+    setUpdatingItemId(null);
+  }
   };
 
   const handleConfirmMlImport = async () => {
@@ -220,13 +291,13 @@ export function ProjectPagePM({
       const response = await sendProjectToDirector(project.id);
       setSent(true);
       onKpSent();
-      
+
       // Локально обновляем статус, чтобы шаги переключились не дожидаясь рефреша
-      setProject(prev => prev ? { 
-        ...prev, 
-        status: { id: prev.status?.id || 0, status_name: response.status } 
+      setProject(prev => prev ? {
+        ...prev,
+        status: { id: prev.status?.id || 0, status_name: response.status }
       } : prev);
-      
+
     } catch (error) {
       console.error("Не удалось отправить Комдиру:", error);
       alert("Ошибка при отправке Комдиру. Проверьте консоль.");
@@ -234,7 +305,13 @@ export function ProjectPagePM({
       setSending(false);
     }
   };
-
+  const canConfirmMlImport =
+    Boolean(mlImport) &&
+    mlImport.status === "draft" &&
+    mlImport.items.length > 0 &&
+    mlImport.items.every(
+        (item) => item.ml_status === "На складе",
+    );
   if (!hasValidProjectId) {
     return (
       <PageWrap title="Проект не выбран" subtitle="Не удалось определить ID проекта">
@@ -258,8 +335,8 @@ export function ProjectPagePM({
   };
 
   return (
-    <PageWrap 
-        title={title} 
+    <PageWrap
+        title={title}
         subtitle={subtitle}
         actions={<div className="flex items-center gap-2"><Chip status={currentStatus}/><Chip status="kp"/></div>}
     >
@@ -350,10 +427,10 @@ export function ProjectPagePM({
                       {mlImport.status === "confirmed" ? "Подтверждено" : "Черновик"}
                     </span>
                   )}
-                  
+
                   <AppTooltip text={(!mlImport || mlImport.status !== "confirmed") ? "Сначала подтвердите импорт товаров" : ""}>
-                    <button 
-                      onClick={handleSendToDirector} 
+                    <button
+                      onClick={handleSendToDirector}
                       disabled={!mlImport || mlImport.status !== "confirmed" || sending || sent}
                       className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-all ${
                           sent ? "bg-green-600 text-white cursor-default" :
@@ -393,133 +470,139 @@ export function ProjectPagePM({
                   <table className="w-full min-w-[1700px] border-collapse">
                     <thead>
                       <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-                        {["Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Себестоимость", "Цена", "Сумма", "Маржа", "Доступно", "Ед.", "Категория", "Совпадение", "ID товара", "Итоговое кол-во", "Комментарий", "Статус"].map((heading) => (
+                        {["Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Себестоимость", "Цена", "Сумма", "Маржа", "Доступно", "Комментарий", "Статус"].map((heading) => (
                           <th key={heading} className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left whitespace-nowrap">{heading}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#E2E8F0]">
                       {mlImport.items.length === 0 ? (
-                        <tr><td colSpan={16} className="px-4 py-10 text-center text-sm text-slate-400">В ML-импорте нет товаров</td></tr>
+                        <tr><td colSpan={12} className="px-4 py-10 text-center text-sm text-slate-400">В ML-импорте нет товаров</td></tr>
                       ) : (
                         mlImport.items.map((item) => {
+
                           const isUpdating = updatingItemId === item.id;
-                          const similarity = Number(item.similarity_percent ?? 0);
                           const priceCost = Number(item.price_cost ?? 0);
                           const price = Number(item.price ?? 0);
                           const totalAmount = Number(item.total_amount ?? 0);
                           const margin = Number(item.margin ?? 0);
                           const marginPercent = margin * 100;
+                          const normalizedStatus = normalizeMlStatus(item.ml_status);
+                          const statusStyle = ML_STATUS_STYLES[normalizedStatus];
 
                           return (
-                            <tr key={item.id} className={`transition-colors ${item.is_confirmed ? "bg-green-50/30" : item.selected_product_id ? "hover:bg-slate-50/60" : "bg-yellow-50/40"}`}>
-                              <td className="px-4 py-3"><p className="text-sm font-medium text-slate-800">{item.input_product}</p></td>
-                              <td className="px-4 py-3 text-sm font-mono text-slate-700">{item.input_quantity}</td>
-                              <td className="px-4 py-3"><span className="inline-flex px-2 py-0.5 text-xs font-medium rounded bg-blue-50 text-blue-700 ring-1 ring-blue-200">{item.ml_status}</span></td>
-                              <td className="px-4 py-3">
-                                <p className="text-sm text-slate-700">{item.matched_product ?? "—"}</p>
-                                {item.matched_external_id && <p className="text-xs text-slate-400 mt-1">ML ID: {item.matched_external_id}</p>}
-                              </td>
-                              <td className="px-4 py-3">
-                                <input
-                                  type="number" min={0} step="0.01" disabled={mlImport.status !== "draft" || isUpdating} defaultValue={priceCost}
-                                  onBlur={(event) => {
-                                    const newPriceCost = Number(event.target.value);
-                                    if (!Number.isFinite(newPriceCost) || newPriceCost < 0) {
-                                      setMlImportError("Себестоимость должна быть числом больше или равным нулю");
-                                      return;
-                                    }
-                                    if (newPriceCost !== priceCost) handleMlItemUpdate(item.id, { price_cost: newPriceCost });
-                                  }}
-                                  className="w-32 px-2 py-1.5 text-sm font-mono border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
-                                />
-                              </td>
-                              <td className="px-4 py-3">
-                                <input
-                                  type="number" min={0} step="0.01" disabled={mlImport.status !== "draft" || isUpdating} defaultValue={price}
-                                  onBlur={(event) => {
-                                    const newPrice = Number(event.target.value);
-                                    if (!Number.isFinite(newPrice) || newPrice < 0) {
-                                      setMlImportError("Цена должна быть числом больше или равным нулю");
-                                      return;
-                                    }
-                                    if (newPrice !== price) handleMlItemUpdate(item.id, { price: newPrice });
-                                  }}
-                                  className="w-32 px-2 py-1.5 text-sm font-mono border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
-                                />
-                              </td>
-                              <td className="px-4 py-3 whitespace-nowrap"><span className="text-sm font-semibold font-mono text-slate-800">{formatMoney(totalAmount)}</span></td>
-                              <td className="px-4 py-3">
-                                <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${marginPercent >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : marginPercent > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : marginPercent < 0 ? "bg-red-50 text-red-700 ring-1 ring-red-200" : "bg-slate-100 text-slate-600 ring-1 ring-slate-200"}`}>
+                              <tr
+                                  key={item.id}
+                                  className={`transition-colors ${statusStyle.row}`}
+                              >
+                                <td className="px-4 py-3"><p
+                                    className="text-sm font-medium text-slate-800">{item.input_product}</p></td>
+                                <td className="px-4 py-3 text-sm font-mono text-slate-700">{item.input_quantity}</td>
+                                <td className="px-4 py-3">
+                                  <span className={`inline-flex px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap ${statusStyle.badge}`}
+                                  >
+                                    {normalizedStatus}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <p className="text-sm text-slate-700">{item.matched_product ?? "—"}</p>
+                                  {item.matched_external_id &&
+                                      <p className="text-xs text-slate-400 mt-1">ML ID: {item.matched_external_id}</p>}
+                                </td>
+                                <td className="px-4 py-3">
+                                  <input
+                                      key={`${item.id}-cost-${item.price_cost}`}
+                                      type="number" min={0} step="1"
+                                      disabled={mlImport.status !== "draft" || isUpdating} defaultValue={priceCost}
+                                      onBlur={(event) => {
+                                        const newPriceCost = Number(event.target.value);
+                                        if (!Number.isFinite(newPriceCost) || newPriceCost < 0) {
+                                          setMlImportError("Себестоимость должна быть числом больше или равным нулю");
+                                          return;
+                                        }
+                                        if (newPriceCost !== priceCost) handleMlItemUpdate(item.id, {price_cost: newPriceCost});
+                                      }}
+                                      className="w-32 px-2 py-1.5 text-sm font-mono border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
+                                  />
+                                </td>
+                                <td className="px-4 py-3">
+                                  <input
+                                      key={`${item.id}-price-${item.price}`}
+                                      type="number"
+                                      min={0}
+                                      step="1"
+                                      disabled={
+                                          mlImport.status !== "draft" ||
+                                          isUpdating
+                                      }
+                                      defaultValue={price}
+                                      onBlur={(event) => {
+                                        const newPrice =
+                                            Number(event.target.value);
+
+                                        if (
+                                            !Number.isFinite(newPrice) ||
+                                            newPrice < 0
+                                        ) {
+                                          setMlImportError(
+                                              "Цена должна быть числом больше или равным нулю",
+                                          );
+                                          return;
+                                        }
+
+                                        if (newPrice !== price) {
+                                          handleMlItemUpdate(item.id, {
+                                            price: newPrice,
+                                          });
+                                        }
+                                      }}
+                                      className="w-32 px-2 py-1.5 text-sm font-mono border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
+                                  />
+                                </td>
+                                <td className="px-4 py-3 whitespace-nowrap"><span
+                                    className="text-sm font-semibold font-mono text-slate-800">{formatMoney(totalAmount)}</span>
+                                </td>
+                                <td className="px-4 py-3">
+                                <span
+                                    className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${marginPercent >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : marginPercent > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : marginPercent < 0 ? "bg-red-50 text-red-700 ring-1 ring-red-200" : "bg-slate-100 text-slate-600 ring-1 ring-slate-200"}`}>
                                   {marginPercent.toFixed(1)}%
                                 </span>
-                              </td>
-                              <td className="px-4 py-3 text-sm font-mono text-slate-700">{item.available_quantity}</td>
-                              <td className="px-4 py-3 text-xs text-slate-500">{item.unit ?? "—"}</td>
-                              <td className="px-4 py-3 text-sm text-slate-600">{item.category ?? "—"}</td>
-                              <td className="px-4 py-3">
-                                <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded ${similarity >= 80 ? "bg-green-50 text-green-700" : similarity >= 50 ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-700"}`}>
-                                  {similarity.toFixed(1)}%
-                                </span>
-                              </td>
-                              <td className="px-4 py-3">
-                                <input
-                                  type="number" min={1} disabled={mlImport.status !== "draft" || isUpdating} value={item.selected_product_id ?? ""} placeholder="Product ID"
-                                  onChange={(event) => {
-                                    const rawValue = event.target.value;
-                                    setMlImport((current) => {
-                                      if (!current) return current;
-                                      return { ...current, items: current.items.map((currentItem) => currentItem.id === item.id ? { ...currentItem, selected_product_id: rawValue ? Number(rawValue) : null } : currentItem ) };
-                                    });
-                                  }}
-                                  onBlur={(event) => {
-                                      const rawValue = event.target.value;
-                                      const selectedProductId = rawValue ? Number(rawValue) : null;
-                                      if (selectedProductId !== null && (!Number.isInteger(selectedProductId) || selectedProductId <= 0)) {
-                                          setMlImportError("ID товара должен быть положительным целым числом");
-                                          return;
-                                      }
-                                      handleMlItemUpdate(item.id, { selected_product_id: selectedProductId });
-                                  }}
-                                  className="w-28 px-2 py-1.5 text-sm border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
-                                />
-                              </td>
-                              <td className="px-4 py-3">
-                                <input
-                                  type="number" min={1} disabled={mlImport.status !== "draft" || isUpdating} defaultValue={item.final_quantity ?? item.input_quantity}
-                                  onBlur={(event) => {
-                                    const quantity = Number(event.target.value);
-                                    if (Number.isInteger(quantity) && quantity > 0 && quantity !== item.final_quantity) {
-                                      handleMlItemUpdate(item.id, { final_quantity: quantity });
-                                    }
-                                  }}
-                                  className="w-24 px-2 py-1.5 text-sm border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
-                                />
-                              </td>
-                              <td className="px-4 py-3">
-                                <input
-                                  type="text" maxLength={1000} disabled={mlImport.status !== "draft" || isUpdating} defaultValue={item.user_comment ?? ""} placeholder="Комментарий"
-                                  onBlur={(event) => {
-                                    const comment = event.target.value.trim() || null;
-                                    if (comment !== item.user_comment) {
-                                      handleMlItemUpdate(item.id, { user_comment: comment });
-                                    }
-                                  }}
-                                  className="w-44 px-2 py-1.5 text-sm border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
-                                />
-                              </td>
-                              <td className="px-4 py-3">
-                                {isUpdating ? (
-                                  <Loader2 size={16} className="animate-spin text-[#2563EB]" />
-                                ) : item.is_confirmed ? (
-                                  <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700"><CheckCircle2 size={14} />Добавлен</span>
-                                ) : item.selected_product_id ? (
-                                  <span className="text-xs font-medium text-blue-700">Выбран</span>
-                                ) : (
-                                  <span className="text-xs font-medium text-amber-700">Требует выбора</span>
-                                )}
-                              </td>
-                            </tr>
+                                </td>
+                                <td className="px-4 py-3 text-sm font-mono text-slate-700">{item.available_quantity}</td>
+                                <td className="px-4 py-3">
+                                  <input
+                                      key={`${item.id}-comment-${item.user_comment ?? ""}`}
+                                      type="text" maxLength={1000} disabled={mlImport.status !== "draft" || isUpdating}
+                                      defaultValue={item.user_comment ?? ""} placeholder="Комментарий"
+                                      onBlur={(event) => {
+                                        const comment = event.target.value.trim() || null;
+                                        if (comment !== item.user_comment) {
+                                          handleMlItemUpdate(item.id, {user_comment: comment});
+                                        }
+                                      }}
+                                      className="w-44 px-2 py-1.5 text-sm border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
+                                  />
+                                </td>
+                                <td className="px-4 py-3">
+                                  {isUpdating ? (
+                                      <Loader2
+                                          size={16}
+                                          className="animate-spin text-[#2563EB]"/>
+                                  ) : item.is_confirmed ? (
+                                      <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
+                                        <CheckCircle2 size={14}/>
+                                        Добавлен
+                                      </span>
+                                  ) : item.ml_status === "На складе" ? (
+                                      <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
+                                        <CheckCircle2 size={14}/>
+                                        Выбран</span>
+                                  ) : (
+                                      <span className="text-xs font-medium text-amber-700">
+                                        Не выбран
+                                      </span>)}
+                                </td>
+                              </tr>
                           );
                         })
                       )}
@@ -529,20 +612,29 @@ export function ProjectPagePM({
 
                 <div className="flex items-center justify-between gap-4 mt-4">
                   <p className="text-xs text-slate-400">
-                    Перед подтверждением у каждой строки должен быть указан ID товара из таблицы products.
+                    Перед подтверждением у каждой строки должен быть указан цена товара из таблицы products.
                   </p>
                   <button
-                    type="button"
-                    onClick={handleConfirmMlImport}
-                    disabled={mlImport.status !== "draft" || confirmingImport || mlImport.items.length === 0 || mlImport.items.some((item) => item.selected_product_id === null)}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-[#2563EB] text-white text-sm font-semibold rounded-lg hover:bg-[#1D4ED8] transition-colors disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed"
+                      type="button"
+                      onClick={handleConfirmMlImport}
+                      disabled={!canConfirmMlImport || confirmingImport}
+                      className="flex items-center gap-2 px-5 py-2.5 bg-[#2563EB] text-white text-sm font-semibold rounded-lg hover:bg-[#1D4ED8] transition-colors disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed"
                   >
                     {confirmingImport ? (
-                      <><Loader2 size={15} className="animate-spin" />Подтверждение…</>
+                        <>
+                          <Loader2 size={15} className="animate-spin"/>
+                          Подтверждение…
+                        </>
                     ) : mlImport.status === "confirmed" ? (
-                      <><CheckCircle2 size={15} />Импорт подтверждён</>
+                        <>
+                          <CheckCircle2 size={15}/>
+                          Импорт подтверждён
+                        </>
                     ) : (
-                      <><Check size={15} />Подтвердить импорт</>
+                        <>
+                          <Check size={15}/>
+                          Подтвердить импорт
+                        </>
                     )}
                   </button>
                 </div>
@@ -553,7 +645,7 @@ export function ProjectPagePM({
   );
 }
 
-export function ProjectPageDirector({ projectState, onKpApproved, projectId }: {
+export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
   projectState: ProjectState; onKpApproved: () => void; projectId: number;
 }) {
   const [decision, setDecision] = useState<null | boolean>(null);
@@ -588,7 +680,7 @@ export function ProjectPageDirector({ projectState, onKpApproved, projectId }: {
           <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
             <table className="w-full border-collapse">
               <thead><tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-                {["Наименование","Кол-во","Ед.","Цена","Сумма"].map(h => (
+                {["Наименование","Кол-во","Цена","Сумма"].map(h => (
                   <th key={h} className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left">{h}</th>
                 ))}
               </tr></thead>
@@ -684,31 +776,54 @@ export function ProjectPageWarehouse() {
     </PageWrap>
   );
 }
-
 export function ProjectPage({
-                                role,
-                                onNavigate,
-                                projectState,
-                                onKpSent,
-                                onKpApproved,
-                                receipts,
-                                projectItems,
-                                projectId,
-                                onOpenProject
-                            }: {
-    role: Role,
-    onNavigate: (p: Page) => void,
-    projectState: ProjectState,
-    onKpSent: () => void,
-    onKpApproved: () => void,
-    receipts: Receipt[],
-    projectItems: ProjectItem[],
+  role,
+  onNavigate,
+  projectState,
+  onKpSent,
+  onKpApproved,
+  receipts,
+  projectItems,
+  projectId,
+}: {
+  role: Role;
+  onNavigate: (p: Page) => void;
+  projectState: ProjectState;
+  onKpSent: () => void;
+  onKpApproved: () => void;
+  receipts: Receipt[];
+  projectItems: ProjectItem[];
+  projectId: number;
+  onOpenProject?: (
     projectId: number,
-    onOpenProject?: (projectId: number) => Promise<void>
+  ) => Promise<void>;
 }) {
-  if (role === "pm")        return <ProjectPagePM onNavigate={onNavigate} projectState={projectState} onKpSent={onKpSent} receipts={receipts} projectItems={projectItems} projectId={projectId}/>;
-  // Обратите внимание: мы передаем projectId в ProjectPageDirector
-  if (role === "director")  return <ProjectPageDirector projectState={projectState} onKpApproved={onKpApproved} projectId={projectId} />;
-  if (role === "accountant")return <ProjectPageAccountant />;
+  if (role === "pm") {
+    return (
+      <ProjectPagePM
+        onNavigate={onNavigate}
+        projectState={projectState}
+        onKpSent={onKpSent}
+        receipts={receipts}
+        projectItems={projectItems}
+        projectId={projectId}
+      />
+    );
+  }
+
+  if (role === "director") {
+    return (
+      <ProjectPageDirector
+        projectState={projectState}
+        onKpApproved={onKpApproved}
+        projectId={projectId}
+      />
+    );
+  }
+
+  if (role === "accountant") {
+    return <ProjectPageAccountant />;
+  }
+
   return <ProjectPageWarehouse />;
 }
