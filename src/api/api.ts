@@ -339,3 +339,33 @@ export const downloadKpDocument = async (projectId: number): Promise<void> => {
   link.remove();
   window.URL.revokeObjectURL(url);
 };
+export interface ProductInfo {
+  id: number;
+  name: string;
+  unit: string | null;
+  cost_price: number | string | null;
+  current_stock?: number | string | null;
+}
+
+export interface StatusInfo {
+  id: number;
+  status_name: string;
+}
+export interface ProjectItemResponse {
+  id: number;
+  required_quantity: number | null;
+  sale_price: number | string;
+  total_sum: number | string;
+
+  product: ProductInfo;
+  status: StatusInfo | null;
+}
+export async function fetchProjectItems(
+  projectId: number,
+): Promise<ProjectItemResponse[]> {
+  const { data } = await api.get<ProjectItemResponse[]>(
+    `/project-items/${projectId}`,
+  );
+
+  return data;
+}
