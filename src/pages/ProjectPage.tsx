@@ -6,7 +6,7 @@ import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
 import { fmt } from "../lib/format";
 import { INVOICES_INIT } from "../data/invoices";
 import { STOCK_INIT } from "../data/stock";
-import { AlertTriangle, CheckCircle2, Loader2, Send, Truck, Check, FileCheck, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, Send, Truck, Check, FileCheck, XCircle, Download, FileText } from "lucide-react";
 import { KP_ITEMS_INIT } from "../data/kpItems";
 import {
   ProjectItem,
@@ -128,9 +128,6 @@ export function ProjectPagePM({
     return () => { cancelled = true; };
   }, [resolvedProjectId, hasValidProjectId]);
 
-  // ==========================================
-  // ЛОГИКА ШАГОВ (ПРИВЯЗКА К БЭКЕНДУ)
-  // ==========================================
   const currentStatus = project?.status?.status_name || "Новый";
 
   const statusToIndex: Record<string, number> = {
@@ -147,6 +144,9 @@ export function ProjectPagePM({
   };
 
   const currentIndex = statusToIndex[currentStatus] ?? 0;
+  
+  // Проверяем, подтвердил ли Комдир КП (индекс 3 или выше)
+  const isKpApproved = currentIndex >= 3 || projectState.kpApproved;
 
   const STAGES = [
     { label: "Новый", done: currentIndex > 0, active: currentIndex === 0 },
@@ -220,8 +220,6 @@ export function ProjectPagePM({
       const response = await sendProjectToDirector(project.id);
       setSent(true);
       onKpSent();
-      
-      // Локально обновляем статус, чтобы шаги переключились не дожидаясь рефреша
       setProject(prev => prev ? { 
         ...prev, 
         status: { id: prev.status?.id || 0, status_name: response.status } 
@@ -261,7 +259,16 @@ export function ProjectPagePM({
     <PageWrap 
         title={title} 
         subtitle={subtitle}
-        actions={<div className="flex items-center gap-2"><Chip status={currentStatus}/><Chip status="kp"/></div>}
+        actions={
+          <div className="flex items-center gap-2">
+            <Chip status={currentStatus}/>
+            <Chip status="kp"/>
+            {/* Кнопка "Скачать Excel" для PM */}
+            <button className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors">
+              <Download size={14} /> Скачать Excel
+            </button>
+          </div>
+        }
     >
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
           <div className="lg:col-span-2 bg-white rounded-lg border border-[#E2E8F0] p-5 overflow-x-auto flex items-center">
@@ -313,27 +320,12 @@ export function ProjectPagePM({
           </div>
         </div>
 
-        {sent && (
-            <div className={`mb-6 rounded-lg border p-5 ${projectState.kpApproved ? "bg-green-50 border-green-200" : "bg-slate-50 border-[#E2E8F0]"}`}>
-              {projectState.kpApproved ? (
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 size={16} className="text-green-600 flex-shrink-0"/>
-                      <p className="text-sm font-medium text-green-800">Комдир подтвердил КП. Можно сформировать документ.</p>
-                    </div>
-                    <button
-                        onClick={() => onNavigate("kp-generator" as Page)}
-                        className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-[#2563EB] text-white text-sm font-semibold rounded-lg hover:bg-[#1d4ed8] transition-colors"
-                    >
-                      <FileCheck size={14}/> Открыть KP Generator
-                    </button>
-                  </div>
-              ) : (
-                  <div className="flex items-center gap-2 text-sm text-slate-500">
-                    <Loader2 size={14} className="animate-spin text-slate-400"/>
-                    Ожидаем подтверждения Комдира…
-                  </div>
-              )}
+        {sent && !isKpApproved && (
+            <div className="mb-6 rounded-lg border p-5 bg-slate-50 border-[#E2E8F0]">
+                <div className="flex items-center gap-2 text-sm text-slate-500">
+                  <Loader2 size={14} className="animate-spin text-slate-400"/>
+                  Ожидаем подтверждения Комдира…
+                </div>
             </div>
         )}
 
@@ -351,11 +343,26 @@ export function ProjectPagePM({
                     </span>
                   )}
                   
+                  {/* Кнопка "Сгенерировать КП" теперь разблокируется только после аппрува Комдира */}
+                  <AppTooltip text={!isKpApproved ? "Дождитесь подтверждения от Комдира" : ""}>
+                    <button 
+                      onClick={() => onNavigate("kp-generator" as Page)}
+                      disabled={!isKpApproved}
+                      className={`flex items-center gap-2 px-5 py-2.5 border text-sm font-semibold rounded-lg transition-colors whitespace-nowrap ${
+                        isKpApproved 
+                          ? "bg-white border-[#E2E8F0] text-slate-700 hover:bg-slate-50"
+                          : "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
+                      }`}
+                    >
+                      <FileText size={14} /> Сгенерировать КП
+                    </button>
+                  </AppTooltip>
+
                   <AppTooltip text={(!mlImport || mlImport.status !== "confirmed") ? "Сначала подтвердите импорт товаров" : ""}>
                     <button 
                       onClick={handleSendToDirector} 
                       disabled={!mlImport || mlImport.status !== "confirmed" || sending || sent}
-                      className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-all ${
+                      className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${
                           sent ? "bg-green-600 text-white cursor-default" :
                           (mlImport?.status === "confirmed" && !sending) ? "bg-[#2563EB] hover:bg-[#1d4ed8] text-white" :
                           "bg-slate-200 text-slate-400 cursor-not-allowed"
@@ -581,8 +588,20 @@ export function ProjectPageDirector({ projectState, onKpApproved, projectId }: {
   };
 
   return (
-    <PageWrap title="Офисный комплекс «Башня»" subtitle="ООО «СтройТех» · Проверка КП"
-      actions={<div className="flex items-center gap-2"><Chip status="review" /><Chip status="kp" /></div>}>
+    <PageWrap 
+      title="Офисный комплекс «Башня»" 
+      subtitle="ООО «СтройТех» · Проверка КП"
+      actions={
+        <div className="flex items-center gap-2">
+          <Chip status="review" />
+          <Chip status="kp" />
+          {/* Кнопка "Скачать Excel" для Директора */}
+          <button className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors whitespace-nowrap">
+            <Download size={14} /> Скачать Excel
+          </button>
+        </div>
+      }
+    >
       <div className="grid grid-cols-3 gap-6">
         <div className="col-span-2 space-y-5">
           <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
@@ -612,8 +631,8 @@ export function ProjectPageDirector({ projectState, onKpApproved, projectId }: {
               <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={15} className="animate-spin text-[#2563EB]" />Сохранение решения…</div>
             ) : decision === null ? (
               <div className="flex items-center gap-3">
-                <button onClick={() => decide(true)} className="flex items-center gap-2 px-5 py-2.5 bg-[#16A34A] text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"><CheckCircle2 size={15} /> Подтверждаю</button>
-                <button onClick={() => decide(false)} className="flex items-center gap-2 px-5 py-2.5 bg-white text-red-600 text-sm font-medium rounded-lg border border-[#E2E8F0] hover:bg-red-50 transition-colors"><XCircle size={15} /> Отклонить КП</button>
+                <button onClick={() => decide(true)} className="flex items-center gap-2 px-5 py-2.5 bg-[#16A34A] text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"><CheckCircle2 size={15} /> Подтверждаю</button>
+                <button onClick={() => decide(false)} className="flex items-center gap-2 px-5 py-2.5 bg-white text-red-600 text-sm font-medium rounded-lg border border-[#E2E8F0] hover:bg-red-50 transition-colors whitespace-nowrap"><XCircle size={15} /> Отклонить КП</button>
               </div>
             ) : decision ? (
               <div className="flex items-center gap-2 px-4 py-3 bg-green-50 rounded-lg border border-green-200"><CheckCircle2 size={16} className="text-green-600" /><span className="text-sm font-medium text-green-700">КП подтверждено</span></div>
@@ -640,7 +659,18 @@ export function ProjectPageDirector({ projectState, onKpApproved, projectId }: {
 
 export function ProjectPageAccountant() {
   return (
-    <PageWrap title="Офисный комплекс «Башня»" subtitle="ООО «СтройТех» · Счета и оплата">
+    <PageWrap 
+      title="Офисный комплекс «Башня»" 
+      subtitle="ООО «СтройТех» · Счета и оплата"
+      actions={
+        <div className="flex items-center gap-2">
+          {/* Кнопка "Скачать Excel" для Бухгалтера */}
+          <button className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors whitespace-nowrap">
+            <Download size={14} /> Скачать Excel
+          </button>
+        </div>
+      }
+    >
       <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
         <table className="w-full border-collapse">
           <thead><tr className="border-b border-[#E2E8F0] bg-slate-50/60">
@@ -653,7 +683,7 @@ export function ProjectPageAccountant() {
                 <td className="px-4 py-3 text-sm text-slate-700">{inv.supplier}</td>
                 <td className="px-4 py-3 text-sm font-mono text-slate-900">{fmt(inv.amount)}</td>
                 <td className="px-4 py-3"><Chip status={inv.status} /></td>
-                <td className="px-4 py-3">{inv.status === "approved" && <button className="text-xs px-2.5 py-1 bg-[#16A34A] text-white rounded font-medium hover:bg-green-700 transition-colors">Оплатить</button>}</td>
+                <td className="px-4 py-3">{inv.status === "approved" && <button className="text-xs px-2.5 py-1 bg-[#16A34A] text-white rounded font-medium hover:bg-green-700 transition-colors whitespace-nowrap">Оплатить</button>}</td>
               </tr>
             ))}
           </tbody>
@@ -679,7 +709,7 @@ export function ProjectPageWarehouse() {
             </div>
           ))}
         </div>
-        <button className="mt-4 flex items-center gap-2 px-4 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#1d4ed8] transition-colors"><Truck size={14} /> Оформить отгрузку</button>
+        <button className="mt-4 flex items-center gap-2 px-4 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#1d4ed8] transition-colors whitespace-nowrap"><Truck size={14} /> Оформить отгрузку</button>
       </div>
     </PageWrap>
   );
@@ -707,7 +737,6 @@ export function ProjectPage({
     onOpenProject?: (projectId: number) => Promise<void>
 }) {
   if (role === "pm")        return <ProjectPagePM onNavigate={onNavigate} projectState={projectState} onKpSent={onKpSent} receipts={receipts} projectItems={projectItems} projectId={projectId}/>;
-  // Обратите внимание: мы передаем projectId в ProjectPageDirector
   if (role === "director")  return <ProjectPageDirector projectState={projectState} onKpApproved={onKpApproved} projectId={projectId} />;
   if (role === "accountant")return <ProjectPageAccountant />;
   return <ProjectPageWarehouse />;
