@@ -134,6 +134,15 @@ export default function App() {
                 onLogin={(r) => {
                     setRole(r);
                     setLoggedIn(true);
+                    
+                    // Route users to their allowed default page
+                    if (r === "warehouse") {
+                        setPage("warehouse");
+                    } else if (r === "accountant") {
+                        setPage("contract");
+                    } else {
+                        setPage("dashboard"); // For pm and commercial_director
+                    }
                 }}
             />
         );

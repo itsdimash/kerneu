@@ -31,9 +31,6 @@ type ClientDTO = {
 };
 
 // Форматирует номер телефона как +<код страны> (XXX) XXX-XX-XX.
-// Первая введённая цифра становится кодом страны (не обязательно "7" —
-// можно вводить +2, +4, +7 и т.д.), а скобки для остальных цифр открываются
-// сразу же, как только начат ввод, — как это было в исходной маске.
 function formatPhoneNumber(value: string): string {
   let digits = value.replace(/\D/g, "");
 
@@ -56,7 +53,7 @@ function formatPhoneNumber(value: string): string {
   return result;
 }
 
-export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Page) => void; onOpenProject: (projectId: number) => void }) {
+export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string; onNavigate: (p: Page) => void; onOpenProject: (projectId: number) => void }) {
   // Стейты для модального окна
   const [isKpModalOpen, setIsKpModalOpen] = useState(false);
   const [isNewClient, setIsNewClient] = useState(false);
@@ -66,7 +63,7 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
   // Поля проекта: название и дедлайн — видны в обоих режимах (новый/существующий клиент)
   const [projectForm, setProjectForm] = useState({ name: "", deadline: "" });
 
-  // Клиенты приходят с бэкенда: {id, name, ...}. Отображаем только name, id храним для сохранения.
+  // Клиенты приходят с бэкенда
   const [clients, setClients] = useState<ClientDTO[]>([]);
   const [clientsLoading, setClientsLoading] = useState(false);
   const [clientsError, setClientsError] = useState<string | null>(null);
@@ -162,10 +159,6 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
 
     let digits = rawValue.replace(/\D/g, "");
 
-    // Если пользователь что-то удалил (длина строки уменьшилась), но количество
-    // цифр не изменилось — значит, был удалён нецифровой символ (скобка, дефис,
-    // пробел). В этом случае убираем ещё и последнюю цифру, иначе поле будет
-    // выглядеть так, будто ничего не удаляется.
     if (rawValue.length < prevValue.length) {
       const prevDigits = prevValue.replace(/\D/g, "");
       if (digits.length === prevDigits.length && digits.length > 0) {
@@ -212,13 +205,10 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
             new_client_name: newClientForm.name,
             new_client_phone: newClientForm.phone,
             new_client_email: newClientForm.email,
-
             project_name: projectForm.name,
-
             invoice_amount: 0,
             invoice_status_id: 1,
             file_url: uploadedFileUrl,
-
             project_status_id: 1,
             planned_margin: 0,
             deadline: projectForm.deadline,
@@ -226,22 +216,16 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
         : {
             is_new_client: false,
             client_id: Number(selectedClientId),
-
             project_name: projectForm.name,
-
             invoice_amount: 0,
             invoice_status_id: 1,
             file_url: uploadedFileUrl,
-
             project_status_id: 1,
             pm_id: 1,
             planned_margin: 0,
             deadline: projectForm.deadline,
           };
 
-      /*
-       * 1. Создаём проект
-       */
       const projectResponse = await fetch(
         "http://localhost:8000/api/v1/projects/create-base",
         {
@@ -260,8 +244,6 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
       }
 
       const projectData = await projectResponse.json();
-
-      // Твой backend возвращает project_id
       const projectId = Number(projectData.project_id);
 
       if (!Number.isInteger(projectId) || projectId <= 0) {
@@ -271,9 +253,6 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
 
       console.log("Проект создан:", projectId);
 
-      /*
-       * 2. Отправляем исходный файл в парсер
-       */
       const parserFormData = new FormData();
       parserFormData.append("file", kpFile);
 
@@ -291,11 +270,7 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
         throw new Error(errorText || "Ошибка парсинга файла");
       }
 
-      /*
-       * 3. Получаем Excel от парсера
-       */
       const parserBlob = await parserResponse.blob();
-
       const parserFile = new File(
         [parserBlob],
         "quotation.xlsx",
@@ -306,9 +281,6 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
 
       console.log("Excel от парсера получен:", parserFile.name, parserFile.size);
 
-      /*
-       * 4. Отправляем Excel от парсера в ML
-       */
       const mlFormData = new FormData();
       mlFormData.append("file", parserFile);
 
@@ -326,9 +298,6 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
         throw new Error(errorText || "Ошибка обработки файла в ML");
       }
 
-      /*
-       * 5. Получаем готовый Excel от ML
-       */
       const mlBlob = await mlResponse.blob();
       const contentDisposition = mlResponse.headers.get("content-disposition");
       let mlFilename = "ml_result.xlsx";
@@ -354,27 +323,14 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
 
       console.log("Excel от ML получен:", mlFile.name, mlFile.size);
 
-      /*
-       * 6. Сохраняем ML Excel в ml_imports и ml_import_items
-       */
       const createdImport = await createMlImport(projectId, mlFile);
       console.log("ML import создан:", createdImport);
 
-      /*
-       * 7. Получаем сохранённые строки импорта
-       */
       const importDetails = await getMlImport(createdImport.id);
       console.log("Строки ML-импорта:", importDetails.items);
 
-      /*
-       * Сохраняем связь projectId → importId.
-       * ProjectPage сможет получить этот импорт.
-       */
       localStorage.setItem(`project:${projectId}:mlImportId`, String(createdImport.id));
 
-      /*
-       * 8. Автоматически скачиваем готовый ML Excel
-       */
       const downloadUrl = URL.createObjectURL(mlBlob);
       const anchor = document.createElement("a");
       anchor.href = downloadUrl;
@@ -384,9 +340,6 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
       anchor.remove();
       URL.revokeObjectURL(downloadUrl);
 
-      /*
-       * 9. Обновляем frontend
-       */
       await loadProjects();
       await loadStats();
 
@@ -430,15 +383,17 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
 
   return (
     <PageWrap 
-      title="Дашборд PM" 
+      title={role === "commercial_director" ? "Дашборд Директора" : "Дашборд PM"} 
       subtitle="Управление проектами и коммерческими предложениями"
       actions={
-        <button 
-          onClick={() => setIsKpModalOpen(true)}
-          className="flex items-center gap-1.5 px-4 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#1d4ed8] transition-colors"
-        >
-          <Plus size={14} /> Новый проект 
-        </button>
+        role !== "commercial_director" && (
+          <button 
+            onClick={() => setIsKpModalOpen(true)}
+            className="flex items-center gap-1.5 px-4 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#1d4ed8] transition-colors"
+          >
+            <Plus size={14} /> Новый проект 
+          </button>
+        )
       }
     >
       {/* ── Модальное окно «Новое КП» ── */}
@@ -846,6 +801,7 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
   );
 }
 
+// Оставлен для истории, если понадобится, но в роутинге ниже уже не используется для commercial_director
 export function DashboardDirector({ onNavigate, receipts }: { onNavigate: (p: Page) => void; receipts: Receipt[] }) {
   return (
     <PageWrap title="Дашборд Комдира" subtitle="Проекты на утверждение, маржа и дедлайны">
@@ -1031,8 +987,8 @@ export function DashboardPage({ role, onNavigate, receipts, onOpenProject }: {
   receipts: Receipt[];
   onOpenProject: (projectId: number) => void;
 }) {
-  if (role === "pm")        return <DashboardPM onNavigate={onNavigate} onOpenProject={onOpenProject} />;
-  if (role === "director")  return <DashboardDirector onNavigate={onNavigate} receipts={receipts} />;
-  if (role === "accountant")return <DashboardAccountant onNavigate={onNavigate} />;
+  if (role === "pm" || role === "commercial_director") return <DashboardPM role={role} onNavigate={onNavigate} onOpenProject={onOpenProject} />;
+  if (role === "accountant") return <DashboardAccountant onNavigate={onNavigate} />;
+  
   return <DashboardWarehouse onNavigate={onNavigate} />;
 }

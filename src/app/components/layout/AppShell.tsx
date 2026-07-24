@@ -19,7 +19,6 @@ import { ContractPage } from "../../../pages/ContractPage";
 import { ProcurementPage } from "../../../pages/ProcurementPage";
 import { WarehousePage } from "../../../pages/WarehousePage";
 import { DocumentsPage } from "../../../pages/DocumentsPage";
-import { ReceiptStoragePage } from "../../../pages/ReceiptStoragePage";
 
 type UserData = {
   id: number;
@@ -245,14 +244,6 @@ export function AppShell({
               projectState={projectState}
             />
           )}
-
-          {page === "receipts" &&
-            role === "accountant" && (
-              <ReceiptStoragePage
-                receipts={receipts}
-                setReceipts={setReceipts}
-              />
-            )}
         </main>
       </div>
     </div>

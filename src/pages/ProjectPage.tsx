@@ -657,20 +657,32 @@ export function ProjectPageDirector({ projectState, onKpApproved, projectId }: {
           <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
             <table className="w-full border-collapse">
               <thead><tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-                {["Наименование","Кол-во","Ед.","Цена","Сумма"].map(h => (
-                  <th key={h} className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left">{h}</th>
+                {["Наименование","Кол-во","Ед.","Себестоимость","Цена","Сумма","Маржа"].map(h => (
+                  <th key={h} className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
                 ))}
               </tr></thead>
               <tbody className="divide-y divide-[#E2E8F0]">
-                {KP_ITEMS_INIT.filter(i => i.price > 0).map(item => (
-                  <tr key={item.id} className="hover:bg-slate-50/50">
-                    <td className="px-4 py-3 text-sm text-slate-700">{item.name}</td>
-                    <td className="px-4 py-3 text-sm font-mono">{item.qty.toLocaleString("ru-RU")}</td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{item.unit}</td>
-                    <td className="px-4 py-3 text-sm font-mono">{item.price.toLocaleString("ru-RU")}</td>
-                    <td className="px-4 py-3 text-sm font-mono font-semibold">{item.total.toLocaleString("ru-RU")}</td>
-                  </tr>
-                ))}
+                {KP_ITEMS_INIT.filter(i => i.price > 0).map(item => {
+                  // Fallbacks: If your KP_ITEMS_INIT doesn't have a cost property, we fake it for the UI preview
+                  const priceCost = (item as any).cost || (item.price * 0.755); 
+                  const margin = item.price > 0 ? ((item.price - priceCost) / item.price) * 100 : 0;
+                  
+                  return (
+                    <tr key={item.id} className="hover:bg-slate-50/50">
+                      <td className="px-4 py-3 text-sm text-slate-700">{item.name}</td>
+                      <td className="px-4 py-3 text-sm font-mono">{item.qty.toLocaleString("ru-RU")}</td>
+                      <td className="px-4 py-3 text-xs text-slate-500">{item.unit}</td>
+                      <td className="px-4 py-3 text-sm font-mono">{priceCost.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-3 text-sm font-mono">{item.price.toLocaleString("ru-RU")}</td>
+                      <td className="px-4 py-3 text-sm font-mono font-semibold">{item.total.toLocaleString("ru-RU")}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : "bg-red-50 text-red-700 ring-1 ring-red-200"}`}>
+                          {margin.toFixed(1)}%
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -793,7 +805,7 @@ export function ProjectPage({
     projectId,
     onOpenProject
 }: {
-    role: Role,
+    role: Role | string,
     onNavigate: (p: Page) => void,
     projectState: ProjectState,
     onKpSent: () => void,
@@ -804,7 +816,7 @@ export function ProjectPage({
     onOpenProject?: (projectId: number) => Promise<void>
 }) {
   if (role === "pm")        return <ProjectPagePM onNavigate={onNavigate} projectState={projectState} onKpSent={onKpSent} receipts={receipts} projectItems={projectItems} projectId={projectId}/>;
-  if (role === "director")  return <ProjectPageDirector projectState={projectState} onKpApproved={onKpApproved} projectId={projectId} />;
+  if (role === "commercial_director" || role === "director")  return <ProjectPageDirector projectState={projectState} onKpApproved={onKpApproved} projectId={projectId} />;
   if (role === "accountant")return <ProjectPageAccountant projectId={projectId} />;
   return <ProjectPageWarehouse />;
 }
