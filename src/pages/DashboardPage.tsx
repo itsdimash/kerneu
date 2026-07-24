@@ -30,12 +30,41 @@ type ClientDTO = {
   [key: string]: unknown; // бэкенд может присылать и другие поля — они нам не нужны
 };
 
+// Форматирует номер телефона как +<код страны> (XXX) XXX-XX-XX.
+// Первая введённая цифра становится кодом страны (не обязательно "7" —
+// можно вводить +2, +4, +7 и т.д.), а скобки для остальных цифр открываются
+// сразу же, как только начат ввод, — как это было в исходной маске.
+function formatPhoneNumber(value: string): string {
+  let digits = value.replace(/\D/g, "");
+
+  if (digits.length === 0) return "";
+
+  // 1 цифра кода страны + до 10 цифр национального номера
+  digits = digits.slice(0, 11);
+
+  const code = digits.slice(0, 1);
+  const rest = digits.slice(1);
+
+  if (rest.length === 0) return "+" + code;
+
+  let result = "+" + code + " (" + rest.slice(0, 3);
+  if (rest.length >= 3) result += ")";
+  if (rest.length > 3) result += " " + rest.slice(3, 6);
+  if (rest.length > 6) result += "-" + rest.slice(6, 8);
+  if (rest.length > 8) result += "-" + rest.slice(8, 10);
+
+  return result;
+}
+
 export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Page) => void; onOpenProject: (projectId: number) => void }) {
   // Стейты для модального окна
   const [isKpModalOpen, setIsKpModalOpen] = useState(false);
   const [isNewClient, setIsNewClient] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState("");
   const [newClientForm, setNewClientForm] = useState({ name: "", email: "", phone: "" });
+
+  // Поля проекта: название и дедлайн — видны в обоих режимах (новый/существующий клиент)
+  const [projectForm, setProjectForm] = useState({ name: "", deadline: "" });
 
   // Клиенты приходят с бэкенда: {id, name, ...}. Отображаем только name, id храним для сохранения.
   const [clients, setClients] = useState<ClientDTO[]>([]);
@@ -119,6 +148,34 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
   // Клиент "выбран", когда либо указан существующий клиент, либо введено имя нового
   const isClientChosen = isNewClient ? newClientForm.name.trim().length > 0 : !!selectedClientId;
 
+  // Поля проекта (название/дедлайн) показываются только после того, как пользователь
+  // либо отметил «Новый клиент», либо выбрал конкретного клиента из списка
+  const showProjectDetails = isNewClient || !!selectedClientId;
+
+  // Форма проекта считается заполненной, когда указаны название и дедлайн
+  const isProjectFormValid =
+    projectForm.name.trim().length > 0 && projectForm.deadline.trim().length > 0;
+
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawValue = e.target.value;
+    const prevValue = newClientForm.phone;
+
+    let digits = rawValue.replace(/\D/g, "");
+
+    // Если пользователь что-то удалил (длина строки уменьшилась), но количество
+    // цифр не изменилось — значит, был удалён нецифровой символ (скобка, дефис,
+    // пробел). В этом случае убираем ещё и последнюю цифру, иначе поле будет
+    // выглядеть так, будто ничего не удаляется.
+    if (rawValue.length < prevValue.length) {
+      const prevDigits = prevValue.replace(/\D/g, "");
+      if (digits.length === prevDigits.length && digits.length > 0) {
+        digits = digits.slice(0, -1);
+      }
+    }
+
+    setNewClientForm({ ...newClientForm, phone: formatPhoneNumber(digits) });
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0] ?? null;
     setKpFile(f);
@@ -129,12 +186,18 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
     setIsNewClient(false);
     setSelectedClientId("");
     setNewClientForm({ name: "", email: "", phone: "" });
+    setProjectForm({ name: "", deadline: "" });
     setKpFile(null);
   };
 
   const handleSave = async () => {
     try {
       setIsSaving(true);
+
+      if (!isProjectFormValid) {
+        alert("Заполните название проекта и дедлайн");
+        return;
+      }
 
       if (!kpFile) {
         alert("Выберите файл КП");
@@ -150,17 +213,21 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
             new_client_phone: newClientForm.phone,
             new_client_email: newClientForm.email,
 
+            project_name: projectForm.name,
+
             invoice_amount: 0,
             invoice_status_id: 1,
             file_url: uploadedFileUrl,
 
             project_status_id: 1,
             planned_margin: 0,
-            deadline: "2026-08-01",
+            deadline: projectForm.deadline,
           }
         : {
             is_new_client: false,
             client_id: Number(selectedClientId),
+
+            project_name: projectForm.name,
 
             invoice_amount: 0,
             invoice_status_id: 1,
@@ -169,7 +236,7 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
             project_status_id: 1,
             pm_id: 1,
             planned_margin: 0,
-            deadline: "2026-08-01",
+            deadline: projectForm.deadline,
           };
 
       /*
@@ -412,6 +479,7 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
 
               <div className="h-px w-full bg-slate-100" />
 
+              {/* ── Клиентский блок: виден всегда, сразу под чекбоксом ── */}
               {isNewClient ? (
                 <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
                   <div>
@@ -439,9 +507,11 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
                     <input
                       type="tel"
                       value={newClientForm.phone}
-                      onChange={(e) => setNewClientForm({...newClientForm, phone: e.target.value})}
+                      onChange={handlePhoneChange}
+                      inputMode="tel"
+                      maxLength={20}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
-                      placeholder="+7 (___) ___-__-__"
+                      placeholder="+7 (707) 123-45-67"
                     />
                   </div>
                 </div>
@@ -479,7 +549,37 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
                 </div>
               )}
 
-              {/* ── Загрузка файла КП: показывается только после выбора клиента ── */}
+              {/* ── Название проекта и дедлайн: появляются, когда отмечен «Новый клиент»
+                  либо выбран конкретный клиент из списка ── */}
+              {showProjectDetails && (
+                <>
+                  <div className="h-px w-full bg-slate-100" />
+
+                  <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-500 mb-1.5">Название проекта</label>
+                      <input
+                        type="text"
+                        value={projectForm.name}
+                        onChange={(e) => setProjectForm({ ...projectForm, name: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
+                        placeholder="Например, Реконструкция склада Nord"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-500 mb-1.5">Дедлайн</label>
+                      <input
+                        type="date"
+                        value={projectForm.deadline}
+                        onChange={(e) => setProjectForm({ ...projectForm, deadline: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* ── Загрузка файла: показывается только после выбора/ввода клиента ── */}
               {isClientChosen && (
               <>
               <div className="h-px w-full bg-slate-100" />
@@ -535,7 +635,7 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
               </button>
               <button
                 onClick={handleSave}
-                disabled={!isClientChosen || isSaving}
+                disabled={!isClientChosen || !isProjectFormValid || isSaving}
                 className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#2563EB] rounded-lg hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-w-[112px]"
               >
                 {isSaving ? (
