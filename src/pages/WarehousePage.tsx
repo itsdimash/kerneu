@@ -1,19 +1,64 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { InfoBanner } from "../app/components/common/InfoBanner";
 import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
 import { ShipmentModal } from "../app/components/modals/ShipmentModal";
 import { Chip } from "../app/components/common/Chip";
-import { Truck, Search, Eye, AlertTriangle } from "lucide-react";
+import { Truck, Search, Eye, AlertTriangle, Loader2 } from "lucide-react";
 import type { ProjectState, BannerVariant } from "../types";
-import { STOCK_INIT, ARRIVALS, SHIPMENTS } from "../data/stock";
+import { ARRIVALS, SHIPMENTS } from "../data/stock";
+import { fetchWarehouseStocks, WarehouseStockResponse } from "../api/api";
+
+type StockRow = {
+  id: number;
+  sku: string;
+  name: string;
+  unit: string;
+  total: number;
+  reserved: number;
+  defective: number;
+  available: number;
+};
+
+function mapStock(item: WarehouseStockResponse): StockRow {
+  return {
+    id: item.id,
+    sku: `P-${item.product_id}`,
+    name: item.name,
+    unit: item.unit,
+    total: item.actual_quantity,
+    reserved: item.reserved_quantity,
+    defective: item.defective_quantity,
+    available: item.actual_quantity - item.reserved_quantity,
+  };
+}
 
 export function WarehousePage({ projectState }: { projectState: ProjectState }) {
   const [tab, setTab] = useState<"stock" | "arrivals" | "shipments">("stock");
-  const [stock, setStock] = useState(STOCK_INIT);
+  const [stock, setStock] = useState<StockRow[]>([]);
+  const [stockLoading, setStockLoading] = useState(false);
+  const [stockError, setStockError] = useState<string | null>(null);
   const [showShipmentModal, setShowShipmentModal] = useState(false);
   const [stockFilter, setStockFilter] = useState<"all" | "low" | "reserved" | "brak">("all");
   const shipmentLocked = !projectState.contractSigned;
+
+  useEffect(() => {
+    loadStock();
+  }, []);
+
+  const loadStock = async () => {
+    setStockLoading(true);
+    setStockError(null);
+    try {
+      const data = await fetchWarehouseStocks();
+      setStock(data.map(mapStock));
+    } catch (e) {
+      console.error(e);
+      setStockError(e instanceof Error ? e.message : "Не удалось загрузить остатки склада");
+    } finally {
+      setStockLoading(false);
+    }
+  };
 
   const handleShipment = (items: { id: number; qty: number }[]) => {
     setStock(s => s.map(item => {
@@ -74,47 +119,64 @@ export function WarehousePage({ projectState }: { projectState: ProjectState }) 
               ))}
             </div>
           </div>
+
+          {stockError && (
+            <div className="flex items-start gap-3 p-4 mb-4 bg-red-50 border border-red-300 rounded-lg">
+              <AlertTriangle size={15} className="text-red-500 mt-0.5 flex-shrink-0"/>
+              <p className="text-sm text-red-700">{stockError}</p>
+            </div>
+          )}
+
           <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
-            <table className="w-full border-collapse">
-              <thead><tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-                {["Артикул","Наименование","Ед. изм.","Всего","В резерве","Брак","Доступно","Статус"].map((h,i) => (
-                  <th key={h} className={`px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide ${i >= 3 && i <= 6 ? "text-right" : "text-left"}`}>{h}</th>
-                ))}
-              </tr></thead>
-              <tbody className="divide-y divide-[#E2E8F0]">
-                {filteredStock.map(item => {
-                  const low = item.available < 200;
-                  const pct = item.total > 0 ? item.reserved / item.total : 0;
-                  return (
-                    <tr key={item.id} className={`hover:bg-slate-50/50 transition-colors ${low ? "bg-red-50/20" : ""}`}>
-                      <td className="px-4 py-3 text-xs font-mono text-slate-500">{item.sku}</td>
-                      <td className="px-4 py-3">
-                        <p className="text-sm text-slate-800">{item.name}</p>
-                        <div className="mt-1 w-24 bg-slate-100 rounded-full h-1">
-                          <div className="h-1 rounded-full bg-violet-500" style={{ width: `${pct * 100}%` }} />
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-xs text-slate-500">{item.unit}</td>
-                      <td className="px-4 py-3 text-sm font-mono text-slate-700 text-right">{item.total.toLocaleString("ru-RU")}</td>
-                      <td className="px-4 py-3 text-sm font-mono text-violet-600 text-right">{item.reserved.toLocaleString("ru-RU")}</td>
-                      <td className="px-4 py-3 text-right font-mono text-sm">
-                        {item.defective > 0
-                          ? <span className="text-red-600 font-semibold">{item.defective.toLocaleString("ru-RU")}</span>
-                          : <span className="text-slate-300">—</span>}
-                      </td>
-                      <td className="px-4 py-3 text-right"><span className={`text-sm font-mono font-semibold ${low ? "text-red-600" : "text-green-600"}`}>{item.available.toLocaleString("ru-RU")}</span></td>
-                      <td className="px-4 py-3">
-                        {low ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-red-700 bg-red-50 px-2 py-0.5 rounded ring-1 ring-red-200"><AlertTriangle size={10} /> Низкий</span>
-                        ) : (
-                          <span className="inline-flex text-xs font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded ring-1 ring-green-200">В норме</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            {stockLoading ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <Loader2 size={24} className="animate-spin text-[#2563EB] mb-2" />
+                <p className="text-sm text-slate-500">Загрузка остатков…</p>
+              </div>
+            ) : filteredStock.length === 0 ? (
+              <div className="py-12 text-center text-sm text-slate-400">Нет данных об остатках</div>
+            ) : (
+              <table className="w-full border-collapse">
+                <thead><tr className="border-b border-[#E2E8F0] bg-slate-50/60">
+                  {["Артикул","Наименование","Ед. изм.","Всего","В резерве","Брак","Доступно","Статус"].map((h,i) => (
+                    <th key={h} className={`px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide ${i >= 3 && i <= 6 ? "text-right" : "text-left"}`}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody className="divide-y divide-[#E2E8F0]">
+                  {filteredStock.map(item => {
+                    const low = item.available < 200;
+                    const pct = item.total > 0 ? item.reserved / item.total : 0;
+                    return (
+                      <tr key={item.id} className={`hover:bg-slate-50/50 transition-colors ${low ? "bg-red-50/20" : ""}`}>
+                        <td className="px-4 py-3 text-xs font-mono text-slate-500">{item.sku}</td>
+                        <td className="px-4 py-3">
+                          <p className="text-sm text-slate-800">{item.name}</p>
+                          <div className="mt-1 w-24 bg-slate-100 rounded-full h-1">
+                            <div className="h-1 rounded-full bg-violet-500" style={{ width: `${pct * 100}%` }} />
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-slate-500">{item.unit}</td>
+                        <td className="px-4 py-3 text-sm font-mono text-slate-700 text-right">{item.total.toLocaleString("ru-RU")}</td>
+                        <td className="px-4 py-3 text-sm font-mono text-violet-600 text-right">{item.reserved.toLocaleString("ru-RU")}</td>
+                        <td className="px-4 py-3 text-right font-mono text-sm">
+                          {item.defective > 0
+                            ? <span className="text-red-600 font-semibold">{item.defective.toLocaleString("ru-RU")}</span>
+                            : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-4 py-3 text-right"><span className={`text-sm font-mono font-semibold ${low ? "text-red-600" : "text-green-600"}`}>{item.available.toLocaleString("ru-RU")}</span></td>
+                        <td className="px-4 py-3">
+                          {low ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-red-700 bg-red-50 px-2 py-0.5 rounded ring-1 ring-red-200"><AlertTriangle size={10} /> Низкий</span>
+                          ) : (
+                            <span className="inline-flex text-xs font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded ring-1 ring-green-200">В норме</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
         </>
       )}

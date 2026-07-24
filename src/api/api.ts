@@ -203,3 +203,44 @@ export async function confirmMlImport(
 
   return data;
 }
+
+export interface WarehouseStockResponse {
+  id: number;
+  product_id: number;
+  category: string;
+  name: string;
+  unit: string;
+  actual_quantity: number;
+  reserved_quantity: number;
+  defective_quantity: number;
+}
+
+export const fetchWarehouseStocks = async (): Promise<WarehouseStockResponse[]> => {
+  const { data } = await api.get<WarehouseStockResponse[]>("/warehouse/stocks");
+  return data;
+};
+
+export interface WarehouseIncomeItem {
+  product_id: number;
+  quantity: number;
+}
+
+export interface WarehouseIncomeInput {
+  items: WarehouseIncomeItem[];
+  // добавь другие поля, если WarehouseIncomeInput их требует (например, supplier, date)
+}
+
+export const postWarehouseIncome = async (payload: WarehouseIncomeInput) => {
+  const { data } = await api.post("/warehouse/income", payload);
+  return data;
+};
+
+export const reserveProjectItems = async (projectId: number) => {
+  const { data } = await api.post(`/warehouse/projects/${projectId}/reserve`);
+  return data;
+};
+
+export const shipProjectItems = async (projectId: number) => {
+  const { data } = await api.post(`/warehouse/projects/${projectId}/ship`);
+  return data;
+};
