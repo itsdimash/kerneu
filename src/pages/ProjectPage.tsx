@@ -16,6 +16,8 @@ import {
   sendProjectToDirector,
   approveProjectDirector,
   rejectProjectDirector,
+  downloadProjectExcel,
+  downloadKpDocument,
 } from "../api/api";
 
 import type {
@@ -23,8 +25,6 @@ import type {
   ProjectResponse,
   MlImportDetailResponse,
   MlImportItemUpdate,
-  downloadProjectExcel,
-  downloadKpDocument
 } from "../api/api";
 
 type MlStatus =
@@ -40,43 +40,23 @@ const ML_STATUS_STYLES: Record<
   }
 > = {
   "Нет в системе": {
-    badge:
-      "bg-red-100 text-red-800 border border-red-300",
-    row:
-      "bg-red-50 hover:bg-red-100/60",
+    badge: "bg-red-100 text-red-800 border border-red-300",
+    row: "bg-red-50 hover:bg-red-100/60",
   },
-
   "Есть в системе (недостаточно)": {
-    badge:
-      "bg-yellow-100 text-yellow-800 border border-yellow-300",
-    row:
-      "bg-yellow-50 hover:bg-yellow-100/60",
+    badge: "bg-yellow-100 text-yellow-800 border border-yellow-300",
+    row: "bg-yellow-50 hover:bg-yellow-100/60",
   },
-
   "На складе": {
-    badge:
-      "bg-green-100 text-green-800 border border-green-300",
-    row:
-      "bg-green-50 hover:bg-green-100/60",
+    badge: "bg-green-100 text-green-800 border border-green-300",
+    row: "bg-green-50 hover:bg-green-100/60",
   },
 };
 
-const normalizeMlStatus = (
-  status: string | null | undefined,
-): MlStatus => {
+const normalizeMlStatus = (status: string | null | undefined): MlStatus => {
   const normalized = status?.trim();
-
-  if (normalized === "На складе") {
-    return "На складе";
-  }
-
-  if (
-    normalized ===
-    "Есть в системе (недостаточно)"
-  ) {
-    return "Есть в системе (недостаточно)";
-  }
-
+  if (normalized === "На складе") return "На складе";
+  if (normalized === "Есть в системе (недостаточно)") return "Есть в системе (недостаточно)";
   return "Нет в системе";
 };
 
@@ -95,11 +75,9 @@ export function ProjectPagePM({
 })  {
   const [sending, setSending] = useState(false);
 
-  // Детали проекта
   const [project, setProject] = useState<ProjectResponse | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
 
-  // ML Import
   const [mlImport, setMlImport] = useState<MlImportDetailResponse | null>(null);
   const [mlImportLoading, setMlImportLoading] = useState(false);
   const [mlImportError, setMlImportError] = useState<string | null>(null);
@@ -116,24 +94,11 @@ export function ProjectPagePM({
       setProjectError(`Некорректный ID проекта: ${String(projectId)}`);
       return;
     }
-
     let cancelled = false;
     setProjectError(null);
-
     fetchProjectDetails(resolvedProjectId)
-      .then((data) => {
-        if (!cancelled) {
-          setProject(data);
-          setProjectError(null);
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setProject(null);
-          setProjectError(error instanceof Error ? error.message : "Не удалось загрузить проект");
-        }
-      });
-
+      .then((data) => { if (!cancelled) { setProject(data); setProjectError(null); } })
+      .catch((error) => { if (!cancelled) { setProject(null); setProjectError(error instanceof Error ? error.message : "Не удалось загрузить проект"); } });
     return () => { cancelled = true; };
   }, [resolvedProjectId, hasValidProjectId]);
 
@@ -143,30 +108,24 @@ export function ProjectPagePM({
       setMlImportLoading(false);
       return;
     }
-
     const storageKey = `project:${resolvedProjectId}:mlImportId`;
     const savedImportId = localStorage.getItem(storageKey);
-
     if (!savedImportId) {
       setMlImport(null);
       setMlImportError(null);
       setMlImportLoading(false);
       return;
     }
-
     const importId = Number(savedImportId);
-
     if (!Number.isInteger(importId) || importId <= 0) {
       setMlImport(null);
       setMlImportLoading(false);
       setMlImportError(`Некорректный ID ML-импорта: ${savedImportId}`);
       return;
     }
-
     let cancelled = false;
     setMlImportLoading(true);
     setMlImportError(null);
-
     getMlImport(importId)
       .then((data) => {
         if (cancelled) return;
@@ -180,33 +139,18 @@ export function ProjectPagePM({
         setMlImport(null);
         setMlImportError(error instanceof Error ? error.message : "Не удалось загрузить ML-импорт");
       })
-      .finally(() => {
-        if (!cancelled) setMlImportLoading(false);
-      });
-
+      .finally(() => { if (!cancelled) setMlImportLoading(false); });
     return () => { cancelled = true; };
   }, [resolvedProjectId, hasValidProjectId]);
 
   const currentStatus = project?.status?.status_name || "Новый";
 
-  // Страхуемся от рассинхронизации: если статус проекта меняется (например,
-  // Комдир отклонил КП), но у нас уже есть локальный mlImport в состоянии —
-  // подтягиваем его заново с сервера. Без этого, если backend действительно
-  // сбросил ml_import.status на "draft" при отклонении, но эта вкладка не
-  // перезагружалась, PM продолжит видеть устаревший бейдж "Подтверждено" и
-  // задизейбленные поля, хотя по факту редактирование уже разблокировано.
   useEffect(() => {
     if (!mlImport) return;
     let cancelled = false;
-
     getMlImport(mlImport.id)
-      .then((data) => {
-        if (!cancelled) setMlImport(data);
-      })
-      .catch(() => {
-        // тихо игнорируем — это фоновая ресинхронизация, а не первичная загрузка
-      });
-
+      .then((data) => { if (!cancelled) setMlImport(data); })
+      .catch(() => {});
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStatus]);
@@ -225,21 +169,7 @@ export function ProjectPagePM({
   };
 
   const currentIndex = statusToIndex[currentStatus] ?? 0;
-  // ВАЖНО: раньше isKpApproved доверял projectState.kpApproved (флаг из
-  // родительского компонента) как fallback ИЛИ-условие. Проблема: этот флаг
-  // не сбрасывается при отклонении — если проект хоть раз был одобрен (или
-  // родитель проинициализировал его как true), кнопка навсегда показывает
-  // "КП одобрено", даже когда backend вернул "Отклонено Комдиром". Как только
-  // у нас есть реальные данные проекта с сервера, статус с backend'а — это
-  // единственный источник истины; projectState.kpApproved используется только
-  // как временная заглушка, пока project ещё не загрузился.
   const isKpApproved = project ? currentIndex >= 3 : projectState.kpApproved;
-
-  // ВАЖНО: currentIndex используется только для степпера (визуальный прогресс),
-  // поэтому "Отклонено Комдиром" там намеренно на одном уровне с "На согласовании".
-  // Но для логики кнопки это два разных состояния — раньше `sent` было true
-  // в обоих случаях (currentIndex >= 2), из-за чего отклонённый проект показывал
-  // "КП на согласовании" и кнопка оставалась заблокированной навсегда.
   const isPendingDirector = currentStatus === "На согласовании у Комдира";
   const isRejected = currentStatus === "Отклонено Комдиром";
   const isApproved = isKpApproved;
@@ -275,39 +205,21 @@ export function ProjectPagePM({
           ["Менеджер", "А. Петров"], ["Клиент", "ООО «СтройТех»"], ["Договор", "ДГ-2024-0041"],
         ];
 
-  const handleMlItemUpdate = async (itemId: number, payload: MlImportItemUpdate,) => {
-  if (!mlImport) return;
-  try {
-    setUpdatingItemId(itemId);
-    setMlImportError(null);
-
-    const updatedItem = await updateMlImportItem(
-      mlImport.id,
-      itemId,
-      payload,
-    );
-
-    setMlImport((current) => {
-      if (!current) return current;
-
-      return {
-        ...current,
-        items: current.items.map((item) =>
-          item.id === updatedItem.id
-            ? updatedItem
-            : item,
-        ),
-      };
-    });
-  } catch (error) {
-    setMlImportError(
-      error instanceof Error
-        ? error.message
-        : "Не удалось изменить строку",
-    );
-  } finally {
-    setUpdatingItemId(null);
-  }
+  const handleMlItemUpdate = async (itemId: number, payload: MlImportItemUpdate) => {
+    if (!mlImport) return;
+    try {
+      setUpdatingItemId(itemId);
+      setMlImportError(null);
+      const updatedItem = await updateMlImportItem(mlImport.id, itemId, payload);
+      setMlImport((current) => {
+        if (!current) return current;
+        return { ...current, items: current.items.map((item) => item.id === updatedItem.id ? updatedItem : item) };
+      });
+    } catch (error) {
+      setMlImportError(error instanceof Error ? error.message : "Не удалось изменить строку");
+    } finally {
+      setUpdatingItemId(null);
+    }
   };
 
   const handleConfirmMlImport = async () => {
@@ -331,13 +243,7 @@ export function ProjectPagePM({
     try {
       const response = await sendProjectToDirector(project.id);
       onKpSent();
-
-      // Локально обновляем статус, чтобы шаги переключились не дожидаясь рефреша
-      setProject(prev => prev ? {
-        ...prev,
-        status: { id: prev.status?.id || 0, status_name: response.status }
-      } : prev);
-
+      setProject(prev => prev ? { ...prev, status: { id: prev.status?.id || 0, status_name: response.status } } : prev);
     } catch (error) {
       console.error("Не удалось отправить Комдиру:", error);
       alert("Ошибка при отправке Комдиру.");
@@ -345,13 +251,12 @@ export function ProjectPagePM({
       setSending(false);
     }
   };
+
   const canConfirmMlImport =
     Boolean(mlImport) &&
     mlImport.status === "draft" &&
     mlImport.items.length > 0 &&
-    mlImport.items.every(
-        (item) => item.ml_status === "На складе",
-    );
+    mlImport.items.every((item) => item.ml_status === "На складе");
 
   const handleExportExcel = async () => {
     if (!project) return;
@@ -409,7 +314,6 @@ export function ProjectPagePM({
           <div className="flex items-center gap-2">
             <Chip status={currentStatus}/>
             <Chip status="kp"/>
-            
             <AppTooltip text={(!mlImport || mlImport.status !== "confirmed") ? "Сначала подтвердите импорт товаров" : ""}>
               <button 
                 onClick={handleExportExcel}
@@ -441,9 +345,7 @@ export function ProjectPagePM({
                       </span>
                     </div>
                     {i < STAGES.length - 1 && (
-                      <div className={`h-0.5 w-8 mx-2 mb-4 transition-colors ${
-                        step.done ? "bg-[#2563EB]" : "bg-[#E2E8F0]"
-                      }`}/>
+                      <div className={`h-0.5 w-8 mx-2 mb-4 transition-colors ${step.done ? "bg-[#2563EB]" : "bg-[#E2E8F0]"}`}/>
                     )}
                   </div>
               ))}
@@ -499,7 +401,10 @@ export function ProjectPagePM({
                 </div>
 
                 <div className="flex items-center gap-3">
-                  {mlImport && (
+                  {/* Бейдж "Подтверждено" нужен только пока КП ещё не решён Комдиром —
+                      после одобрения/отклонения это уже видно по статусу проекта
+                      сверху, и дублирующий зелёный бейдж только путает. */}
+                  {mlImport && !isApproved && !isRejected && (
                     <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${mlImport.status === "confirmed" ? "bg-green-50 text-green-700 ring-1 ring-green-200" : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"}`}>
                       {mlImport.status === "confirmed" ? "Подтверждено" : "Черновик"}
                     </span>
@@ -578,10 +483,9 @@ export function ProjectPagePM({
                     </thead>
                     <tbody className="divide-y divide-[#E2E8F0]">
                       {mlImport.items.length === 0 ? (
-                        <tr><td colSpan={12} className="px-4 py-10 text-center text-sm text-slate-400">В ML-импорте нет товаров</td></tr>
+                        <tr><td colSpan={11} className="px-4 py-10 text-center text-sm text-slate-400">В ML-импорте нет товаров</td></tr>
                       ) : (
                         mlImport.items.map((item) => {
-
                           const isUpdating = updatingItemId === item.id;
                           const priceCost = Number(item.price_cost ?? 0);
                           const price = Number(item.price ?? 0);
@@ -592,23 +496,17 @@ export function ProjectPagePM({
                           const statusStyle = ML_STATUS_STYLES[normalizedStatus];
 
                           return (
-                              <tr
-                                  key={item.id}
-                                  className={`transition-colors ${statusStyle.row}`}
-                              >
-                                <td className="px-4 py-3"><p
-                                    className="text-sm font-medium text-slate-800">{item.input_product}</p></td>
+                              <tr key={item.id} className={`transition-colors ${statusStyle.row}`}>
+                                <td className="px-4 py-3"><p className="text-sm font-medium text-slate-800">{item.input_product}</p></td>
                                 <td className="px-4 py-3 text-sm font-mono text-slate-700">{item.input_quantity}</td>
                                 <td className="px-4 py-3">
-                                  <span className={`inline-flex px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap ${statusStyle.badge}`}
-                                  >
+                                  <span className={`inline-flex px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap ${statusStyle.badge}`}>
                                     {normalizedStatus}
                                   </span>
                                 </td>
                                 <td className="px-4 py-3">
                                   <p className="text-sm text-slate-700">{item.matched_product ?? "—"}</p>
-                                  {item.matched_external_id &&
-                                      <p className="text-xs text-slate-400 mt-1">ML ID: {item.matched_external_id}</p>}
+                                  {item.matched_external_id && <p className="text-xs text-slate-400 mt-1">ML ID: {item.matched_external_id}</p>}
                                 </td>
                                 <td className="px-4 py-3">
                                   <input
@@ -629,43 +527,23 @@ export function ProjectPagePM({
                                 <td className="px-4 py-3">
                                   <input
                                       key={`${item.id}-price-${item.price}`}
-                                      type="number"
-                                      min={0}
-                                      step="1"
-                                      disabled={
-                                          mlImport.status !== "draft" ||
-                                          isUpdating
-                                      }
+                                      type="number" min={0} step="1"
+                                      disabled={mlImport.status !== "draft" || isUpdating}
                                       defaultValue={price}
                                       onBlur={(event) => {
-                                        const newPrice =
-                                            Number(event.target.value);
-
-                                        if (
-                                            !Number.isFinite(newPrice) ||
-                                            newPrice < 0
-                                        ) {
-                                          setMlImportError(
-                                              "Цена должна быть числом больше или равным нулю",
-                                          );
+                                        const newPrice = Number(event.target.value);
+                                        if (!Number.isFinite(newPrice) || newPrice < 0) {
+                                          setMlImportError("Цена должна быть числом больше или равным нулю");
                                           return;
                                         }
-
-                                        if (newPrice !== price) {
-                                          handleMlItemUpdate(item.id, {
-                                            price: newPrice,
-                                          });
-                                        }
+                                        if (newPrice !== price) handleMlItemUpdate(item.id, { price: newPrice });
                                       }}
                                       className="w-32 px-2 py-1.5 text-sm font-mono border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
                                   />
                                 </td>
-                                <td className="px-4 py-3 whitespace-nowrap"><span
-                                    className="text-sm font-semibold font-mono text-slate-800">{formatMoney(totalAmount)}</span>
-                                </td>
+                                <td className="px-4 py-3 whitespace-nowrap"><span className="text-sm font-semibold font-mono text-slate-800">{formatMoney(totalAmount)}</span></td>
                                 <td className="px-4 py-3">
-                                <span
-                                    className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${marginPercent >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : marginPercent > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : marginPercent < 0 ? "bg-red-50 text-red-700 ring-1 ring-red-200" : "bg-slate-100 text-slate-600 ring-1 ring-slate-200"}`}>
+                                <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${marginPercent >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : marginPercent > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : marginPercent < 0 ? "bg-red-50 text-red-700 ring-1 ring-red-200" : "bg-slate-100 text-slate-600 ring-1 ring-slate-200"}`}>
                                   {marginPercent.toFixed(1)}%
                                 </span>
                                 </td>
@@ -686,9 +564,7 @@ export function ProjectPagePM({
                                 </td>
                                 <td className="px-4 py-3">
                                   {isUpdating ? (
-                                      <Loader2
-                                          size={16}
-                                          className="animate-spin text-[#2563EB]"/>
+                                      <Loader2 size={16} className="animate-spin text-[#2563EB]"/>
                                   ) : item.is_confirmed ? (
                                       <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
                                         <CheckCircle2 size={14}/>
@@ -763,35 +639,16 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
       setProjectError(`Некорректный ID проекта: ${String(projectId)}`);
       return;
     }
-
     let cancelled = false;
     setProjectError(null);
-
     fetchProjectDetails(resolvedProjectId)
-      .then((data) => {
-        if (!cancelled) {
-          setProject(data);
-          setProjectError(null);
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setProject(null);
-          setProjectError(error instanceof Error ? error.message : "Не удалось загрузить проект");
-        }
-      });
-
+      .then((data) => { if (!cancelled) { setProject(data); setProjectError(null); } })
+      .catch((error) => { if (!cancelled) { setProject(null); setProjectError(error instanceof Error ? error.message : "Не удалось загрузить проект"); } });
     return () => { cancelled = true; };
   }, [resolvedProjectId, hasValidProjectId]);
 
   const currentStatus = project?.status?.status_name || "На согласовании у Комдира";
 
-  // РАНЬШЕ: `decision` был чисто локальным useState<null|boolean>(null), который
-  // сбрасывался в null при каждом монтировании компонента — то есть не имел
-  // никакой связи с реальным статусом проекта на backend. Именно поэтому после
-  // обновления страницы или повторного входа Комдир снова видел кнопки
-  // "Подтверждаю" / "Отклонить", даже если решение уже было сохранено на
-  // сервере. Теперь решение выводится напрямую из статуса проекта с backend'а.
   const decision: null | boolean =
     currentStatus === "Одобрено Комдиром" ? true :
     currentStatus === "Отклонено Комдиром" ? false :
@@ -803,18 +660,12 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
     try {
       if (approve) {
         const response = await approveProjectDirector(project.id);
-        setProject((prev) => prev ? {
-          ...prev,
-          status: { id: prev.status?.id || 0, status_name: response.status },
-        } : prev);
+        setProject((prev) => prev ? { ...prev, status: { id: prev.status?.id || 0, status_name: response.status } } : prev);
         onKpApproved();
       } else {
         const reason = window.prompt("Укажите причину отклонения (необязательно):") || undefined;
         const response = await rejectProjectDirector(project.id, reason);
-        setProject((prev) => prev ? {
-          ...prev,
-          status: { id: prev.status?.id || 0, status_name: response.status },
-        } : prev);
+        setProject((prev) => prev ? { ...prev, status: { id: prev.status?.id || 0, status_name: response.status } } : prev);
       }
     } catch (error) {
       console.error("Ошибка при принятии решения:", error);
@@ -880,10 +731,8 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
               </tr></thead>
               <tbody className="divide-y divide-[#E2E8F0]">
                 {KP_ITEMS_INIT.filter(i => i.price > 0).map(item => {
-                  // Fallbacks: If your KP_ITEMS_INIT doesn't have a cost property, we fake it for the UI preview
                   const priceCost = (item as any).cost || (item.price * 0.755); 
                   const margin = item.price > 0 ? ((item.price - priceCost) / item.price) * 100 : 0;
-                  
                   return (
                     <tr key={item.id} className="hover:bg-slate-50/50">
                       <td className="px-4 py-3 text-sm text-slate-700">{item.name}</td>

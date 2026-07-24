@@ -8,6 +8,14 @@ export function Chip({ status }: { status: string }) {
     'Активный закуп': { label: 'Активный закуп', cls: 'bg-violet-50 text-violet-700 ring-1 ring-violet-300' },
     'На отгрузке': { label: 'На отгрузке', cls: 'bg-red-50 text-red-700 ring-1 ring-red-300' },
     'Ожидание документов': { label: 'Ожидание документов', cls: 'bg-yellow-50 text-yellow-700 ring-1 ring-yellow-300' },
+
+    // Статусы согласования Комдиром — раньше отсутствовали в мапе,
+    // поэтому падали в серый fallback ниже, хотя выше в статус-степпере
+    // ("На согласовании", "Одобрено", "Отклонено") у каждого этапа уже
+    // задумывался свой цвет.
+    'На согласовании у Комдира': { label: 'На согласовании у Комдира', cls: 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-300' },
+    'Одобрено Комдиром': { label: 'Одобрено Комдиром', cls: 'bg-green-50 text-green-700 ring-1 ring-green-300' },
+    'Отклонено Комдиром': { label: 'Отклонено Комдиром', cls: 'bg-rose-50 text-rose-700 ring-1 ring-rose-300' },
     
     // Старые/системные статусы
     'draft': { label: 'Черновик', cls: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/80' },
