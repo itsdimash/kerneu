@@ -21,30 +21,57 @@ import {
   type DashboardStats,
   createMlImport,
   getMlImport,
-} from "../api/api";// Тип клиента, который приходит с бэкенда: только id и name используются для отображения
+} from "../api/api";
+
+// Тип клиента, который приходит с бэкенда: только id и name используются для отображения
 type ClientDTO = {
   id: number;
   client_name: string;
   [key: string]: unknown; // бэкенд может присылать и другие поля — они нам не нужны
 };
 
-export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Page) => void; onOpenProject: (projectId: number) => void }) {
+// Форматирует номер телефона как +<код страны> (XXX) XXX-XX-XX.
+function formatPhoneNumber(value: string): string {
+  let digits = value.replace(/\D/g, "");
+
+  if (digits.length === 0) return "";
+
+  // 1 цифра кода страны + до 10 цифр национального номера
+  digits = digits.slice(0, 11);
+
+  const code = digits.slice(0, 1);
+  const rest = digits.slice(1);
+
+  if (rest.length === 0) return "+" + code;
+
+  let result = "+" + code + " (" + rest.slice(0, 3);
+  if (rest.length >= 3) result += ")";
+  if (rest.length > 3) result += " " + rest.slice(3, 6);
+  if (rest.length > 6) result += "-" + rest.slice(6, 8);
+  if (rest.length > 8) result += "-" + rest.slice(8, 10);
+
+  return result;
+}
+
+export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string; onNavigate: (p: Page) => void; onOpenProject: (projectId: number) => void }) {
   // Стейты для модального окна
   const [isKpModalOpen, setIsKpModalOpen] = useState(false);
   const [isNewClient, setIsNewClient] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState("");
   const [newClientForm, setNewClientForm] = useState({ name: "", email: "", phone: "" });
 
-  // Клиенты приходят с бэкенда: {id, name, ...}. Отображаем только name, id храним для сохранения.
+  // Поля проекта: название и дедлайн — видны в обоих режимах (новый/существующий клиент)
+  const [projectForm, setProjectForm] = useState({ name: "", deadline: "" });
+
+  // Клиенты приходят с бэкенда
   const [clients, setClients] = useState<ClientDTO[]>([]);
   const [clientsLoading, setClientsLoading] = useState(false);
   const [clientsError, setClientsError] = useState<string | null>(null);
 
-
   // Файл КП, прикреплённый пользователем
   const [kpFile, setKpFile] = useState<File | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<any[]>([]);
 
   // Статистика дашборда (карточки сверху)
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -53,7 +80,8 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
   useEffect(() => {
     loadProjects();
     loadStats();
-}, []);
+  }, []);
+
   useEffect(() => {
     if (!isKpModalOpen) return;
 
@@ -80,7 +108,8 @@ export function DashboardPM({ onNavigate, onOpenProject }: { onNavigate: (p: Pag
       cancelled = true;
     };
   }, [isKpModalOpen]);
-const loadProjects = async () => {
+
+  const loadProjects = async () => {
     try {
         const response = await fetch(
             "http://localhost:8000/api/v1/projects/",
@@ -96,24 +125,49 @@ const loadProjects = async () => {
     } catch (e) {
         console.error(e);
     }
-};
+  };
 
-const loadStats = async () => {
-  try {
-    const data = await fetchDashboardStats();
-    setStats(data);
-    setStatsError(null);
-  } catch (e) {
-    console.error(e);
-    setStatsError(e instanceof Error ? e.message : "Не удалось загрузить статистику");
-  }
-};
+  const loadStats = async () => {
+    try {
+      const data = await fetchDashboardStats();
+      setStats(data);
+      setStatsError(null);
+    } catch (e) {
+      console.error(e);
+      setStatsError(e instanceof Error ? e.message : "Не удалось загрузить статистику");
+    }
+  };
 
   const selectedClientData = clients.find((c) => c.id === Number(selectedClientId));
   const contractIcon = (s: ContractStatus) => s === "unsigned" ? "🔒" : s === "pending" ? "⏳" : "🔓";
   const [openMenu, setOpenMenu] = useState<number | null>(null);
+  
   // Клиент "выбран", когда либо указан существующий клиент, либо введено имя нового
   const isClientChosen = isNewClient ? newClientForm.name.trim().length > 0 : !!selectedClientId;
+
+  // Поля проекта (название/дедлайн) показываются только после того, как пользователь
+  // либо отметил «Новый клиент», либо выбрал конкретного клиента из списка
+  const showProjectDetails = isNewClient || !!selectedClientId;
+
+  // Форма проекта считается заполненной, когда указаны название и дедлайн
+  const isProjectFormValid =
+    projectForm.name.trim().length > 0 && projectForm.deadline.trim().length > 0;
+
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawValue = e.target.value;
+    const prevValue = newClientForm.phone;
+
+    let digits = rawValue.replace(/\D/g, "");
+
+    if (rawValue.length < prevValue.length) {
+      const prevDigits = prevValue.replace(/\D/g, "");
+      if (digits.length === prevDigits.length && digits.length > 0) {
+        digits = digits.slice(0, -1);
+      }
+    }
+
+    setNewClientForm({ ...newClientForm, phone: formatPhoneNumber(digits) });
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0] ?? null;
@@ -125,273 +179,182 @@ const loadStats = async () => {
     setIsNewClient(false);
     setSelectedClientId("");
     setNewClientForm({ name: "", email: "", phone: "" });
+    setProjectForm({ name: "", deadline: "" });
     setKpFile(null);
   };
 
-const handleSave = async () => {
-  try {
-    setIsSaving(true);
+  const handleSave = async () => {
+    try {
+      setIsSaving(true);
 
-    if (!kpFile) {
-      alert("Выберите файл КП");
-      return;
-    }
-
-    const uploadedFileUrl = `/uploads/${kpFile.name}`;
-
-    const payload = isNewClient
-      ? {
-          is_new_client: true,
-          new_client_name: newClientForm.name,
-          new_client_phone: newClientForm.phone,
-          new_client_email: newClientForm.email,
-
-          invoice_amount: 0,
-          invoice_status_id: 1,
-          file_url: uploadedFileUrl,
-
-          project_status_id: 1,
-          planned_margin: 0,
-          deadline: "2026-08-01",
-        }
-      : {
-          is_new_client: false,
-          client_id: Number(selectedClientId),
-
-          invoice_amount: 0,
-          invoice_status_id: 1,
-          file_url: uploadedFileUrl,
-
-          project_status_id: 1,
-          pm_id: 1,
-          planned_margin: 0,
-          deadline: "2026-08-01",
-        };
-
-    /*
-     * 1. Создаём проект
-     */
-    const projectResponse = await fetch(
-      "http://localhost:8000/api/v1/projects/create-base",
-      {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      },
-    );
-
-    if (!projectResponse.ok) {
-      const errorText = await projectResponse.text();
-
-      throw new Error(
-        errorText || "Ошибка создания проекта",
-      );
-    }
-
-    const projectData = await projectResponse.json();
-
-    // Твой backend возвращает project_id
-    const projectId = Number(projectData.project_id);
-
-    if (!Number.isInteger(projectId) || projectId <= 0) {
-      console.error("Ответ создания проекта:", projectData);
-
-      throw new Error(
-        "Backend не вернул корректный project_id",
-      );
-    }
-
-    console.log("Проект создан:", projectId);
-
-    /*
-     * 2. Отправляем исходный файл в парсер
-     */
-    const parserFormData = new FormData();
-    parserFormData.append("file", kpFile);
-
-    const parserResponse = await fetch(
-      `http://localhost:8000/api/v1/parser/projects/${projectId}/parse`,
-      {
-        method: "POST",
-        credentials: "include",
-        body: parserFormData,
-      },
-    );
-
-    if (!parserResponse.ok) {
-      const errorText = await parserResponse.text();
-
-      throw new Error(
-        errorText || "Ошибка парсинга файла",
-      );
-    }
-
-    /*
-     * 3. Получаем Excel от парсера
-     */
-    const parserBlob = await parserResponse.blob();
-
-    const parserFile = new File(
-      [parserBlob],
-      "quotation.xlsx",
-      {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      },
-    );
-
-    console.log(
-      "Excel от парсера получен:",
-      parserFile.name,
-      parserFile.size,
-    );
-
-    /*
-     * 4. Отправляем Excel от парсера в ML
-     */
-    const mlFormData = new FormData();
-    mlFormData.append("file", parserFile);
-
-    const mlResponse = await fetch(
-      "http://localhost:8000/api/v1/match-file",
-      {
-        method: "POST",
-        credentials: "include",
-        body: mlFormData,
-      },
-    );
-
-    if (!mlResponse.ok) {
-      const errorText = await mlResponse.text();
-
-      throw new Error(
-        errorText || "Ошибка обработки файла в ML",
-      );
-    }
-
-    /*
-     * 5. Получаем готовый Excel от ML
-     */
-    const mlBlob = await mlResponse.blob();
-
-    const contentDisposition =
-      mlResponse.headers.get("content-disposition");
-
-    let mlFilename = "ml_result.xlsx";
-
-    if (contentDisposition) {
-      const utf8Match = contentDisposition.match(
-        /filename\*=UTF-8''([^;]+)/i,
-      );
-
-      const normalMatch = contentDisposition.match(
-        /filename="?([^";]+)"?/i,
-      );
-
-      if (utf8Match?.[1]) {
-        mlFilename = decodeURIComponent(
-          utf8Match[1],
-        );
-      } else if (normalMatch?.[1]) {
-        mlFilename = normalMatch[1].trim();
+      if (!isProjectFormValid) {
+        alert("Заполните название проекта и дедлайн");
+        return;
       }
+
+      if (!kpFile) {
+        alert("Выберите файл КП");
+        return;
+      }
+
+      const uploadedFileUrl = `/uploads/${kpFile.name}`;
+
+      const payload = isNewClient
+        ? {
+            is_new_client: true,
+            new_client_name: newClientForm.name,
+            new_client_phone: newClientForm.phone,
+            new_client_email: newClientForm.email,
+            project_name: projectForm.name,
+            invoice_amount: 0,
+            invoice_status_id: 1,
+            file_url: uploadedFileUrl,
+            project_status_id: 1,
+            planned_margin: 0,
+            deadline: projectForm.deadline,
+          }
+        : {
+            is_new_client: false,
+            client_id: Number(selectedClientId),
+            project_name: projectForm.name,
+            invoice_amount: 0,
+            invoice_status_id: 1,
+            file_url: uploadedFileUrl,
+            project_status_id: 1,
+            pm_id: 1,
+            planned_margin: 0,
+            deadline: projectForm.deadline,
+          };
+
+      const projectResponse = await fetch(
+        "http://localhost:8000/api/v1/projects/create-base",
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        },
+      );
+
+      if (!projectResponse.ok) {
+        const errorText = await projectResponse.text();
+        throw new Error(errorText || "Ошибка создания проекта");
+      }
+
+      const projectData = await projectResponse.json();
+      const projectId = Number(projectData.project_id);
+
+      if (!Number.isInteger(projectId) || projectId <= 0) {
+        console.error("Ответ создания проекта:", projectData);
+        throw new Error("Backend не вернул корректный project_id");
+      }
+
+      console.log("Проект создан:", projectId);
+
+      const parserFormData = new FormData();
+      parserFormData.append("file", kpFile);
+
+      const parserResponse = await fetch(
+        `http://localhost:8000/api/v1/parser/projects/${projectId}/parse`,
+        {
+          method: "POST",
+          credentials: "include",
+          body: parserFormData,
+        },
+      );
+
+      if (!parserResponse.ok) {
+        const errorText = await parserResponse.text();
+        throw new Error(errorText || "Ошибка парсинга файла");
+      }
+
+      const parserBlob = await parserResponse.blob();
+      const parserFile = new File(
+        [parserBlob],
+        "quotation.xlsx",
+        {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+      );
+
+      console.log("Excel от парсера получен:", parserFile.name, parserFile.size);
+
+      const mlFormData = new FormData();
+      mlFormData.append("file", parserFile);
+
+      const mlResponse = await fetch(
+        "http://localhost:8000/api/v1/match-file",
+        {
+          method: "POST",
+          credentials: "include",
+          body: mlFormData,
+        },
+      );
+
+      if (!mlResponse.ok) {
+        const errorText = await mlResponse.text();
+        throw new Error(errorText || "Ошибка обработки файла в ML");
+      }
+
+      const mlBlob = await mlResponse.blob();
+      const contentDisposition = mlResponse.headers.get("content-disposition");
+      let mlFilename = "ml_result.xlsx";
+
+      if (contentDisposition) {
+        const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+        const normalMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+
+        if (utf8Match?.[1]) {
+          mlFilename = decodeURIComponent(utf8Match[1]);
+        } else if (normalMatch?.[1]) {
+          mlFilename = normalMatch[1].trim();
+        }
+      }
+
+      const mlFile = new File(
+        [mlBlob],
+        mlFilename,
+        {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+      );
+
+      console.log("Excel от ML получен:", mlFile.name, mlFile.size);
+
+      const createdImport = await createMlImport(projectId, mlFile);
+      console.log("ML import создан:", createdImport);
+
+      const importDetails = await getMlImport(createdImport.id);
+      console.log("Строки ML-импорта:", importDetails.items);
+
+      localStorage.setItem(`project:${projectId}:mlImportId`, String(createdImport.id));
+
+      const downloadUrl = URL.createObjectURL(mlBlob);
+      const anchor = document.createElement("a");
+      anchor.href = downloadUrl;
+      anchor.download = mlFilename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(downloadUrl);
+
+      await loadProjects();
+      await loadStats();
+
+      alert("Проект и ML-импорт успешно созданы!");
+      resetModal();
+    } catch (error) {
+      console.error("Ошибка создания проекта:", error);
+      const message = error instanceof Error ? error.message : "Неизвестная ошибка";
+      alert(`Ошибка создания проекта: ${message}`);
+    } finally {
+      setIsSaving(false);
     }
+  };
 
-    const mlFile = new File(
-      [mlBlob],
-      mlFilename,
-      {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      },
-    );
-
-    console.log(
-      "Excel от ML получен:",
-      mlFile.name,
-      mlFile.size,
-    );
-
-    /*
-     * 6. Сохраняем ML Excel в ml_imports
-     * и ml_import_items
-     */
-    const createdImport = await createMlImport(
-      projectId,
-      mlFile,
-    );
-
-    console.log(
-      "ML import создан:",
-      createdImport,
-    );
-
-    /*
-     * 7. Получаем сохранённые строки импорта
-     */
-    const importDetails = await getMlImport(
-      createdImport.id,
-    );
-
-    console.log(
-      "Строки ML-импорта:",
-      importDetails.items,
-    );
-
-    /*
-     * Сохраняем связь projectId → importId.
-     * ProjectPage сможет получить этот импорт.
-     */
-    localStorage.setItem(
-      `project:${projectId}:mlImportId`,
-      String(createdImport.id),
-    );
-
-    /*
-     * 8. Автоматически скачиваем готовый ML Excel
-     */
-    const downloadUrl =
-      URL.createObjectURL(mlBlob);
-
-    const anchor =
-      document.createElement("a");
-
-    anchor.href = downloadUrl;
-    anchor.download = mlFilename;
-
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-
-    URL.revokeObjectURL(downloadUrl);
-
-    /*
-     * 9. Обновляем frontend
-     */
-    await loadProjects();
-    await loadStats();
-
-    alert("Проект и ML-импорт успешно созданы!");
-
-    resetModal();
-  } catch (error) {
-    console.error(
-      "Ошибка создания проекта:",
-      error,
-    );
-
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Неизвестная ошибка";
-
-    alert(`Ошибка создания проекта: ${message}`);
-  } finally {
-    setIsSaving(false);
-  }
-    };
-const handleDelete = async (projectId: number) => {
+  const handleDelete = async (projectId: number) => {
     if (!window.confirm("Вы действительно хотите удалить проект?")) {
         return;
     }
@@ -410,26 +373,27 @@ const handleDelete = async (projectId: number) => {
         }
 
         setOpenMenu(null);
-
         await loadProjects();
         await loadStats();
-
     } catch (error) {
         console.error(error);
         alert("Ошибка удаления");
     }
-};
+  };
+
   return (
     <PageWrap 
-      title="Дашборд PM" 
+      title={role === "commercial_director" ? "Дашборд Директора" : "Дашборд PM"} 
       subtitle="Управление проектами и коммерческими предложениями"
       actions={
-        <button 
-          onClick={() => setIsKpModalOpen(true)}
-          className="flex items-center gap-1.5 px-4 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#1d4ed8] transition-colors"
-        >
-          <Plus size={14} /> Новый проект 
-        </button>
+        role !== "commercial_director" && (
+          <button 
+            onClick={() => setIsKpModalOpen(true)}
+            className="flex items-center gap-1.5 px-4 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#1d4ed8] transition-colors"
+          >
+            <Plus size={14} /> Новый проект 
+          </button>
+        )
       }
     >
       {/* ── Модальное окно «Новое КП» ── */}
@@ -470,6 +434,7 @@ const handleDelete = async (projectId: number) => {
 
               <div className="h-px w-full bg-slate-100" />
 
+              {/* ── Клиентский блок: виден всегда, сразу под чекбоксом ── */}
               {isNewClient ? (
                 <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
                   <div>
@@ -497,9 +462,11 @@ const handleDelete = async (projectId: number) => {
                     <input
                       type="tel"
                       value={newClientForm.phone}
-                      onChange={(e) => setNewClientForm({...newClientForm, phone: e.target.value})}
+                      onChange={handlePhoneChange}
+                      inputMode="tel"
+                      maxLength={20}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
-                      placeholder="+7 (___) ___-__-__"
+                      placeholder="+7 (707) 123-45-67"
                     />
                   </div>
                 </div>
@@ -537,7 +504,37 @@ const handleDelete = async (projectId: number) => {
                 </div>
               )}
 
-              {/* ── Загрузка файла КП: показывается только после выбора клиента ── */}
+              {/* ── Название проекта и дедлайн: появляются, когда отмечен «Новый клиент»
+                  либо выбран конкретный клиент из списка ── */}
+              {showProjectDetails && (
+                <>
+                  <div className="h-px w-full bg-slate-100" />
+
+                  <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-500 mb-1.5">Название проекта</label>
+                      <input
+                        type="text"
+                        value={projectForm.name}
+                        onChange={(e) => setProjectForm({ ...projectForm, name: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
+                        placeholder="Например, Реконструкция склада Nord"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-500 mb-1.5">Дедлайн</label>
+                      <input
+                        type="date"
+                        value={projectForm.deadline}
+                        onChange={(e) => setProjectForm({ ...projectForm, deadline: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* ── Загрузка файла: показывается только после выбора/ввода клиента ── */}
               {isClientChosen && (
               <>
               <div className="h-px w-full bg-slate-100" />
@@ -593,7 +590,7 @@ const handleDelete = async (projectId: number) => {
               </button>
               <button
                 onClick={handleSave}
-                disabled={!isClientChosen || isSaving}
+                disabled={!isClientChosen || !isProjectFormValid || isSaving}
                 className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#2563EB] rounded-lg hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-w-[112px]"
               >
                 {isSaving ? (
@@ -649,7 +646,7 @@ const handleDelete = async (projectId: number) => {
       )}
 
       <SectionHeader title="Проекты" action={
-        <button className="text-xs text-[#2563EB] hover:underline flex items-center gap-1">Все проекты <ChevronRight size={12} /></button>
+        <button className="text-xs text-[#2563EB] hover:underline flex items-center gap-1">Все проектов <ChevronRight size={12} /></button>
       } />
       <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-visible mb-6">
           <table className="w-full border-collapse">
@@ -669,17 +666,13 @@ const handleDelete = async (projectId: number) => {
                           {/* Проект */}
                           <td className="px-4 py-3">
                               <div className="flex items-center gap-1.5">
-
-                                  {/* Пока заглушка, пока нет contractStatus */}
                                   {contractIcon("signed")}
-
                                   <button
                                       onClick={() => onOpenProject(p.id)}
                                       className="text-sm font-medium text-[#2563EB] hover:underline text-left"
                                   >
                                       {p.name ?? `Проект №${p.id}`}
                                   </button>
-
                               </div>
                           </td>
 
@@ -688,16 +681,9 @@ const handleDelete = async (projectId: number) => {
                               {p.client?.client_name}
                           </td>
 
-                          {/* Этап */}
+                          {/* Этап: ИСПОЛЬЗУЕМ НАШ НОВЫЙ CHIP! */}
                           <td className="px-4 py-3">
-                              {(() => {
-                                  const stage = getStageMeta(p.status?.status_name);
-                                  return (
-                                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${stage.cls}`}>
-                                          {stage.label}
-                                      </span>
-                                  );
-                              })()}
+                              <Chip status={p.status?.status_name} />
                           </td>
 
                           {/* Бюджет */}
@@ -707,20 +693,20 @@ const handleDelete = async (projectId: number) => {
 
                           {/* Дедлайн */}
                           <td className="px-4 py-3">
-          <span
-              className={`text-xs font-semibold px-2 py-0.5 rounded ${deadlineBadge(
-                  p.deadline
-              )}`}
-          >
-            {new Date(p.deadline).toLocaleDateString("ru-RU")}
-          </span>
+                            <span
+                                className={`text-xs font-semibold px-2 py-0.5 rounded ${deadlineBadge(
+                                    p.deadline
+                                )}`}
+                            >
+                              {new Date(p.deadline).toLocaleDateString("ru-RU")}
+                            </span>
                           </td>
 
                           {/* Ответственный */}
                           <td className="px-4 py-3">
-          <span className="text-xs font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
-            {p.pm?.name}
-          </span>
+                            <span className="text-xs font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                              {p.pm?.name}
+                            </span>
                           </td>
 
                           {/* Менеджер */}
@@ -764,7 +750,6 @@ const handleDelete = async (projectId: number) => {
                                   </div>
                               )}
                           </td>
-
                       </tr>
                   );
               })}
@@ -772,50 +757,51 @@ const handleDelete = async (projectId: number) => {
           </table>
       </div>
 
-        <div className="grid grid-cols-2 gap-4">
-            <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
-                <h3 className="text-sm font-semibold text-slate-900 mb-4">Ближайшие дедлайны</h3>
-                <div className="space-y-3">
-                    {[
-                        {name: "Реконструкция склада Nord", deadline: "30.07.2024"},
-                        {name: "Офисный комплекс «Башня»", deadline: "15.08.2024"},
-                        {name: "Торговый центр «Меридиан»", deadline: "01.09.2024"},
-                    ].map(item => {
-                        const d = daysFromNow(item.deadline);
-                        const color = d <= 7 ? "text-red-600 font-bold" : d <= 14 ? "text-orange-600 font-semibold" : "text-green-600 font-medium";
-                        return (
-                            <div key={item.name} className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm text-slate-700">{item.name}</p>
-                                    <p className="text-xs text-slate-400">{item.deadline}</p>
-                                </div>
-                                <span className={`text-xs ${color}`}>{d > 0 ? `${d}д` : "Просрочен"}</span>
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
-            <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
-                <h3 className="text-sm font-semibold text-slate-900 mb-4">Активность</h3>
-                <div className="space-y-3">
-                    {[
-                        {text: "КП отправлено клиенту ООО «СтройТех»", time: "2 дня назад"},
-                        {text: "Новый счёт на согласование СФ-2024-0146", time: "4 дня назад"},
-                        {text: "Договор подписан: склад Nord", time: "Вчера"},
-                        {text: "Отгрузка ОТГ-0018 подтверждена", time: "1 день назад"},
-                    ].map((a, i) => (
-                        <div key={i} className="flex items-start gap-2.5">
-                            <div className="w-1.5 h-1.5 rounded-full bg-[#2563EB] mt-2 flex-shrink-0"/>
-                            <div><p className="text-sm text-slate-700">{a.text}</p><p className="text-xs text-slate-400">{a.time}</p></div>
+      <div className="grid grid-cols-2 gap-4">
+          <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
+              <h3 className="text-sm font-semibold text-slate-900 mb-4">Ближайшие дедлайны</h3>
+              <div className="space-y-3">
+                  {[
+                      {name: "Реконструкция склада Nord", deadline: "30.07.2024"},
+                      {name: "Офисный комплекс «Башня»", deadline: "15.08.2024"},
+                      {name: "Торговый центр «Меридиан»", deadline: "01.09.2024"},
+                  ].map(item => {
+                      const d = daysFromNow(item.deadline);
+                      const color = d <= 7 ? "text-red-600 font-bold" : d <= 14 ? "text-orange-600 font-semibold" : "text-green-600 font-medium";
+                      return (
+                          <div key={item.name} className="flex items-center justify-between">
+                              <div>
+                                  <p className="text-sm text-slate-700">{item.name}</p>
+                                  <p className="text-xs text-slate-400">{item.deadline}</p>
+                              </div>
+                              <span className={`text-xs ${color}`}>{d > 0 ? `${d}д` : "Просрочен"}</span>
+                          </div>
+                      );
+                  })}
               </div>
-            ))}
           </div>
+          <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
+              <h3 className="text-sm font-semibold text-slate-900 mb-4">Активность</h3>
+              <div className="space-y-3">
+                  {[
+                      {text: "КП отправлено клиенту ООО «СтройТех»", time: "2 дня назад"},
+                      {text: "Новый счёт на согласование СФ-2024-0146", time: "4 дня назад"},
+                      {text: "Договор подписан: склад Nord", time: "Вчера"},
+                      {text: "Отгрузка ОТГ-0018 подтверждена", time: "1 день назад"},
+                  ].map((a, i) => (
+                      <div key={i} className="flex items-start gap-2.5">
+                          <div className="w-1.5 h-1.5 rounded-full bg-[#2563EB] mt-2 flex-shrink-0"/>
+                          <div><p className="text-sm text-slate-700">{a.text}</p><p className="text-xs text-slate-400">{a.time}</p></div>
+            </div>
+          ))}
         </div>
       </div>
-    </PageWrap>
+    </div>
+  </PageWrap>
   );
 }
 
+// Оставлен для истории, если понадобится, но в роутинге ниже уже не используется для commercial_director
 export function DashboardDirector({ onNavigate, receipts }: { onNavigate: (p: Page) => void; receipts: Receipt[] }) {
   return (
     <PageWrap title="Дашборд Комдира" subtitle="Проекты на утверждение, маржа и дедлайны">
@@ -1001,8 +987,8 @@ export function DashboardPage({ role, onNavigate, receipts, onOpenProject }: {
   receipts: Receipt[];
   onOpenProject: (projectId: number) => void;
 }) {
-  if (role === "pm")        return <DashboardPM onNavigate={onNavigate} onOpenProject={onOpenProject} />;
-  if (role === "director")  return <DashboardDirector onNavigate={onNavigate} receipts={receipts} />;
-  if (role === "accountant")return <DashboardAccountant onNavigate={onNavigate} />;
+  if (role === "pm" || role === "commercial_director") return <DashboardPM role={role} onNavigate={onNavigate} onOpenProject={onOpenProject} />;
+  if (role === "accountant") return <DashboardAccountant onNavigate={onNavigate} />;
+  
   return <DashboardWarehouse onNavigate={onNavigate} />;
 }

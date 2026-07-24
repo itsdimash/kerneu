@@ -6,7 +6,7 @@ import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
 import { fmt } from "../lib/format";
 import { INVOICES_INIT } from "../data/invoices";
 import { STOCK_INIT } from "../data/stock";
-import { AlertTriangle, CheckCircle2, Loader2, Send, Truck, Check, FileCheck, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText } from "lucide-react";
 import { KP_ITEMS_INIT } from "../data/kpItems";
 import {
   fetchProjectDetails,
@@ -23,6 +23,8 @@ import type {
   ProjectResponse,
   MlImportDetailResponse,
   MlImportItemUpdate,
+  downloadProjectExcel,
+  downloadKpDocument
 } from "../api/api";
 
 type MlStatus =
@@ -104,6 +106,8 @@ export function ProjectPagePM({
   const [mlImportError, setMlImportError] = useState<string | null>(null);
   const [updatingItemId, setUpdatingItemId] = useState<number | null>(null);
   const [confirmingImport, setConfirmingImport] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isGeneratingKP, setIsGeneratingKP] = useState(false);
 
   const resolvedProjectId = Number(projectId);
   const hasValidProjectId = Number.isInteger(resolvedProjectId) && resolvedProjectId > 0;
@@ -184,9 +188,6 @@ export function ProjectPagePM({
     return () => { cancelled = true; };
   }, [resolvedProjectId, hasValidProjectId]);
 
-  // ==========================================
-  // ЛОГИКА ШАГОВ (ПРИВЯЗКА К БЭКЕНДУ)
-  // ==========================================
   const currentStatus = project?.status?.status_name || "Новый";
 
   const statusToIndex: Record<string, number> = {
@@ -203,6 +204,7 @@ export function ProjectPagePM({
   };
 
   const currentIndex = statusToIndex[currentStatus] ?? 0;
+  const isKpApproved = currentIndex >= 3 || projectState.kpApproved;
 
   const STAGES = [
     { label: "Новый", done: currentIndex > 0, active: currentIndex === 0 },
@@ -300,7 +302,7 @@ export function ProjectPagePM({
 
     } catch (error) {
       console.error("Не удалось отправить Комдиру:", error);
-      alert("Ошибка при отправке Комдиру. Проверьте консоль.");
+      alert("Ошибка при отправке Комдиру.");
     } finally {
       setSending(false);
     }
@@ -312,6 +314,33 @@ export function ProjectPagePM({
     mlImport.items.every(
         (item) => item.ml_status === "На складе",
     );
+
+  const handleExportExcel = async () => {
+    if (!project) return;
+    try {
+      setIsExporting(true);
+      await downloadProjectExcel(project.id);
+    } catch (error) {
+      console.error("Ошибка при скачивании Excel:", error);
+      alert("Не удалось скачать файл");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleGenerateKP = async () => {
+    if (!project) return;
+    try {
+      setIsGeneratingKP(true);
+      await downloadKpDocument(project.id);
+    } catch (error) {
+      console.error("Ошибка генерации КП:", error);
+      alert(error instanceof Error ? error.message : "Не удалось сгенерировать КП");
+    } finally {
+      setIsGeneratingKP(false);
+    }
+  };
+
   if (!hasValidProjectId) {
     return (
       <PageWrap title="Проект не выбран" subtitle="Не удалось определить ID проекта">
@@ -338,7 +367,23 @@ export function ProjectPagePM({
     <PageWrap
         title={title}
         subtitle={subtitle}
-        actions={<div className="flex items-center gap-2"><Chip status={currentStatus}/><Chip status="kp"/></div>}
+        actions={
+          <div className="flex items-center gap-2">
+            <Chip status={currentStatus}/>
+            <Chip status="kp"/>
+            
+            <AppTooltip text={(!mlImport || mlImport.status !== "confirmed") ? "Сначала подтвердите импорт товаров" : ""}>
+              <button 
+                onClick={handleExportExcel}
+                disabled={isExporting || !project || !mlImport || mlImport.status !== "confirmed"}
+                className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />} 
+                {isExporting ? "Скачивание..." : "Скачать Excel"}
+              </button>
+            </AppTooltip>
+          </div>
+        }
     >
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
           <div className="lg:col-span-2 bg-white rounded-lg border border-[#E2E8F0] p-5 overflow-x-auto flex items-center">
@@ -390,27 +435,12 @@ export function ProjectPagePM({
           </div>
         </div>
 
-        {sent && (
-            <div className={`mb-6 rounded-lg border p-5 ${projectState.kpApproved ? "bg-green-50 border-green-200" : "bg-slate-50 border-[#E2E8F0]"}`}>
-              {projectState.kpApproved ? (
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 size={16} className="text-green-600 flex-shrink-0"/>
-                      <p className="text-sm font-medium text-green-800">Комдир подтвердил КП. Можно сформировать документ.</p>
-                    </div>
-                    <button
-                        onClick={() => onNavigate("kp-generator" as Page)}
-                        className="flex-shrink-0 flex items-center gap-2 px-4 py-2 bg-[#2563EB] text-white text-sm font-semibold rounded-lg hover:bg-[#1d4ed8] transition-colors"
-                    >
-                      <FileCheck size={14}/> Открыть KP Generator
-                    </button>
-                  </div>
-              ) : (
-                  <div className="flex items-center gap-2 text-sm text-slate-500">
-                    <Loader2 size={14} className="animate-spin text-slate-400"/>
-                    Ожидаем подтверждения Комдира…
-                  </div>
-              )}
+        {sent && !isKpApproved && (
+            <div className="mb-6 rounded-lg border p-5 bg-slate-50 border-[#E2E8F0]">
+                <div className="flex items-center gap-2 text-sm text-slate-500">
+                  <Loader2 size={14} className="animate-spin text-slate-400"/>
+                  Ожидаем подтверждения Комдира…
+                </div>
             </div>
         )}
 
@@ -429,10 +459,25 @@ export function ProjectPagePM({
                   )}
 
                   <AppTooltip text={(!mlImport || mlImport.status !== "confirmed") ? "Сначала подтвердите импорт товаров" : ""}>
-                    <button
-                      onClick={handleSendToDirector}
+                    <button 
+                      onClick={handleGenerateKP}
+                      disabled={!mlImport || mlImport.status !== "confirmed" || isGeneratingKP}
+                      className={`flex items-center gap-2 px-5 py-2.5 border text-sm font-semibold rounded-lg transition-colors whitespace-nowrap ${
+                        mlImport?.status === "confirmed" 
+                          ? "bg-white border-[#E2E8F0] text-slate-700 hover:bg-slate-50"
+                          : "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
+                      }`}
+                    >
+                      {isGeneratingKP ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+                      {isGeneratingKP ? "Генерация..." : "Сгенерировать КП"}
+                    </button>
+                  </AppTooltip>
+
+                  <AppTooltip text={(!mlImport || mlImport.status !== "confirmed") ? "Сначала подтвердите импорт товаров" : ""}>
+                    <button 
+                      onClick={handleSendToDirector} 
                       disabled={!mlImport || mlImport.status !== "confirmed" || sending || sent}
-                      className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-all ${
+                      className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${
                           sent ? "bg-green-600 text-white cursor-default" :
                           (mlImport?.status === "confirmed" && !sending) ? "bg-[#2563EB] hover:bg-[#1d4ed8] text-white" :
                           "bg-slate-200 text-slate-400 cursor-not-allowed"
@@ -650,15 +695,15 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
 }) {
   const [decision, setDecision] = useState<null | boolean>(null);
   const [deciding, setDeciding] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
-  // Вызов API для утверждения или отклонения
   const decide = async (approve: boolean) => {
     setDeciding(true);
     try {
       if (approve) {
         await approveProjectDirector(projectId);
         setDecision(true);
-        onKpApproved(); // Обновляет родительский State
+        onKpApproved();
       } else {
         const reason = window.prompt("Укажите причину отклонения (необязательно):") || undefined;
         await rejectProjectDirector(projectId, reason);
@@ -666,34 +711,73 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
       }
     } catch (error) {
       console.error("Ошибка при принятии решения:", error);
-      alert("Не удалось сохранить решение. Проверьте консоль.");
+      alert("Не удалось сохранить решение.");
     } finally {
       setDeciding(false);
     }
   };
 
+  const handleExportExcel = async () => {
+    try {
+      setIsExporting(true);
+      await downloadProjectExcel(projectId);
+    } catch (error) {
+      console.error("Ошибка при скачивании:", error);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
-    <PageWrap title="Офисный комплекс «Башня»" subtitle="ООО «СтройТех» · Проверка КП"
-      actions={<div className="flex items-center gap-2"><Chip status="review" /><Chip status="kp" /></div>}>
+    <PageWrap 
+      title="Офисный комплекс «Башня»" 
+      subtitle="ООО «СтройТех» · Проверка КП"
+      actions={
+        <div className="flex items-center gap-2">
+          <Chip status="review" />
+          <Chip status="kp" />
+          <button 
+            onClick={handleExportExcel}
+            disabled={isExporting}
+            className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors whitespace-nowrap disabled:opacity-50"
+          >
+            {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />} 
+            {isExporting ? "Скачивание..." : "Скачать Excel"}
+          </button>
+        </div>
+      }
+    >
       <div className="grid grid-cols-3 gap-6">
         <div className="col-span-2 space-y-5">
           <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
             <table className="w-full border-collapse">
               <thead><tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-                {["Наименование","Кол-во","Цена","Сумма"].map(h => (
-                  <th key={h} className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left">{h}</th>
+                {["Наименование","Кол-во","Ед.","Себестоимость","Цена","Сумма","Маржа"].map(h => (
+                  <th key={h} className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
                 ))}
               </tr></thead>
               <tbody className="divide-y divide-[#E2E8F0]">
-                {KP_ITEMS_INIT.filter(i => i.price > 0).map(item => (
-                  <tr key={item.id} className="hover:bg-slate-50/50">
-                    <td className="px-4 py-3 text-sm text-slate-700">{item.name}</td>
-                    <td className="px-4 py-3 text-sm font-mono">{item.qty.toLocaleString("ru-RU")}</td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{item.unit}</td>
-                    <td className="px-4 py-3 text-sm font-mono">{item.price.toLocaleString("ru-RU")}</td>
-                    <td className="px-4 py-3 text-sm font-mono font-semibold">{item.total.toLocaleString("ru-RU")}</td>
-                  </tr>
-                ))}
+                {KP_ITEMS_INIT.filter(i => i.price > 0).map(item => {
+                  // Fallbacks: If your KP_ITEMS_INIT doesn't have a cost property, we fake it for the UI preview
+                  const priceCost = (item as any).cost || (item.price * 0.755); 
+                  const margin = item.price > 0 ? ((item.price - priceCost) / item.price) * 100 : 0;
+                  
+                  return (
+                    <tr key={item.id} className="hover:bg-slate-50/50">
+                      <td className="px-4 py-3 text-sm text-slate-700">{item.name}</td>
+                      <td className="px-4 py-3 text-sm font-mono">{item.qty.toLocaleString("ru-RU")}</td>
+                      <td className="px-4 py-3 text-xs text-slate-500">{item.unit}</td>
+                      <td className="px-4 py-3 text-sm font-mono">{priceCost.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-3 text-sm font-mono">{item.price.toLocaleString("ru-RU")}</td>
+                      <td className="px-4 py-3 text-sm font-mono font-semibold">{item.total.toLocaleString("ru-RU")}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : "bg-red-50 text-red-700 ring-1 ring-red-200"}`}>
+                          {margin.toFixed(1)}%
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -704,8 +788,8 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
               <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={15} className="animate-spin text-[#2563EB]" />Сохранение решения…</div>
             ) : decision === null ? (
               <div className="flex items-center gap-3">
-                <button onClick={() => decide(true)} className="flex items-center gap-2 px-5 py-2.5 bg-[#16A34A] text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"><CheckCircle2 size={15} /> Подтверждаю</button>
-                <button onClick={() => decide(false)} className="flex items-center gap-2 px-5 py-2.5 bg-white text-red-600 text-sm font-medium rounded-lg border border-[#E2E8F0] hover:bg-red-50 transition-colors"><XCircle size={15} /> Отклонить КП</button>
+                <button onClick={() => decide(true)} className="flex items-center gap-2 px-5 py-2.5 bg-[#16A34A] text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"><CheckCircle2 size={15} /> Подтверждаю</button>
+                <button onClick={() => decide(false)} className="flex items-center gap-2 px-5 py-2.5 bg-white text-red-600 text-sm font-medium rounded-lg border border-[#E2E8F0] hover:bg-red-50 transition-colors whitespace-nowrap"><XCircle size={15} /> Отклонить КП</button>
               </div>
             ) : decision ? (
               <div className="flex items-center gap-2 px-4 py-3 bg-green-50 rounded-lg border border-green-200"><CheckCircle2 size={16} className="text-green-600" /><span className="text-sm font-medium text-green-700">КП подтверждено</span></div>
@@ -730,9 +814,37 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
   );
 }
 
-export function ProjectPageAccountant() {
+export function ProjectPageAccountant({ projectId }: { projectId: number }) {
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleExportExcel = async () => {
+    try {
+      setIsExporting(true);
+      await downloadProjectExcel(projectId);
+    } catch (error) {
+      console.error("Ошибка при скачивании:", error);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
-    <PageWrap title="Офисный комплекс «Башня»" subtitle="ООО «СтройТех» · Счета и оплата">
+    <PageWrap 
+      title="Офисный комплекс «Башня»" 
+      subtitle="ООО «СтройТех» · Счета и оплата"
+      actions={
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={handleExportExcel}
+            disabled={isExporting}
+            className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors whitespace-nowrap disabled:opacity-50"
+          >
+            {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />} 
+            {isExporting ? "Скачивание..." : "Скачать Excel"}
+          </button>
+        </div>
+      }
+    >
       <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
         <table className="w-full border-collapse">
           <thead><tr className="border-b border-[#E2E8F0] bg-slate-50/60">
@@ -745,7 +857,7 @@ export function ProjectPageAccountant() {
                 <td className="px-4 py-3 text-sm text-slate-700">{inv.supplier}</td>
                 <td className="px-4 py-3 text-sm font-mono text-slate-900">{fmt(inv.amount)}</td>
                 <td className="px-4 py-3"><Chip status={inv.status} /></td>
-                <td className="px-4 py-3">{inv.status === "approved" && <button className="text-xs px-2.5 py-1 bg-[#16A34A] text-white rounded font-medium hover:bg-green-700 transition-colors">Оплатить</button>}</td>
+                <td className="px-4 py-3">{inv.status === "approved" && <button className="text-xs px-2.5 py-1 bg-[#16A34A] text-white rounded font-medium hover:bg-green-700 transition-colors whitespace-nowrap">Оплатить</button>}</td>
               </tr>
             ))}
           </tbody>
@@ -771,7 +883,7 @@ export function ProjectPageWarehouse() {
             </div>
           ))}
         </div>
-        <button className="mt-4 flex items-center gap-2 px-4 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#1d4ed8] transition-colors"><Truck size={14} /> Оформить отгрузку</button>
+        <button className="mt-4 flex items-center gap-2 px-4 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#1d4ed8] transition-colors whitespace-nowrap"><Truck size={14} /> Оформить отгрузку</button>
       </div>
     </PageWrap>
   );
@@ -795,6 +907,23 @@ export function ProjectPage({
   projectItems: ProjectItem[];
   projectId: number;
   onOpenProject?: (
+    role,
+    onNavigate,
+    projectState,
+    onKpSent,
+    onKpApproved,
+    receipts,
+    projectItems,
+    projectId,
+    onOpenProject
+}: {
+    role: Role | string,
+    onNavigate: (p: Page) => void,
+    projectState: ProjectState,
+    onKpSent: () => void,
+    onKpApproved: () => void,
+    receipts: Receipt[],
+    projectItems: ProjectItem[],
     projectId: number,
   ) => Promise<void>;
 }) {
@@ -825,5 +954,8 @@ export function ProjectPage({
     return <ProjectPageAccountant />;
   }
 
+  if (role === "pm")        return <ProjectPagePM onNavigate={onNavigate} projectState={projectState} onKpSent={onKpSent} receipts={receipts} projectItems={projectItems} projectId={projectId}/>;
+  if (role === "commercial_director" || role === "director")  return <ProjectPageDirector projectState={projectState} onKpApproved={onKpApproved} projectId={projectId} />;
+  if (role === "accountant")return <ProjectPageAccountant projectId={projectId} />;
   return <ProjectPageWarehouse />;
 }
