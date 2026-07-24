@@ -20,7 +20,7 @@ export function Chip({ status }: { status: string }) {
   const c = map[status] || { label: status, cls: "bg-slate-50 text-slate-600 ring-1 ring-slate-200/80" };
   
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${c.cls}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${c.cls}`}>
       {c.label}
     </span>
   );

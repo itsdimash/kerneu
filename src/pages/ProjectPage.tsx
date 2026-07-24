@@ -6,7 +6,7 @@ import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
 import { fmt } from "../lib/format";
 import { INVOICES_INIT } from "../data/invoices";
 import { STOCK_INIT } from "../data/stock";
-import { AlertTriangle, CheckCircle2, Loader2, Send, Truck, Check, FileCheck, XCircle, Download, FileText } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText } from "lucide-react";
 import { KP_ITEMS_INIT } from "../data/kpItems";
 import {
   ProjectItem,
@@ -18,7 +18,9 @@ import {
   confirmMlImport,
   sendProjectToDirector,
   approveProjectDirector,
-  rejectProjectDirector
+  rejectProjectDirector,
+  downloadProjectExcel,
+  downloadKpDocument
 } from "../api/api";
 
 export function ProjectPagePM({
@@ -47,6 +49,8 @@ export function ProjectPagePM({
   const [mlImportError, setMlImportError] = useState<string | null>(null);
   const [updatingItemId, setUpdatingItemId] = useState<number | null>(null);
   const [confirmingImport, setConfirmingImport] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isGeneratingKP, setIsGeneratingKP] = useState(false);
 
   const resolvedProjectId = Number(projectId);
   const hasValidProjectId = Number.isInteger(resolvedProjectId) && resolvedProjectId > 0;
@@ -144,8 +148,6 @@ export function ProjectPagePM({
   };
 
   const currentIndex = statusToIndex[currentStatus] ?? 0;
-  
-  // Проверяем, подтвердил ли Комдир КП (индекс 3 или выше)
   const isKpApproved = currentIndex >= 3 || projectState.kpApproved;
 
   const STAGES = [
@@ -227,9 +229,35 @@ export function ProjectPagePM({
       
     } catch (error) {
       console.error("Не удалось отправить Комдиру:", error);
-      alert("Ошибка при отправке Комдиру. Проверьте консоль.");
+      alert("Ошибка при отправке Комдиру.");
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    if (!project) return;
+    try {
+      setIsExporting(true);
+      await downloadProjectExcel(project.id);
+    } catch (error) {
+      console.error("Ошибка при скачивании Excel:", error);
+      alert("Не удалось скачать файл");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleGenerateKP = async () => {
+    if (!project) return;
+    try {
+      setIsGeneratingKP(true);
+      await downloadKpDocument(project.id);
+    } catch (error) {
+      console.error("Ошибка генерации КП:", error);
+      alert(error instanceof Error ? error.message : "Не удалось сгенерировать КП");
+    } finally {
+      setIsGeneratingKP(false);
     }
   };
 
@@ -263,10 +291,17 @@ export function ProjectPagePM({
           <div className="flex items-center gap-2">
             <Chip status={currentStatus}/>
             <Chip status="kp"/>
-            {/* Кнопка "Скачать Excel" для PM */}
-            <button className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors">
-              <Download size={14} /> Скачать Excel
-            </button>
+            
+            <AppTooltip text={(!mlImport || mlImport.status !== "confirmed") ? "Сначала подтвердите импорт товаров" : ""}>
+              <button 
+                onClick={handleExportExcel}
+                disabled={isExporting || !project || !mlImport || mlImport.status !== "confirmed"}
+                className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />} 
+                {isExporting ? "Скачивание..." : "Скачать Excel"}
+              </button>
+            </AppTooltip>
           </div>
         }
     >
@@ -343,18 +378,18 @@ export function ProjectPagePM({
                     </span>
                   )}
                   
-                  {/* Кнопка "Сгенерировать КП" теперь разблокируется только после аппрува Комдира */}
-                  <AppTooltip text={!isKpApproved ? "Дождитесь подтверждения от Комдира" : ""}>
+                  <AppTooltip text={(!mlImport || mlImport.status !== "confirmed") ? "Сначала подтвердите импорт товаров" : ""}>
                     <button 
-                      onClick={() => onNavigate("kp-generator" as Page)}
-                      disabled={!isKpApproved}
+                      onClick={handleGenerateKP}
+                      disabled={!mlImport || mlImport.status !== "confirmed" || isGeneratingKP}
                       className={`flex items-center gap-2 px-5 py-2.5 border text-sm font-semibold rounded-lg transition-colors whitespace-nowrap ${
-                        isKpApproved 
+                        mlImport?.status === "confirmed" 
                           ? "bg-white border-[#E2E8F0] text-slate-700 hover:bg-slate-50"
                           : "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
                       }`}
                     >
-                      <FileText size={14} /> Сгенерировать КП
+                      {isGeneratingKP ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+                      {isGeneratingKP ? "Генерация..." : "Сгенерировать КП"}
                     </button>
                   </AppTooltip>
 
@@ -565,15 +600,15 @@ export function ProjectPageDirector({ projectState, onKpApproved, projectId }: {
 }) {
   const [decision, setDecision] = useState<null | boolean>(null);
   const [deciding, setDeciding] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
-  // Вызов API для утверждения или отклонения
   const decide = async (approve: boolean) => {
     setDeciding(true);
     try {
       if (approve) {
         await approveProjectDirector(projectId);
         setDecision(true);
-        onKpApproved(); // Обновляет родительский State
+        onKpApproved();
       } else {
         const reason = window.prompt("Укажите причину отклонения (необязательно):") || undefined;
         await rejectProjectDirector(projectId, reason);
@@ -581,9 +616,20 @@ export function ProjectPageDirector({ projectState, onKpApproved, projectId }: {
       }
     } catch (error) {
       console.error("Ошибка при принятии решения:", error);
-      alert("Не удалось сохранить решение. Проверьте консоль.");
+      alert("Не удалось сохранить решение.");
     } finally {
       setDeciding(false);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    try {
+      setIsExporting(true);
+      await downloadProjectExcel(projectId);
+    } catch (error) {
+      console.error("Ошибка при скачивании:", error);
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -595,9 +641,13 @@ export function ProjectPageDirector({ projectState, onKpApproved, projectId }: {
         <div className="flex items-center gap-2">
           <Chip status="review" />
           <Chip status="kp" />
-          {/* Кнопка "Скачать Excel" для Директора */}
-          <button className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors whitespace-nowrap">
-            <Download size={14} /> Скачать Excel
+          <button 
+            onClick={handleExportExcel}
+            disabled={isExporting}
+            className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors whitespace-nowrap disabled:opacity-50"
+          >
+            {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />} 
+            {isExporting ? "Скачивание..." : "Скачать Excel"}
           </button>
         </div>
       }
@@ -657,16 +707,33 @@ export function ProjectPageDirector({ projectState, onKpApproved, projectId }: {
   );
 }
 
-export function ProjectPageAccountant() {
+export function ProjectPageAccountant({ projectId }: { projectId: number }) {
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleExportExcel = async () => {
+    try {
+      setIsExporting(true);
+      await downloadProjectExcel(projectId);
+    } catch (error) {
+      console.error("Ошибка при скачивании:", error);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <PageWrap 
       title="Офисный комплекс «Башня»" 
       subtitle="ООО «СтройТех» · Счета и оплата"
       actions={
         <div className="flex items-center gap-2">
-          {/* Кнопка "Скачать Excel" для Бухгалтера */}
-          <button className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors whitespace-nowrap">
-            <Download size={14} /> Скачать Excel
+          <button 
+            onClick={handleExportExcel}
+            disabled={isExporting}
+            className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors whitespace-nowrap disabled:opacity-50"
+          >
+            {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />} 
+            {isExporting ? "Скачивание..." : "Скачать Excel"}
           </button>
         </div>
       }
@@ -716,16 +783,16 @@ export function ProjectPageWarehouse() {
 }
 
 export function ProjectPage({
-                                role,
-                                onNavigate,
-                                projectState,
-                                onKpSent,
-                                onKpApproved,
-                                receipts,
-                                projectItems,
-                                projectId,
-                                onOpenProject
-                            }: {
+    role,
+    onNavigate,
+    projectState,
+    onKpSent,
+    onKpApproved,
+    receipts,
+    projectItems,
+    projectId,
+    onOpenProject
+}: {
     role: Role,
     onNavigate: (p: Page) => void,
     projectState: ProjectState,
@@ -738,6 +805,6 @@ export function ProjectPage({
 }) {
   if (role === "pm")        return <ProjectPagePM onNavigate={onNavigate} projectState={projectState} onKpSent={onKpSent} receipts={receipts} projectItems={projectItems} projectId={projectId}/>;
   if (role === "director")  return <ProjectPageDirector projectState={projectState} onKpApproved={onKpApproved} projectId={projectId} />;
-  if (role === "accountant")return <ProjectPageAccountant />;
+  if (role === "accountant")return <ProjectPageAccountant projectId={projectId} />;
   return <ProjectPageWarehouse />;
 }

@@ -228,7 +228,6 @@ export interface WarehouseIncomeItem {
 
 export interface WarehouseIncomeInput {
   items: WarehouseIncomeItem[];
-  // добавь другие поля, если WarehouseIncomeInput их требует (например, supplier, date)
 }
 
 export const postWarehouseIncome = async (payload: WarehouseIncomeInput) => {
@@ -278,3 +277,65 @@ export async function rejectProjectDirector(projectId: number, reason?: string):
   );
   return data;
 }
+
+// ==========================================
+// EXPORT EXCEL & GENERATE WORD KP
+// ==========================================
+
+export const downloadProjectExcel = async (projectId: number): Promise<void> => {
+  const response = await api.get(`/projects/${projectId}/export`, {
+    responseType: 'blob',
+  });
+
+  const blob = new Blob([response.data], { 
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+  });
+  
+  const url = window.URL.createObjectURL(blob);
+
+  let filename = `Утверждено_Проект_${projectId}.xlsx`;
+  const disposition = response.headers['content-disposition'];
+  if (disposition && disposition.includes("filename*=UTF-8''")) {
+    filename = decodeURIComponent(disposition.split("filename*=UTF-8''")[1]);
+  }
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  
+  link.remove();
+  window.URL.revokeObjectURL(url);
+};
+
+// Функция выгрузки сгенерированного Word КП
+export const downloadKpDocument = async (projectId: number): Promise<void> => {
+  const response = await api.get(`/projects/${projectId}/generate-kp`, {
+    responseType: 'blob',
+  });
+
+  const blob = new Blob([response.data], { 
+    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
+  });
+  
+  const url = window.URL.createObjectURL(blob);
+
+  let filename = `KP_Project_${projectId}.docx`;
+  const disposition = response.headers['content-disposition'];
+  if (disposition && disposition.includes("filename=")) {
+    const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition);
+    if (matches && matches[1]) {
+      filename = matches[1].replace(/['"]/g, "");
+    }
+  }
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  
+  link.remove();
+  window.URL.revokeObjectURL(url);
+};
