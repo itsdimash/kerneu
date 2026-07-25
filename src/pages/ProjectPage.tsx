@@ -296,11 +296,25 @@ export function ProjectPagePM({
   };
 
   const canConfirmMlImport =
-    Boolean(mlImport) &&
-    mlImport.status === "draft" &&
-    mlImport.items.length > 0 &&
-    mlImport.items.every((item) => item.ml_status === "На складе");
+  mlImport !== null &&
+  mlImport.status === "draft" &&
+  mlImport.items.length > 0 &&
+  mlImport.items.every((item) => {
+    const quantity = Number(
+      item.final_quantity ?? item.input_quantity ?? 0
+    );
 
+    const price = Number(item.price ?? 0);
+    const priceCost = Number(item.price_cost ?? 0);
+    const margin = Number(item.margin ?? 0);
+
+    return (
+      quantity > 0 &&
+      price > 0 &&
+      priceCost >= 0 &&
+      margin >= 0
+    );
+  });
   const handleExportExcel = async () => {
     if (!project) return;
     try {
@@ -583,16 +597,19 @@ export function ProjectPagePM({
 
                           return (
                               <tr key={item.id} className={`transition-colors ${statusStyle.row}`}>
-                                <td className="px-4 py-3"><p className="text-sm font-medium text-slate-800">{item.input_product}</p></td>
+                                <td className="px-4 py-3"><p
+                                    className="text-sm font-medium text-slate-800">{item.input_product}</p></td>
                                 <td className="px-4 py-3 text-sm font-mono text-slate-700">{item.input_quantity}</td>
                                 <td className="px-4 py-3">
-                                  <span className={`inline-flex px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap ${statusStyle.badge}`}>
+                                  <span
+                                      className={`inline-flex px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap ${statusStyle.badge}`}>
                                     {normalizedStatus}
                                   </span>
                                 </td>
                                 <td className="px-4 py-3">
                                   <p className="text-sm text-slate-700">{item.matched_product ?? "—"}</p>
-                                  {item.matched_external_id && <p className="text-xs text-slate-400 mt-1">ML ID: {item.matched_external_id}</p>}
+                                  {item.matched_external_id &&
+                                      <p className="text-xs text-slate-400 mt-1">ML ID: {item.matched_external_id}</p>}
                                 </td>
                                 <td className="px-4 py-3">
                                   <input
@@ -622,14 +639,17 @@ export function ProjectPagePM({
                                           setMlImportError("Цена должна быть числом больше или равным нулю");
                                           return;
                                         }
-                                        if (newPrice !== price) handleMlItemUpdate(item.id, { price: newPrice });
+                                        if (newPrice !== price) handleMlItemUpdate(item.id, {price: newPrice});
                                       }}
                                       className="w-32 px-2 py-1.5 text-sm font-mono border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
                                   />
                                 </td>
-                                <td className="px-4 py-3 whitespace-nowrap"><span className="text-sm font-semibold font-mono text-slate-800">{formatMoney(totalAmount)}</span></td>
+                                <td className="px-4 py-3 whitespace-nowrap"><span
+                                    className="text-sm font-semibold font-mono text-slate-800">{formatMoney(totalAmount)}</span>
+                                </td>
                                 <td className="px-4 py-3">
-                                <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${marginPercent >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : marginPercent > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : marginPercent < 0 ? "bg-red-50 text-red-700 ring-1 ring-red-200" : "bg-slate-100 text-slate-600 ring-1 ring-slate-200"}`}>
+                                <span
+                                    className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${marginPercent >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : marginPercent > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : marginPercent < 0 ? "bg-red-50 text-red-700 ring-1 ring-red-200" : "bg-slate-100 text-slate-600 ring-1 ring-slate-200"}`}>
                                   {marginPercent.toFixed(1)}%
                                 </span>
                                 </td>
@@ -650,20 +670,39 @@ export function ProjectPagePM({
                                 </td>
                                 <td className="px-4 py-3">
                                   {isUpdating ? (
-                                      <Loader2 size={16} className="animate-spin text-[#2563EB]"/>
+                                      <Loader2
+                                          size={16}
+                                          className="animate-spin text-[#2563EB]"
+                                      />
                                   ) : item.is_confirmed ? (
-                                      <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
-                                        <CheckCircle2 size={14}/>
-                                        Добавлен
-                                      </span>
+                                      <span
+                                          className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
+      <CheckCircle2 size={14}/>
+      Добавлен
+    </span>
                                   ) : item.ml_status === "На складе" ? (
-                                      <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
-                                        <CheckCircle2 size={14}/>
-                                        Выбран</span>
+                                      <span
+                                          className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
+      <CheckCircle2 size={14}/>
+      На складе
+    </span>
+                                  ) : Number(item.price ?? 0) > 0 &&
+                                  Number(item.margin ?? 0) >= 0 &&
+                                  Number(
+                                      item.final_quantity ??
+                                      item.input_quantity ??
+                                      0
+                                  ) > 0 ? (
+                                      <span
+                                          className="inline-flex items-center gap-1 text-xs font-medium text-amber-700">
+      <CheckCircle2 size={14}/>
+      Будет куплено
+    </span>
                                   ) : (
-                                      <span className="text-xs font-medium text-amber-700">
-                                        Не выбран
-                                      </span>)}
+                                      <span className="text-xs font-medium text-red-700">
+      Требуется указать цену
+    </span>
+                                  )}
                                 </td>
                               </tr>
                           );
