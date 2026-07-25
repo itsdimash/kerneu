@@ -279,6 +279,24 @@ export async function rejectProjectDirector(projectId: number, reason?: string):
 }
 
 // ==========================================
+// CLIENT DECISION (Подпись договора / Правки от клиента)
+// ==========================================
+
+export async function signProjectContract(projectId: number): Promise<WorkflowResponse> {
+  const { data } = await api.post<WorkflowResponse>(
+    `/projects/${projectId}/sign-contract`
+  );
+  return data;
+}
+
+export async function rejectProjectClient(projectId: number): Promise<WorkflowResponse> {
+  const { data } = await api.post<WorkflowResponse>(
+    `/projects/${projectId}/client-reject`
+  );
+  return data;
+}
+
+// ==========================================
 // EXPORT EXCEL & GENERATE WORD KP
 // ==========================================
 
@@ -369,3 +387,4 @@ export async function fetchProjectItems(
 
   return data;
 }
+

@@ -16,6 +16,8 @@ import {
   sendProjectToDirector,
   approveProjectDirector,
   rejectProjectDirector,
+  signProjectContract,
+  rejectProjectClient,
   downloadProjectExcel,
   downloadKpDocument,
 } from "../api/api";
@@ -86,6 +88,8 @@ export function ProjectPagePM({
   const [confirmingImport, setConfirmingImport] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isGeneratingKP, setIsGeneratingKP] = useState(false);
+  const [signing, setSigning] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
 
   const resolvedProjectId = projectId; // Let it be a string or a number!
   const hasValidProjectId = Boolean(resolvedProjectId); // Just check that it's not empty
@@ -253,6 +257,44 @@ export function ProjectPagePM({
     }
   };
 
+  const handleSignContract = async () => {
+    if (!project) return;
+    setSigning(true);
+    try {
+      const response = await signProjectContract(project.id);
+      setProject(prev => prev ? { ...prev, status: { id: prev.status?.id || 0, status_name: response.status } } : prev);
+      alert("Договор подписан. Проект переведён в активный закуп.");
+    } catch (error) {
+      console.error("Не удалось подписать договор:", error);
+      alert("Ошибка при подписании договора.");
+    } finally {
+      setSigning(false);
+    }
+  };
+
+  const handleClientReject = async () => {
+    if (!project) return;
+    setRejecting(true);
+    try {
+      const response = await rejectProjectClient(project.id);
+      setProject(prev => prev ? { ...prev, status: { id: prev.status?.id || 0, status_name: response.status } } : prev);
+      if (mlImport) {
+        try {
+          const refreshedImport = await getMlImport(mlImport.id);
+          setMlImport(refreshedImport);
+        } catch (refreshError) {
+          console.error("Не удалось обновить ML-импорт после отказа клиента:", refreshError);
+        }
+      }
+      alert("Проект возвращён в редактирование. Отредактируйте позиции и подтвердите импорт заново.");
+    } catch (error) {
+      console.error("Не удалось отправить проект на доработку:", error);
+      alert("Ошибка при отправке на доработку.");
+    } finally {
+      setRejecting(false);
+    }
+  };
+
   const canConfirmMlImport =
     Boolean(mlImport) &&
     mlImport.status === "draft" &&
@@ -394,6 +436,43 @@ export function ProjectPagePM({
             </div>
         )}
 
+        {(currentStatus === "Ожидание подписания" || currentStatus === "Одобрено Комдиром") && (
+            <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50/70 shadow-sm p-5">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                    <FileText size={18} className="text-blue-600"/>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">Ожидание решения клиента</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      КП отправлено клиенту на подпись. Отметьте результат, когда получите ответ.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0">
+                  <button
+                      onClick={handleClientReject}
+                      disabled={signing || rejecting}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-red-300 text-red-600 text-sm font-semibold rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    {rejecting ? <Loader2 size={14} className="animate-spin"/> : <XCircle size={14}/>}
+                    Клиент просит правки
+                  </button>
+                  <button
+                      onClick={handleSignContract}
+                      disabled={signing || rejecting}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    {signing ? <Loader2 size={14} className="animate-spin"/> : <CheckCircle2 size={14}/>}
+                    Договор подписан
+                  </button>
+                </div>
+              </div>
+            </div>
+        )}
+
         <div className="mt-2">
             <div className="flex items-center justify-between gap-4 mb-3">
                 <div>
@@ -411,13 +490,19 @@ export function ProjectPagePM({
                     </span>
                   )}
 
-                  <AppTooltip text={(!mlImport || mlImport.status !== "confirmed") ? "Сначала подтвердите импорт товаров" : ""}>
+                  <AppTooltip text={
+                    !mlImport || mlImport.status !== "confirmed" 
+                      ? "Сначала подтвердите импорт товаров" 
+                      : !isApproved 
+                      ? "Генерация КП доступна только после одобрения Комдиром" 
+                      : ""
+                  }>
                     <button 
                       onClick={handleGenerateKP}
-                      disabled={!mlImport || mlImport.status !== "confirmed" || isGeneratingKP}
+                      disabled={!mlImport || mlImport.status !== "confirmed" || !isApproved || isGeneratingKP}
                       className={`flex items-center gap-2 px-5 py-2.5 border text-sm font-semibold rounded-lg transition-colors whitespace-nowrap ${
-                        mlImport?.status === "confirmed" 
-                          ? "bg-white border-[#E2E8F0] text-slate-700 hover:bg-slate-50"
+                        mlImport?.status === "confirmed" && isApproved
+                          ? "bg-white border-[#E2E8F0] text-slate-700 hover:bg-slate-50 cursor-pointer"
                           : "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
                       }`}
                     >
