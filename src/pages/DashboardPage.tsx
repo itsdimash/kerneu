@@ -21,6 +21,10 @@ import {
   type DashboardStats,
   createMlImport,
   getMlImport,
+  fetchUpcomingDeadlines,
+  type UpcomingDeadline,
+  fetchRecentActivity,
+  type RecentActivity,
 } from "../api/api";
 
 // Тип клиента, который приходит с бэкенда: только id и name используются для отображения
@@ -56,6 +60,7 @@ function formatPhoneNumber(value: string): string {
 export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string; onNavigate: (p: Page) => void; onOpenProject: (projectId: number) => void }) {
   // Стейты для модального окна
   const [isKpModalOpen, setIsKpModalOpen] = useState(false);
+  const [showAllProjects, setShowAllProjects] = useState(false);
   const [isNewClient, setIsNewClient] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState("");
   const [newClientForm, setNewClientForm] = useState({ name: "", email: "", phone: "" });
@@ -76,10 +81,14 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
   // Статистика дашборда (карточки сверху)
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [statsError, setStatsError] = useState<string | null>(null);
+  const [deadlines, setDeadlines] = useState<UpcomingDeadline[]>([]);
+  const [activity, setActivity] = useState<RecentActivity[]>([]);
 
   useEffect(() => {
     loadProjects();
     loadStats();
+    loadDeadlines();
+    loadActivity();
   }, []);
 
   useEffect(() => {
@@ -135,6 +144,24 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
     } catch (e) {
       console.error(e);
       setStatsError(e instanceof Error ? e.message : "Не удалось загрузить статистику");
+    }
+  };
+
+  const loadDeadlines = async () => {
+    try {
+      const data = await fetchUpcomingDeadlines();
+      setDeadlines(data);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const loadActivity = async () => {
+    try {
+      const data = await fetchRecentActivity();
+      setActivity(data);
+    } catch (e) {
+      console.error("Ошибка загрузки активности:", e);
     }
   };
 
@@ -331,20 +358,11 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
 
       localStorage.setItem(`project:${projectId}:mlImportId`, String(createdImport.id));
 
-      const downloadUrl = URL.createObjectURL(mlBlob);
-      const anchor = document.createElement("a");
-      anchor.href = downloadUrl;
-      anchor.download = mlFilename;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(downloadUrl);
-
       await loadProjects();
       await loadStats();
 
-      alert("Проект и ML-импорт успешно созданы!");
       resetModal();
+      onOpenProject(projectId);
     } catch (error) {
       console.error("Ошибка создания проекта:", error);
       const message = error instanceof Error ? error.message : "Неизвестная ошибка";
@@ -646,7 +664,9 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
       )}
 
       <SectionHeader title="Проекты" action={
-        <button className="text-xs text-[#2563EB] hover:underline flex items-center gap-1">Все проектов <ChevronRight size={12} /></button>
+        <button onClick={() => setShowAllProjects(!showAllProjects)} className="text-xs text-[#2563EB] hover:underline flex items-center gap-1">
+          {showAllProjects ? "Только активные" : "Все проекты"} <ChevronRight size={12} />
+        </button>
       } />
       <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-visible mb-6">
           <table className="w-full border-collapse">
@@ -659,7 +679,9 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
               </tr>
               </thead>
               <tbody className="divide-y divide-[#E2E8F0]">
-              {projects.map((p: any) => {
+              {projects
+                .filter((p: any) => showAllProjects || p.status?.status_name !== "Завершен")
+                .map((p: any) => {
                   return (
                       <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
 
@@ -758,46 +780,51 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-          <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
-              <h3 className="text-sm font-semibold text-slate-900 mb-4">Ближайшие дедлайны</h3>
-              <div className="space-y-3">
-                  {[
-                      {name: "Реконструкция склада Nord", deadline: "30.07.2024"},
-                      {name: "Офисный комплекс «Башня»", deadline: "15.08.2024"},
-                      {name: "Торговый центр «Меридиан»", deadline: "01.09.2024"},
-                  ].map(item => {
-                      const d = daysFromNow(item.deadline);
-                      const color = d <= 7 ? "text-red-600 font-bold" : d <= 14 ? "text-orange-600 font-semibold" : "text-green-600 font-medium";
-                      return (
-                          <div key={item.name} className="flex items-center justify-between">
-                              <div>
-                                  <p className="text-sm text-slate-700">{item.name}</p>
-                                  <p className="text-xs text-slate-400">{item.deadline}</p>
-                              </div>
-                              <span className={`text-xs ${color}`}>{d > 0 ? `${d}д` : "Просрочен"}</span>
-                          </div>
-                      );
-                  })}
-              </div>
+        <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
+          <h3 className="text-sm font-semibold text-slate-900 mb-4">Ближайшие дедлайны</h3>
+          <div className="space-y-3">
+            {deadlines.length > 0 ? (
+              deadlines.map(item => {
+                const d = item.days_left;
+                const color = d <= 7 ? "text-red-600 font-bold" : d <= 14 ? "text-orange-600 font-semibold" : "text-green-600 font-medium";
+                return (
+                  <div key={item.project_id} className="flex items-center justify-between">
+                    <div>
+                      <button onClick={() => onOpenProject(item.project_id)} className="text-sm text-slate-700 hover:text-[#2563EB] hover:underline text-left">
+                        {item.name}
+                      </button>
+                      <p className="text-xs text-slate-400">{item.deadline}</p>
+                    </div>
+                    <span className={`text-xs ${color}`}>{d >= 0 ? `${d}д` : "Просрочен"}</span>
+                  </div>
+                );
+              })
+            ) : (
+              <p className="text-sm text-slate-500">Нет ближайших дедлайнов</p>
+            )}
           </div>
-          <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
-              <h3 className="text-sm font-semibold text-slate-900 mb-4">Активность</h3>
-              <div className="space-y-3">
-                  {[
-                      {text: "КП отправлено клиенту ООО «СтройТех»", time: "2 дня назад"},
-                      {text: "Новый счёт на согласование СФ-2024-0146", time: "4 дня назад"},
-                      {text: "Договор подписан: склад Nord", time: "Вчера"},
-                      {text: "Отгрузка ОТГ-0018 подтверждена", time: "1 день назад"},
-                  ].map((a, i) => (
-                      <div key={i} className="flex items-start gap-2.5">
-                          <div className="w-1.5 h-1.5 rounded-full bg-[#2563EB] mt-2 flex-shrink-0"/>
-                          <div><p className="text-sm text-slate-700">{a.text}</p><p className="text-xs text-slate-400">{a.time}</p></div>
-            </div>
-          ))}
+        </div>
+
+        <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
+          <h3 className="text-sm font-semibold text-slate-900 mb-4">Активность</h3>
+          <div className="space-y-3">
+            {activity.length > 0 ? (
+              activity.map((a, i) => (
+                <div key={i} className="flex items-start gap-2.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#2563EB] mt-2 flex-shrink-0" />
+                  <div>
+                    <p className="text-sm text-slate-700">{a.text}</p>
+                    <p className="text-xs text-slate-400">{a.time}</p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-slate-500">Нет недавней активности</p>
+            )}
+          </div>
         </div>
       </div>
-    </div>
-  </PageWrap>
+    </PageWrap>
   );
 }
 

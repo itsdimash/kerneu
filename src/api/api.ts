@@ -388,3 +388,28 @@ export async function fetchProjectItems(
   return data;
 }
 
+// ==========================================
+// DASHBOARD WIDGETS
+// ==========================================
+
+export interface UpcomingDeadline {
+  project_id: number;
+  name: string;
+  deadline: string;
+  days_left: number;
+}
+
+export const fetchUpcomingDeadlines = async (limit: number = 3): Promise<UpcomingDeadline[]> => {
+  const { data } = await api.get<UpcomingDeadline[]>(`/dashboard/upcoming-deadlines?limit=${limit}`);
+  return data;
+};
+
+export interface RecentActivity {
+  text: string;
+  time: string;
+}
+
+export const fetchRecentActivity = async (limit: number = 5): Promise<RecentActivity[]> => {
+  const { data } = await api.get<RecentActivity[]>(`/dashboard/recent-activity?limit=${limit}`);
+  return data;
+};
