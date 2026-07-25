@@ -14,7 +14,7 @@ export interface ProjectItem {
   status_id: number;
 }
 
-export const getProjectItems = async (projectId: number) => {
+export const getProjectItems = async (projectId: number | string) => {
   const { data } = await api.get<ProjectItem[]>(
     `/project-items/${projectId}`
   );

@@ -27,9 +27,9 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject }: {
     onPage(id);
   };
 
-  const handleFindProject = () => {
+ const handleFindProject = () => {
     if (!projectIdInput.trim()) return;
-    onFindProject?.(Number(projectIdInput));
+    onFindProject?.(projectIdInput); 
     onPage("project");
     setShowProjectModal(false);
     setProjectIdInput("");
@@ -81,7 +81,7 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject }: {
               value={projectIdInput}
               onChange={(e) => setProjectIdInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleFindProject()}
-              placeholder="Например: PRJ-2024-0041"
+              placeholder="Например: Школа №196"
               className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-[#2563EB]/30 focus:border-[#2563EB]"
             />
             <button

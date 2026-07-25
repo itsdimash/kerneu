@@ -45,9 +45,9 @@ type AppShellProps = {
     React.SetStateAction<Receipt[]>
   >;
 
-  selectedProjectId: number | null;
+  selectedProjectId: number | string | null;
   setSelectedProjectId: React.Dispatch<
-    React.SetStateAction<number | null>
+    React.SetStateAction<number | string | null>
   >;
 };
 
@@ -74,16 +74,10 @@ export function AppShell({
     useState<string | null>(null);
 
   const handleFindProject = async (
-    projectId: number,
+    searchInput: number | string,
   ) => {
-    if (
-      !Number.isInteger(projectId) ||
-      projectId <= 0
-    ) {
-      setProjectLoadError(
-        `Некорректный ID проекта: ${String(projectId)}`,
-      );
-
+    if (!searchInput) {
+      setProjectLoadError("Введите ID или название проекта");
       return;
     }
 
@@ -91,17 +85,44 @@ export function AppShell({
       setProjectLoading(true);
       setProjectLoadError(null);
 
-      const data = await getProjectItems(projectId);
+      let finalProjectId: number;
+
+      // 1. Проверяем, ввел ли пользователь число (ID) или текст (Название)
+      if (!isNaN(Number(searchInput))) {
+        finalProjectId = Number(searchInput);
+      } else {
+        // 2. Если ввели текст, запрашиваем список всех проектов, чтобы найти нужный ID
+        const res = await fetch("http://localhost:8000/api/v1/projects/", {
+          credentials: "include",
+        });
+        
+        if (!res.ok) {
+            throw new Error("Не удалось загрузить список проектов для поиска");
+        }
+        
+        const projects = await res.json();
+        
+        // Ищем проект по имени (без учета регистра)
+        const foundProject = projects.find((p: any) => 
+            p.name?.toLowerCase() === String(searchInput).toLowerCase()
+        );
+
+        if (!foundProject) {
+          throw new Error(`Проект с названием "${searchInput}" не найден`);
+        }
+        
+        finalProjectId = foundProject.id;
+      }
+
+      // 3. Теперь безопасно передаем ЧИСЛОВОЙ ID в getProjectItems
+      const data = await getProjectItems(finalProjectId);
 
       setProjectItems(data);
-      setSelectedProjectId(projectId);
+      setSelectedProjectId(finalProjectId);
 
       onPage("project");
     } catch (error) {
-      console.error(
-        "Ошибка загрузки проекта:",
-        error,
-      );
+      console.error("Ошибка загрузки проекта:", error);
 
       setProjectLoadError(
         error instanceof Error

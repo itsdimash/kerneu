@@ -87,8 +87,8 @@ export function ProjectPagePM({
   const [isExporting, setIsExporting] = useState(false);
   const [isGeneratingKP, setIsGeneratingKP] = useState(false);
 
-  const resolvedProjectId = Number(projectId);
-  const hasValidProjectId = Number.isInteger(resolvedProjectId) && resolvedProjectId > 0;
+  const resolvedProjectId = projectId; // Let it be a string or a number!
+  const hasValidProjectId = Boolean(resolvedProjectId); // Just check that it's not empty
   useEffect(() => {
     if (!hasValidProjectId) {
       setProject(null);

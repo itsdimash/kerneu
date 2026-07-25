@@ -79,7 +79,7 @@ export default function App() {
         contractGenerated: false,
         contractSigned: false,
     });
-    const [selectedProjectId, setSelectedProjectId] = useState<number | null>(persisted?.selectedProjectId ?? null);
+    const [selectedProjectId, setSelectedProjectId] = useState<number | string | null>(persisted?.selectedProjectId ?? null);
 
     const [receipts, setReceipts] = useState<ReceiptType[]>([]);
 
