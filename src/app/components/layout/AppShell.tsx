@@ -263,6 +263,7 @@ export function AppShell({
             <DocumentsPage
               onNavigate={onPage}
               projectState={projectState}
+              role={role}
             />
           )}
         </main>
