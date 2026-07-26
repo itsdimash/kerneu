@@ -8,10 +8,19 @@ export const api = axios.create({
 export interface ProjectItem {
   id: number;
   project_id: number;
-  item_name: string;
-  quantity: number;
-  price: number;
-  status_id: number;
+  product_id: number;
+  required_quantity: number;
+
+  cost_price: number | string;
+  sale_price: number | string;
+  total_sum: number | string;
+
+  product?: {
+    id: number;
+    name: string;
+    unit?: string | null;
+    cost_price?: number | string;
+  } | null;
 }
 
 export const getProjectItems = async (projectId: number | string) => {
