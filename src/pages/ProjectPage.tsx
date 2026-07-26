@@ -88,6 +88,7 @@ export function ProjectPagePM({
   const [confirmingImport, setConfirmingImport] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isGeneratingKP, setIsGeneratingKP] = useState(false);
+  const [kpGenerated, setKpGenerated] = useState(false);
   const [signing, setSigning] = useState(false);
   const [rejecting, setRejecting] = useState(false);
 
@@ -101,6 +102,7 @@ export function ProjectPagePM({
     }
     let cancelled = false;
     setProjectError(null);
+    setKpGenerated(false);
     fetchProjectDetails(resolvedProjectId)
       .then((data) => { if (!cancelled) { setProject(data); setProjectError(null); } })
       .catch((error) => { if (!cancelled) { setProject(null); setProjectError(error instanceof Error ? error.message : "Не удалось загрузить проект"); } });
@@ -339,6 +341,7 @@ export function ProjectPagePM({
     try {
       setIsGeneratingKP(true);
       await downloadKpDocument(project.id);
+      setKpGenerated(true);
     } catch (error) {
       console.error("Ошибка генерации КП:", error);
       alert(error instanceof Error ? error.message : "Не удалось сгенерировать КП");
@@ -472,22 +475,26 @@ export function ProjectPagePM({
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0">
-                  <button
-                      onClick={handleClientReject}
-                      disabled={signing || rejecting}
-                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-red-300 text-red-600 text-sm font-semibold rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                  >
-                    {rejecting ? <Loader2 size={14} className="animate-spin"/> : <XCircle size={14}/>}
-                    Клиент просит правки
-                  </button>
-                  <button
-                      onClick={handleSignContract}
-                      disabled={signing || rejecting}
-                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                  >
-                    {signing ? <Loader2 size={14} className="animate-spin"/> : <CheckCircle2 size={14}/>}
-                    Договор подписан
-                  </button>
+                  <AppTooltip text={!kpGenerated ? "Сначала сгенерируйте КП" : ""}>
+                    <button
+                        onClick={handleClientReject}
+                        disabled={signing || rejecting || !kpGenerated}
+                        className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-red-300 text-red-600 text-sm font-semibold rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                    >
+                      {rejecting ? <Loader2 size={14} className="animate-spin"/> : <XCircle size={14}/>}
+                      Клиент просит правки
+                    </button>
+                  </AppTooltip>
+                  <AppTooltip text={!kpGenerated ? "Сначала сгенерируйте КП" : ""}>
+                    <button
+                        onClick={handleSignContract}
+                        disabled={signing || rejecting || !kpGenerated}
+                        className="flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                    >
+                      {signing ? <Loader2 size={14} className="animate-spin"/> : <CheckCircle2 size={14}/>}
+                      Договор подписан
+                    </button>
+                  </AppTooltip>
                 </div>
               </div>
             </div>
