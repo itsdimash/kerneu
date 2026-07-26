@@ -75,7 +75,7 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject }: {
                 <X size={18} />
               </button>
             </div>
-            <label className="text-xs text-slate-500 mb-1 block">ID проекта</label>
+            <label className="text-xs text-slate-500 mb-1 block">Название проекта</label>
             <input
               autoFocus
               value={projectIdInput}
