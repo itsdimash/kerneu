@@ -1,3 +1,5 @@
+import { api } from "../api/api";
+
 // Lightweight in-memory document store shared across pages.
 //
 // This exists to satisfy one specific requirement: when a Commercial Proposal
@@ -30,7 +32,9 @@ export interface ProjectDocument {
 export interface ProjectSummary {
   id: string;
   name: string;
-  contractSigned: boolean;
+  // Not (yet) returned by GET /api/v1/projects/ — the currently open project
+  // still gets its contract status from ProjectState; see DocumentsPage.
+  contractSigned?: boolean;
 }
 
 // --- PM -> Accountant -> Commercial Director approval chain -----------------
@@ -68,12 +72,32 @@ function seedClosingDocs(projectId: string): ProjectDocument[] {
   ];
 }
 
-// Replace with your real project list / API call.
-export const MOCK_PROJECTS: ProjectSummary[] = [
-  { id: "tower", name: "Офисный комплекс «Башня»", contractSigned: true },
-  { id: "north-lc", name: "ЖК «Северный»", contractSigned: true },
-  { id: "warehouse", name: "Склад «Логистик-Центр»", contractSigned: false },
-];
+// Raw shape returned by GET /api/v1/projects/ (see ProjectResponse in api.ts /
+// Project model in app/models/projects.py). `contract_number` is the closest
+// existing signal for "contract signed" — there's no dedicated boolean yet.
+interface ApiProject {
+  id: number;
+  name?: string;
+  contract_number?: string;
+}
+
+/**
+ * Fetches the real project list for the DocumentsPage dropdown.
+ * Replaces the old MOCK_PROJECTS constant.
+ *
+ * Uses the shared `api` axios client (baseURL http://localhost:8000/api/v1,
+ * withCredentials: true) so this goes to the FastAPI backend rather than the
+ * Vite dev server — adjust the import path below if your api.ts doesn't live
+ * at "../api" relative to this file.
+ */
+export async function fetchProjects(): Promise<ProjectSummary[]> {
+  const { data } = await api.get<ApiProject[]>("/projects/");
+  return data.map(p => ({
+    id: String(p.id),
+    name: p.name ?? "Без названия",
+    contractSigned: Boolean(p.contract_number),
+  }));
+}
 
 class DocumentsStore {
   private documents: Record<string, ProjectDocument[]>;
@@ -85,9 +109,17 @@ class DocumentsStore {
     this.reviews = reviewSeed;
   }
 
-  /** Stable reference per projectId unless the list actually changes — required for useSyncExternalStore. */
+  /**
+   * Stable reference per projectId unless the list actually changes —
+   * required for useSyncExternalStore.
+   *
+   * Any project the store hasn't seen before (e.g. a real project fetched
+   * from the API) gets seeded with the standard 5 required closing
+   * documents the first time it's read, so the progress bar, checklist,
+   * and receipt drop zone always have something to show instead of "0/0".
+   */
   getSnapshot = (projectId: string): ProjectDocument[] => {
-    if (!this.documents[projectId]) this.documents[projectId] = [];
+    if (!this.documents[projectId]) this.documents[projectId] = seedClosingDocs(projectId);
     return this.documents[projectId];
   };
 

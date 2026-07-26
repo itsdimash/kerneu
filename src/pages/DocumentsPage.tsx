@@ -1,4 +1,4 @@
-import { useState, useRef, useSyncExternalStore } from "react";
+import { useState, useRef, useEffect, useSyncExternalStore } from "react";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
 import type { Page, ProjectState, Role } from "../types";
@@ -8,8 +8,9 @@ import {
   Send, AlertTriangle,
 } from "lucide-react";
 import {
-  documentsStore, MOCK_PROJECTS,
+  documentsStore, fetchProjects,
   type ProjectDocument, type DocStatus, type ReviewStage, type Rejector,
+  type ProjectSummary,
 } from "../store/documentsStore";
 
 // Roles that only ever view/download and approve/reject — never upload.
@@ -30,15 +31,37 @@ export function DocumentsPage({
   role: Role;
 }) {
   // --- Project selection ---------------------------------------------------
-  const [selectedProjectId, setSelectedProjectId] = useState(MOCK_PROJECTS[0].id);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(true);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [projectQuery, setProjectQuery] = useState("");
 
-  const selectedProject = MOCK_PROJECTS.find(p => p.id === selectedProjectId) ?? MOCK_PROJECTS[0];
-  const contractSigned = selectedProjectId === MOCK_PROJECTS[0].id ? projectState.contractSigned : selectedProject.contractSigned;
+  useEffect(() => {
+    let cancelled = false;
+    fetchProjects()
+      .then(data => {
+        if (cancelled) return;
+        setProjects(data);
+        if (data.length > 0) setSelectedProjectId(data[0].id);
+      })
+      .catch(err => {
+        if (!cancelled) setProjectsError(err instanceof Error ? err.message : "Не удалось загрузить проекты");
+      })
+      .finally(() => {
+        if (!cancelled) setProjectsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const selectedProject = projects.find(p => p.id === selectedProjectId) ?? projects[0];
+  const contractSigned = projects.length > 0 && selectedProjectId === projects[0].id
+    ? projectState.contractSigned
+    : selectedProject?.contractSigned ?? true;
   const uploadsLocked = !contractSigned;
 
-  const filteredProjects = MOCK_PROJECTS.filter(p =>
+  const filteredProjects = projects.filter(p =>
     p.name.toLowerCase().includes(projectQuery.toLowerCase())
   );
 
@@ -69,9 +92,31 @@ export function DocumentsPage({
   const [submittingReview, setSubmittingReview] = useState(false);
   const [decidingReview,   setDecidingReview]   = useState(false);
   const [completing,       setCompleting]       = useState(false);
+  const [generatingKp,     setGeneratingKp]     = useState(false);
   const [rejectDraft,      setRejectDraft]      = useState("");
   const [showRejectBox,    setShowRejectBox]    = useState(false);
   const receiptFileRef = useRef<HTMLInputElement>(null);
+
+  if (projectsLoading) {
+    return (
+      <PageWrap title="Документы" subtitle="Загрузка проектов…">
+        <div className="flex items-center gap-2 text-sm text-slate-400 px-1 py-4">
+          <Loader2 size={15} className="animate-spin" />Загрузка проектов…
+        </div>
+      </PageWrap>
+    );
+  }
+
+  if (projectsError || !selectedProject) {
+    return (
+      <PageWrap title="Документы" subtitle="Ошибка">
+        <div className="flex items-center gap-2 text-sm text-red-600 px-1 py-4">
+          <AlertTriangle size={15} />
+          {projectsError ?? "Проекты не найдены"}
+        </div>
+      </PageWrap>
+    );
+  }
 
   const today = () => new Date().toLocaleDateString("ru-RU");
 
@@ -145,6 +190,16 @@ export function DocumentsPage({
       setCompleting(false);
       documentsStore.completeProject(selectedProjectId);
     }, 1600);
+  };
+
+  // PM: generate the Commercial Proposal (KP) doc for the current project —
+  // adds it to the archive with a "Generated" status.
+  const handleGenerateKp = () => {
+    setGeneratingKp(true);
+    setTimeout(() => {
+      setGeneratingKp(false);
+      documentsStore.registerGeneratedKP(selectedProjectId);
+    }, 900);
   };
 
   const handleDownload = (doc: ProjectDocument) => {
@@ -429,11 +484,22 @@ export function DocumentsPage({
 
           {/* General document archive */}
           <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
-            <div className="px-5 py-4 border-b border-[#E2E8F0]">
-              <h2 className="text-sm font-semibold text-slate-900">Все документы проекта</h2>
-              <p className="text-xs text-slate-400 mt-0.5">
-                КП, закрывающие документы и расписка — в одном месте, доступны для скачивания на любом этапе
-              </p>
+            <div className="px-5 py-4 border-b border-[#E2E8F0] flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">Все документы проекта</h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  КП, закрывающие документы и расписка — в одном месте, доступны для скачивания на любом этапе
+                </p>
+              </div>
+              <button
+                onClick={handleGenerateKp}
+                disabled={generatingKp}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-[#2563EB] text-white hover:bg-[#1d4ed8] transition-colors disabled:opacity-60 flex-shrink-0"
+              >
+                {generatingKp
+                  ? <><Loader2 size={13} className="animate-spin" />Генерация…</>
+                  : <><FileText size={13} />Сгенерировать КП</>}
+              </button>
             </div>
             {allDocs.length === 0 ? (
               <p className="px-5 py-6 text-sm text-slate-400 text-center">Документов пока нет</p>
