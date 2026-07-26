@@ -982,24 +982,25 @@ const [projectItemsError, setProjectItemsError] =
                   projectItems.map(item => {
                     const qty = Number(item.required_quantity ?? 0);
                     const price = Number(item.sale_price ?? 0);
-                    const priceCost = Number(item.product?.cost_price ?? 0);
+                    const priceCost = Number(item.cost_price ?? 0);
                     const total = item.total_sum != null ? Number(item.total_sum) : qty * price;
                     const margin = price > 0 ? ((price - priceCost) / price) * 100 : 0;
 
                     return (
-                      <tr key={item.id} className="hover:bg-slate-50/50">
-                        <td className="px-4 py-3 text-sm text-slate-700">{item.product?.name ?? "—"}</td>
-                        <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
-                        <td className="px-4 py-3 text-xs text-slate-500">{item.product?.unit ?? "шт"}</td>
-                        <td className="px-4 py-3 text-sm font-mono">{priceCost.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</td>
-                        <td className="px-4 py-3 text-sm font-mono">{price.toLocaleString("ru-RU")}</td>
-                        <td className="px-4 py-3 text-sm font-mono font-semibold">{total.toLocaleString("ru-RU")}</td>
-                        <td className="px-4 py-3">
-                          <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : "bg-red-50 text-red-700 ring-1 ring-red-200"}`}>
+                        <tr key={item.id} className="hover:bg-slate-50/50">
+                          <td className="px-4 py-3 text-sm text-slate-700">{item.product?.name ?? "—"}</td>
+                          <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
+                          <td className="px-4 py-3 text-xs text-slate-500">{item.product?.unit ?? "шт"}</td>
+                          <td className="px-4 py-3 text-sm font-mono">{priceCost.toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2,})}</td>
+                          <td className="px-4 py-3 text-sm font-mono">{price.toLocaleString("ru-RU")}</td>
+                          <td className="px-4 py-3 text-sm font-mono font-semibold">{total.toLocaleString("ru-RU")}</td>
+                          <td className="px-4 py-3">
+                          <span
+                              className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : "bg-red-50 text-red-700 ring-1 ring-red-200"}`}>
                             {margin.toFixed(1)}%
                           </span>
-                        </td>
-                      </tr>
+                          </td>
+                        </tr>
                     )
                   })
                 )}
