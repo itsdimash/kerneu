@@ -179,6 +179,12 @@ export function ProjectPagePM({
   const isRejected = currentStatus === "Отклонено Комдиром";
   const isApproved = isKpApproved;
   const sent = isPendingDirector;
+  // Генерация КП имеет смысл только в окне "Одобрено Комдиром" /
+  // "Ожидание подписания" (index 3) — как только клиент принял решение
+  // (подписал договор / попросил правки) и проект ушёл дальше
+  // ("Активный закуп" и позже, index >= 4), кнопка больше не нужна:
+  // КП уже сгенерировано и решение уже принято.
+  const isPastApprovalWindow = project ? currentIndex >= 4 : false;
 
   const STAGES = [
     { label: "Новый", done: currentIndex > 0, active: currentIndex === 0 },
@@ -504,26 +510,28 @@ export function ProjectPagePM({
                     </span>
                   )}
 
-                  <AppTooltip text={
-                    !mlImport || mlImport.status !== "confirmed" 
-                      ? "Сначала подтвердите импорт товаров" 
-                      : !isApproved 
-                      ? "Генерация КП доступна только после одобрения Комдиром" 
-                      : ""
-                  }>
-                    <button 
-                      onClick={handleGenerateKP}
-                      disabled={!mlImport || mlImport.status !== "confirmed" || !isApproved || isGeneratingKP}
-                      className={`flex items-center gap-2 px-5 py-2.5 border text-sm font-semibold rounded-lg transition-colors whitespace-nowrap ${
-                        mlImport?.status === "confirmed" && isApproved
-                          ? "bg-white border-[#E2E8F0] text-slate-700 hover:bg-slate-50 cursor-pointer"
-                          : "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
-                      }`}
-                    >
-                      {isGeneratingKP ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
-                      {isGeneratingKP ? "Генерация..." : "Сгенерировать КП"}
-                    </button>
-                  </AppTooltip>
+                  {!isPastApprovalWindow && (
+                    <AppTooltip text={
+                      !mlImport || mlImport.status !== "confirmed" 
+                        ? "Сначала подтвердите импорт товаров" 
+                        : !isApproved 
+                        ? "Генерация КП доступна только после одобрения Комдиром" 
+                        : ""
+                    }>
+                      <button 
+                        onClick={handleGenerateKP}
+                        disabled={!mlImport || mlImport.status !== "confirmed" || !isApproved || isGeneratingKP}
+                        className={`flex items-center gap-2 px-5 py-2.5 border text-sm font-semibold rounded-lg transition-colors whitespace-nowrap ${
+                          mlImport?.status === "confirmed" && isApproved
+                            ? "bg-white border-[#E2E8F0] text-slate-700 hover:bg-slate-50 cursor-pointer"
+                            : "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
+                        }`}
+                      >
+                        {isGeneratingKP ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+                        {isGeneratingKP ? "Генерация..." : "Сгенерировать КП"}
+                      </button>
+                    </AppTooltip>
+                  )}
 
                   <AppTooltip text={
                     !mlImport ? "Сначала подтвердите импорт товаров" :
@@ -543,6 +551,7 @@ export function ProjectPagePM({
                       }`}>
                       {sending ? <><Loader2 size={14} className="animate-spin"/>Отправка…</> :
                           sent ? <><CheckCircle2 size={14}/>КП на согласовании</> :
+                          isPastApprovalWindow ? <><CheckCircle2 size={14}/>Клиент принял КП</> :
                           isApproved ? <><CheckCircle2 size={14}/>КП одобрено</> :
                           isRejected ? <><XCircle size={14}/>Отправить повторно</> :
                               <><Send size={14}/>Отправить Комдиру</>}
