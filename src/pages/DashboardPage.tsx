@@ -175,11 +175,23 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
   // Поля проекта (название/дедлайн) показываются только после того, как пользователь
   // либо отметил «Новый клиент», либо выбрал конкретного клиента из списка
   const showProjectDetails = isNewClient || !!selectedClientId;
+  const isValidProjectName = (name: string): boolean => {
+
+            const trimmedName = name.trim();
+
+            // Название должно начинаться с русской или английской буквы.
+
+            return /^[A-Za-zА-Яа-яЁё]/.test(trimmedName);};
+
 
   // Форма проекта считается заполненной, когда указаны название и дедлайн
-  const isProjectFormValid =
-    projectForm.name.trim().length > 0 && projectForm.deadline.trim().length > 0;
+    const isProjectNameValid = isValidProjectName(projectForm.name);
 
+    const isProjectFormValid =
+
+    isProjectNameValid &&
+
+    projectForm.deadline.trim().length > 0;
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawValue = e.target.value;
     const prevValue = newClientForm.phone;
@@ -213,20 +225,46 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
   const handleSave = async () => {
     try {
       setIsSaving(true);
+      const projectName = projectForm.name.trim();
+
+      if (!projectName) {
+          alert("Введите название проекта");
+          return;}
+
+      if (!isValidProjectName(projectName)) {
+          alert("Название проекта должно начинаться с буквы и не может состоять только из цифр");
+          return;}
+
+
+      if (!projectForm.deadline.trim()) {
+
+          alert("Укажите дедлайн проекта");
+          return;}
 
       if (!isProjectFormValid) {
         alert("Заполните название проекта и дедлайн");
         return;
       }
 
-      if (!kpFile) {
-        alert("Выберите файл КП");
-        return;
+        const projectResponse = await fetch(
+            "http://localhost:8000/api/v1/projects/create-base",
+            {
+                method: "POST",
+                credentials: "include",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+            },
+        );
+        if (!kpFile) {
+          alert("Выберите файл КП");
+          return;
+
       }
 
       const uploadedFileUrl = `/uploads/${kpFile.name}`;
-
-      const payload = isNewClient
+        const payload = isNewClient
         ? {
             is_new_client: true,
             new_client_name: newClientForm.name,
@@ -252,18 +290,6 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
             planned_margin: 0,
             deadline: projectForm.deadline,
           };
-
-      const projectResponse = await fetch(
-        "http://localhost:8000/api/v1/projects/create-base",
-        {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        },
-      );
 
       if (!projectResponse.ok) {
         const errorText = await projectResponse.text();
@@ -532,12 +558,20 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
                     <div>
                       <label className="block text-xs font-medium text-slate-500 mb-1.5">Название проекта</label>
                       <input
-                        type="text"
-                        value={projectForm.name}
-                        onChange={(e) => setProjectForm({ ...projectForm, name: e.target.value })}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
-                        placeholder="Например, Реконструкция склада Nord"
-                      />
+                          type="text"
+                          value={projectForm.name}
+                          onChange={(e) =>
+                              setProjectForm({
+                                  ...projectForm,
+                                  name: e.target.value,
+                          })}
+                          placeholder="Например: ООО Бекнур"
+                          className={`w-full px-3 py-2 border rounded-lg outline-none ${
+                              projectForm.name.trim() && !isProjectNameValid ? "border-red-400 focus:border-red-500" : "border-slate-300 focus:border-blue-500"}`}/>
+                        {projectForm.name.trim() && !isProjectNameValid && (
+                            <p className="mt-1 text-xs text-red-500">
+                                Название должно начинаться с русской или английской буквы</p>
+                        )}
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-slate-500 mb-1.5">Дедлайн</label>
