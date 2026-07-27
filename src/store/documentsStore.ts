@@ -1,21 +1,11 @@
-// Lightweight in-memory document store shared across pages.
-//
-// This exists to satisfy one specific requirement: when a Commercial Proposal
-// (KP) is generated on the main project page, it must automatically show up
-// in DocumentsPage's document list — without the two pages needing to share
-// component state directly.
-//
-// In a real backend-connected app, swap the internals of DocumentsStore for
-// API calls (e.g. GET /api/projects/:id/documents, POST /api/documents) while
-// keeping the same public methods, so consuming components don't change.
-//
-// Usage from the main project page, right where the KP download is triggered:
-//
-//   import { documentsStore } from "../store/documentsStore";
-//   documentsStore.registerGeneratedKP(project.id);
+// Локальное состояние закрывающих документов и их согласования.
+// Утверждённые КП сюда не записываются: DocumentsPage получает их из backend
+// после события «Одобрено клиентом».
+
+import type { ProjectDocumentResponse } from "../api/api";
 
 export type DocCategory = "kp" | "closing" | "receipt";
-export type DocStatus = "pending" | "uploaded" | "generated";
+export type DocStatus = "pending" | "uploaded" | "generated" | "approved";
 
 export interface ProjectDocument {
   id: string;
@@ -24,6 +14,8 @@ export interface ProjectDocument {
   category: DocCategory;
   status: DocStatus;
   date: string; // dd.mm.yyyy, "" if pending
+  fileName?: string;
+  backendDocument?: ProjectDocumentResponse;
   required?: boolean; // must be uploaded before the project can be completed
 }
 
@@ -31,6 +23,7 @@ export interface ProjectSummary {
   id: string;
   name: string;
   contractSigned: boolean;
+  statusName: string;
 }
 
 // --- PM -> Accountant -> Commercial Director approval chain -----------------
@@ -57,6 +50,7 @@ export interface ReviewState {
 }
 
 type Listener = () => void;
+const EMPTY_DOCUMENTS: ProjectDocument[] = [];
 
 function seedClosingDocs(projectId: string): ProjectDocument[] {
   return [
@@ -70,9 +64,9 @@ function seedClosingDocs(projectId: string): ProjectDocument[] {
 
 // Replace with your real project list / API call.
 export const MOCK_PROJECTS: ProjectSummary[] = [
-  { id: "tower", name: "Офисный комплекс «Башня»", contractSigned: true },
-  { id: "north-lc", name: "ЖК «Северный»", contractSigned: true },
-  { id: "warehouse", name: "Склад «Логистик-Центр»", contractSigned: false },
+  { id: "tower", name: "Офисный комплекс «Башня»", contractSigned: true, statusName: "Активный закуп" },
+  { id: "north-lc", name: "ЖК «Северный»", contractSigned: true, statusName: "Завершен" },
+  { id: "warehouse", name: "Склад «Логистик-Центр»", contractSigned: false, statusName: "В редактировании" },
 ];
 
 class DocumentsStore {
@@ -87,7 +81,10 @@ class DocumentsStore {
 
   /** Stable reference per projectId unless the list actually changes — required for useSyncExternalStore. */
   getSnapshot = (projectId: string): ProjectDocument[] => {
-    if (!this.documents[projectId]) this.documents[projectId] = [];
+    if (!projectId) return EMPTY_DOCUMENTS;
+    if (!this.documents[projectId]) {
+      this.documents[projectId] = seedClosingDocs(projectId);
+    }
     return this.documents[projectId];
   };
 
@@ -156,31 +153,11 @@ class DocumentsStore {
     this.emit();
   }
 
-  /**
-   * Call this from the main project page whenever a Commercial Proposal (KP)
-   * is generated, right alongside triggering its file download. The document
-   * will reactively appear in DocumentsPage's archive with a "Generated" status.
-   */
-  registerGeneratedKP(projectId: string, name: string = "Коммерческое предложение (КП)") {
-    this.addDocument(projectId, {
-      id: `kp-${projectId}-${Date.now()}`,
-      name,
-      category: "kp",
-      status: "generated",
-      date: new Date().toLocaleDateString("ru-RU"),
-    });
-  }
 }
 
 export const documentsStore = new DocumentsStore({
-  tower: [
-    { id: "tower-kp-1", projectId: "tower", name: "Коммерческое предложение (КП) v1", category: "kp", status: "generated", date: "02.07.2024" },
-    ...seedClosingDocs("tower"),
-  ],
-  "north-lc": [
-    { id: "north-kp-1", projectId: "north-lc", name: "Коммерческое предложение (КП)", category: "kp", status: "generated", date: "10.06.2024" },
-    ...seedClosingDocs("north-lc").map(d => ({ ...d, status: "uploaded" as DocStatus, date: "15.06.2024" })),
-  ],
+  tower: seedClosingDocs("tower"),
+  "north-lc": seedClosingDocs("north-lc").map(d => ({ ...d, status: "uploaded" as DocStatus, date: "15.06.2024" })),
   warehouse: seedClosingDocs("warehouse"),
 }, {
   "north-lc": { stage: "approved", completed: true },

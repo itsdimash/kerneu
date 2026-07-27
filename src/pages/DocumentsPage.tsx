@@ -1,4 +1,4 @@
-import { useState, useRef, useSyncExternalStore } from "react";
+import { useEffect, useState, useRef, useSyncExternalStore } from "react";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
 import type { Page, ProjectState, Role } from "../types";
@@ -8,9 +8,24 @@ import {
   Send, AlertTriangle,
 } from "lucide-react";
 import {
-  documentsStore, MOCK_PROJECTS,
-  type ProjectDocument, type DocStatus, type ReviewStage, type Rejector,
+  documentsStore,
+  type DocCategory, type ProjectDocument, type DocStatus,
+  type ProjectSummary, type Rejector,
 } from "../store/documentsStore";
+import {
+  downloadProjectDocument,
+  fetchProjectDocuments,
+} from "../api/api";
+
+const API_BASE = "http://localhost:8000/api/v1";
+
+type ProjectApiItem = {
+  id: number;
+  name: string;
+  contract_signed?: boolean;
+  status_name?: string;
+  status?: string | { status_name?: string };
+};
 
 // Roles that only ever view/download and approve/reject — never upload.
 const REVIEWER_ROLES: Role[] = ["accountant", "commercial_director"];
@@ -24,21 +39,167 @@ export function DocumentsPage({
   onNavigate,
   projectState,
   role,
+  projectId,
 }: {
   onNavigate: (p: Page) => void;
   projectState: ProjectState;
   role: Role;
+  projectId?: number | null;
 }) {
   // --- Project selection ---------------------------------------------------
-  const [selectedProjectId, setSelectedProjectId] = useState(MOCK_PROJECTS[0].id);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [projectQuery, setProjectQuery] = useState("");
+  const [archivedKps, setArchivedKps] = useState<ProjectDocument[]>([]);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
 
-  const selectedProject = MOCK_PROJECTS.find(p => p.id === selectedProjectId) ?? MOCK_PROJECTS[0];
-  const contractSigned = selectedProjectId === MOCK_PROJECTS[0].id ? projectState.contractSigned : selectedProject.contractSigned;
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadProjects = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/projects/`, {
+          credentials: "include",
+        });
+
+        if (!response.ok) {
+          throw new Error("Не удалось загрузить проекты");
+        }
+
+        const data = (await response.json()) as ProjectApiItem[];
+        const normalizedProjects = data.map((item) => {
+          const statusName =
+            typeof item.status === "string"
+              ? item.status
+              : item.status?.status_name ?? item.status_name ?? "";
+
+          return {
+            id: String(item.id),
+            name: item.name,
+            statusName,
+            contractSigned:
+              item.contract_signed === true ||
+              statusName === "Активный закуп" ||
+              statusName === "Завершен",
+          };
+        });
+
+        if (cancelled) return;
+
+        setProjects(normalizedProjects);
+        setSelectedProjectId((currentId) => {
+          const requestedId = projectId ? String(projectId) : "";
+
+          if (
+            requestedId &&
+            normalizedProjects.some((project) => project.id === requestedId)
+          ) {
+            return requestedId;
+          }
+
+          if (
+            currentId &&
+            normalizedProjects.some((project) => project.id === currentId)
+          ) {
+            return currentId;
+          }
+
+          return normalizedProjects[0]?.id ?? "";
+        });
+      } catch (error) {
+        console.error(error);
+        if (!cancelled) {
+          setProjects([]);
+          setSelectedProjectId("");
+        }
+      }
+    };
+
+    void loadProjects();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadArchivedKps = async (showLoading = false) => {
+      if (!selectedProjectId) {
+        setArchivedKps([]);
+        setArchiveError(null);
+        return;
+      }
+
+      try {
+        if (showLoading) {
+          setArchiveLoading(true);
+          setArchivedKps([]);
+          setArchiveError(null);
+        }
+        const data = await fetchProjectDocuments(selectedProjectId);
+        const documents = data
+          .filter((item) => item.category === "kp")
+          .map<ProjectDocument>((item) => ({
+            id: `backend-${item.id}`,
+            projectId: String(item.project_id),
+            name: item.name,
+            category: item.category as DocCategory,
+            status: item.status === "approved" ? "approved" : "generated",
+            date: new Date(item.created_at).toLocaleDateString("ru-RU"),
+            fileName: item.file_name,
+            backendDocument: item,
+          }));
+
+        if (!cancelled) {
+          setArchivedKps(documents);
+          setArchiveError(null);
+        }
+      } catch (error) {
+        console.error(error);
+        if (!cancelled) {
+          setArchiveError(
+            error instanceof Error
+              ? error.message
+              : "Не удалось загрузить архив документов",
+          );
+        }
+      } finally {
+        if (!cancelled && showLoading) setArchiveLoading(false);
+      }
+    };
+
+    void loadArchivedKps(true);
+
+    // Комдир может держать страницу открытой, пока PM отмечает одобрение
+    // клиента. Короткий polling и обновление при возврате во вкладку позволяют
+    // показать сохранённый DOCX без ручного обновления страницы.
+    const intervalId = window.setInterval(() => {
+      void loadArchivedKps();
+    }, 5000);
+    const handleFocus = () => {
+      void loadArchivedKps();
+    };
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [selectedProjectId]);
+
+  const selectedProject =
+    projects.find((project) => project.id === selectedProjectId) ?? projects[0];
+  const selectedProjectName = selectedProject?.name ?? "Проект не выбран";
+  const selectedProjectStatus = selectedProject?.statusName ?? "";
+  const contractSigned =
+    selectedProject?.contractSigned ?? projectState.contractSigned;
   const uploadsLocked = !contractSigned;
 
-  const filteredProjects = MOCK_PROJECTS.filter(p =>
+  const filteredProjects = projects.filter(p =>
     p.name.toLowerCase().includes(projectQuery.toLowerCase())
   );
 
@@ -49,10 +210,49 @@ export function DocumentsPage({
   );
   const { stage: reviewStage, rejectedBy, rejectReason, completed } = review;
 
-  const allDocs = useSyncExternalStore(
+  const localDocs = useSyncExternalStore(
     documentsStore.subscribe,
     () => documentsStore.getSnapshot(selectedProjectId)
   );
+  const allDocs = [
+    ...archivedKps,
+    ...localDocs.filter((document) => document.category !== "kp"),
+  ];
+  const hasApprovedKp = archivedKps.some(
+    (document) => document.status === "approved",
+  );
+  const kpPreparedStatuses = new Set([
+    "На согласовании у Комдира",
+    "Отклонено Комдиром",
+    "Одобрено Комдиром",
+    "Ожидание подписания",
+    "Активный закуп",
+    "На отгрузке",
+    "Ожидание документов",
+    "Завершен",
+  ]);
+  const directorApprovedStatuses = new Set([
+    "Одобрено Комдиром",
+    "Ожидание подписания",
+    "Активный закуп",
+    "На отгрузке",
+    "Ожидание документов",
+    "Завершен",
+  ]);
+  const kpProgressSteps = [
+    {
+      label: "КП подготовлено",
+      done: hasApprovedKp || kpPreparedStatuses.has(selectedProjectStatus),
+    },
+    {
+      label: "Одобрено Комдиром",
+      done: hasApprovedKp || directorApprovedStatuses.has(selectedProjectStatus),
+    },
+    { label: "Одобрено клиентом", done: hasApprovedKp },
+    { label: "Добавлено в архив", done: hasApprovedKp },
+  ];
+  const kpProgressDone = kpProgressSteps.filter((step) => step.done).length;
+  const kpProgressPercent = (kpProgressDone / kpProgressSteps.length) * 100;
 
   // Docs can be edited by the PM only while: contract signed, project not completed,
   // and there's no review currently in flight with the accountant/director.
@@ -147,8 +347,19 @@ export function DocumentsPage({
     }, 1600);
   };
 
-  const handleDownload = (doc: ProjectDocument) => {
-    const content = `Документ: ${doc.name}\nПроект: ${selectedProject.name}\nСтатус: ${statusLabel(doc.status)}\nДата: ${doc.date || "—"}`;
+  const handleDownload = async (doc: ProjectDocument) => {
+    if (doc.backendDocument) {
+      try {
+        await downloadProjectDocument(doc.backendDocument);
+        return;
+      } catch (error) {
+        console.error(error);
+        alert("Не удалось скачать документ");
+        return;
+      }
+    }
+
+    const content = `Документ: ${doc.name}\nПроект: ${selectedProjectName}\nСтатус: ${statusLabel(doc.status)}\nДата: ${doc.date || "—"}`;
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
@@ -158,6 +369,7 @@ export function DocumentsPage({
   };
 
   function statusLabel(status: DocStatus) {
+    if (status === "approved")  return "Одобрено клиентом";
     if (status === "generated") return "Сгенерирован";
     if (status === "uploaded")  return "Загружен";
     return "Ожидается";
@@ -166,6 +378,7 @@ export function DocumentsPage({
   function statusBadge(status: DocStatus) {
     const styles: Record<DocStatus, string> = {
       generated: "bg-blue-50 text-blue-700 border-blue-200",
+      approved:  "bg-green-50 text-green-700 border-green-200",
       uploaded:  "bg-green-50 text-green-700 border-green-200",
       pending:   "bg-slate-50 text-slate-500 border-slate-200",
     };
@@ -194,7 +407,7 @@ export function DocumentsPage({
         onClick={() => setSelectorOpen(o => !o)}
         className="w-full flex items-center justify-between gap-2 px-4 py-2.5 bg-white border border-[#E2E8F0] rounded-lg text-sm text-slate-700 hover:border-[#2563EB]/40 transition-colors"
       >
-        <span className="font-medium truncate">{selectedProject.name}</span>
+        <span className="font-medium truncate">{selectedProjectName}</span>
         <ChevronDown size={15} className={`text-slate-400 flex-shrink-0 transition-transform ${selectorOpen ? "rotate-180" : ""}`} />
       </button>
       {selectorOpen && (
@@ -224,6 +437,51 @@ export function DocumentsPage({
             )}
           </div>
         </div>
+      )}
+    </div>
+  );
+
+  const kpProgressCard = (
+    <div className="bg-white rounded-lg border border-[#E2E8F0] p-5 mb-4">
+      <div className="flex items-center justify-between gap-4 mb-3">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-900">Прогресс коммерческого предложения</h2>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Финальный DOCX попадает в архив только после одобрения клиентом
+          </p>
+        </div>
+        <span className={`text-sm font-semibold ${hasApprovedKp ? "text-green-600" : "text-slate-600"}`}>
+          {kpProgressDone}/{kpProgressSteps.length}
+        </span>
+      </div>
+
+      <div className="w-full bg-slate-100 rounded-full h-2 mb-4">
+        <div
+          className={`h-2 rounded-full transition-all duration-500 ${hasApprovedKp ? "bg-green-500" : "bg-[#2563EB]"}`}
+          style={{ width: `${kpProgressPercent}%` }}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        {kpProgressSteps.map((step) => (
+          <div key={step.label} className="flex items-center gap-2">
+            <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${step.done ? "bg-green-500" : "bg-slate-200"}`}>
+              {step.done && <Check size={11} className="text-white" />}
+            </div>
+            <span className={`text-xs ${step.done ? "text-slate-700" : "text-slate-400"}`}>
+              {step.label}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {archiveLoading && (
+        <p className="text-xs text-slate-400 mt-3 flex items-center gap-1.5">
+          <Loader2 size={12} className="animate-spin" />Обновляем архив…
+        </p>
+      )}
+      {archiveError && (
+        <p className="text-xs text-red-600 mt-3">{archiveError}</p>
       )}
     </div>
   );
@@ -280,8 +538,9 @@ export function DocumentsPage({
     const handleReject = role === "accountant" ? handleAccountantReject : handleDirectorReject;
 
     return (
-      <PageWrap title="Документы" subtitle={selectedProject.name}>
+      <PageWrap title="Документы" subtitle={selectedProjectName}>
         {projectSelector}
+        {kpProgressCard}
 
         {waitingOnMe && (
           <div className="bg-white rounded-lg border border-[#2563EB]/30 p-5 mb-4">
@@ -391,9 +650,10 @@ export function DocumentsPage({
   return (
     <PageWrap
       title="Документы"
-      subtitle={`${selectedProject.name}${completed ? " · Архив (только чтение)" : ""}`}
+      subtitle={`${selectedProjectName}${completed ? " · Архив (только чтение)" : ""}`}
     >
       {projectSelector}
+      {kpProgressCard}
 
       {/* Status of where the request currently sits */}
       {reviewStage === "pending_accountant" && (

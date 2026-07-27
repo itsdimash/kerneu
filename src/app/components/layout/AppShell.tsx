@@ -73,6 +73,13 @@ export function AppShell({
   const [projectLoadError, setProjectLoadError] =
     useState<string | null>(null);
 
+  const numericProjectId =
+    selectedProjectId !== null &&
+    Number.isInteger(Number(selectedProjectId)) &&
+    Number(selectedProjectId) > 0
+      ? Number(selectedProjectId)
+      : null;
+
   const handleFindProject = async (
     searchInput: number | string,
   ) => {
@@ -95,22 +102,22 @@ export function AppShell({
         const res = await fetch("http://localhost:8000/api/v1/projects/", {
           credentials: "include",
         });
-        
+
         if (!res.ok) {
             throw new Error("Не удалось загрузить список проектов для поиска");
         }
-        
+
         const projects = await res.json();
-        
+
         // Ищем проект по имени (без учета регистра)
-        const foundProject = projects.find((p: any) => 
+        const foundProject = projects.find((p: any) =>
             p.name?.toLowerCase() === String(searchInput).toLowerCase()
         );
 
         if (!foundProject) {
           throw new Error(`Проект с названием "${searchInput}" не найден`);
         }
-        
+
         finalProjectId = foundProject.id;
       }
 
@@ -264,6 +271,7 @@ export function AppShell({
               onNavigate={onPage}
               projectState={projectState}
               role={role}
+              projectId={numericProjectId}
             />
           )}
         </main>

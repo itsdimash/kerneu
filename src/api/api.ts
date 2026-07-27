@@ -263,6 +263,9 @@ export interface WorkflowResponse {
   project_id: number;
   status: string;
   reason?: string | null;
+  document_id?: number;
+  document_status?: string;
+  archive_status?: "saved";
 }
 
 export async function sendProjectToDirector(projectId: number): Promise<WorkflowResponse> {
@@ -288,12 +291,12 @@ export async function rejectProjectDirector(projectId: number, reason?: string):
 }
 
 // ==========================================
-// CLIENT DECISION (Подпись договора / Правки от клиента)
+// CLIENT DECISION (Одобрение КП / Правки от клиента)
 // ==========================================
 
-export async function signProjectContract(projectId: number): Promise<WorkflowResponse> {
+export async function approveProjectClient(projectId: number): Promise<WorkflowResponse> {
   const { data } = await api.post<WorkflowResponse>(
-    `/projects/${projectId}/sign-contract`
+    `/projects/${projectId}/client-approve`
   );
   return data;
 }
@@ -303,6 +306,53 @@ export async function rejectProjectClient(projectId: number): Promise<WorkflowRe
     `/projects/${projectId}/client-reject`
   );
   return data;
+}
+
+// ==========================================
+// PROJECT DOCUMENTS ARCHIVE
+// ==========================================
+
+export interface ProjectDocumentResponse {
+  id: number;
+  project_id: number;
+  name: string;
+  category: string;
+  status: string;
+  file_name: string;
+  mime_type: string;
+  created_at: string;
+  download_url: string;
+}
+
+export async function fetchProjectDocuments(
+  projectId: number | string,
+): Promise<ProjectDocumentResponse[]> {
+  const { data } = await api.get<ProjectDocumentResponse[]>(
+    `/documents/project/${projectId}`,
+  );
+  return data;
+}
+
+export async function downloadProjectDocument(
+  projectDocument: ProjectDocumentResponse,
+): Promise<void> {
+  const { data } = await api.get<Blob>(
+    `/documents/${projectDocument.id}/download`,
+    { responseType: "blob" },
+  );
+
+  const blob = new Blob([data], {
+    type: projectDocument.mime_type || "application/octet-stream",
+  });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = projectDocument.file_name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
 }
 
 // ==========================================
