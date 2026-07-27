@@ -224,6 +224,7 @@ export const fetchWarehouseStocks = async (): Promise<WarehouseStockResponse[]> 
 export interface WarehouseIncomeItem {
   product_id: number;
   quantity: number;
+  supplier_id: number;
 }
 
 export interface WarehouseIncomeInput {
@@ -413,3 +414,51 @@ export const fetchRecentActivity = async (limit: number = 5): Promise<RecentActi
   const { data } = await api.get<RecentActivity[]>(`/dashboard/recent-activity?limit=${limit}`);
   return data;
 };
+
+export interface WarehouseReceiptResponse {
+  id: number;
+  receipt_number?: string;
+  date: string;
+  supplier_id: number;
+  product_id: number;
+  quantity: number;
+  status: string;
+  supplier?: {
+    id: number;
+    supplier_name: string;
+  };
+  product?: {
+    id: number;
+    name: string;
+    unit: string;
+  };
+}
+
+export async function fetchWarehouseReceipts(): Promise<WarehouseReceiptResponse[]> {
+  const res = await fetch("http://localhost:8000/api/v1/warehouse/receipts"); // укажите адрес вашего API
+  if (!res.ok) {
+    throw new Error(`Ошибка загрузки приходов: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+// ==========================================
+// ОБНОВЛЕНИЕ СТАТУСА ПРИХОДА (для роли "warehouse")
+// ==========================================
+
+export type ReceiptStatusValue = "pending" | "transit" | "arrived"; // проверь актуальные значения enum ReceiptStatus на бэке
+
+export interface ReceiptStatusUpdateInput {
+  status: ReceiptStatusValue;
+}
+
+export async function updateReceiptStatus(
+  receiptId: number,
+  status: ReceiptStatusValue
+): Promise<WarehouseReceiptResponse> {
+  const { data } = await api.patch<WarehouseReceiptResponse>(
+    `/warehouse/receipts/${receiptId}/status`,
+    { status }
+  );
+  return data;
+}
