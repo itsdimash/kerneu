@@ -44,6 +44,7 @@ type ProcurementProjectItem = {
   quantity?: number | string | null;
   required_quantity?: number | string | null;
   price?: number | string | null;
+  price_cost?: number | string | null;
   cost_price?: number | string | null;
   sale_price?: number | string | null;
   total_sum?: number | string | null;
@@ -54,6 +55,7 @@ type ProcurementProjectItem = {
     id?: number;
     name?: string | null;
     unit?: string | null;
+    price_cost?: number | string | null;
     cost_price?: number | string | null;
   } | null;
   status?: {
@@ -91,6 +93,16 @@ const toNumber = (value: number | string | null | undefined) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+// Себестоимость из ML-импорта — основной источник цены закупки.
+const getPurchasePrice = (item: ProcurementProjectItem) =>
+  toNumber(
+    item.price_cost ??
+      item.product?.price_cost ??
+      item.cost_price ??
+      item.product?.cost_price ??
+      0,
+  );
+
 export function ProcurementPage({ role, projectState }: { role: Role; projectState: ProjectState }) {
   const [invoices, setInvoices] = useState(INVOICES_INIT);
   const [comments, setComments] = useState<Record<string, string>>({});
@@ -108,13 +120,8 @@ export function ProcurementPage({ role, projectState }: { role: Role; projectSta
   const purchaseTotal = useMemo(
     () =>
       purchaseItems.reduce((sum, item) => {
-        const explicitTotal = toNumber(item.total_sum);
-        if (explicitTotal > 0) return sum + explicitTotal;
-
         const quantity = toNumber(item.required_quantity ?? item.quantity);
-        const price = toNumber(
-          item.cost_price ?? item.product?.cost_price ?? item.sale_price ?? item.price,
-        );
+        const price = getPurchasePrice(item);
         return sum + quantity * price;
       }, 0),
     [purchaseItems],
@@ -303,10 +310,8 @@ export function ProcurementPage({ role, projectState }: { role: Role; projectSta
               <tbody className="divide-y divide-[#E2E8F0]">
                 {purchaseItems.map((item) => {
                   const quantity = toNumber(item.required_quantity ?? item.quantity);
-                  const price = toNumber(
-                    item.cost_price ?? item.product?.cost_price ?? item.sale_price ?? item.price,
-                  );
-                  const total = toNumber(item.total_sum) || quantity * price;
+                  const price = getPurchasePrice(item);
+                  const total = quantity * price;
 
                   return (
                     <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
