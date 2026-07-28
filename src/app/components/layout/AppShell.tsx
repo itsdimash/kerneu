@@ -235,22 +235,7 @@ export function AppShell({
             )}
 
           {page === "contract" && (
-            <ContractPage
-              onNavigate={onPage}
-              projectState={projectState}
-              onContractGenerated={() =>
-                setProjectState((previousState) => ({
-                  ...previousState,
-                  contractGenerated: true,
-                }))
-              }
-              onContractSigned={() =>
-                setProjectState((previousState) => ({
-                  ...previousState,
-                  contractSigned: true,
-                }))
-              }
-            />
+            <ContractPage onNavigate={onPage} role={role} />
           )}
 
           {page === "procurement" && (
