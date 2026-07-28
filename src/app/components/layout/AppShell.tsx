@@ -260,11 +260,12 @@ export function AppShell({
             />
           )}
 
-          {page === "warehouse" && (
+        {page === "warehouse" && (
             <WarehousePage
-              projectState={projectState}
-            />
-          )}
+            role={role}
+            projectState={projectState}
+          />  
+        )}
 
           {page === "documents" && (
             <DocumentsPage
