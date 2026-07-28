@@ -16,7 +16,7 @@ import {
   sendProjectToDirector,
   approveProjectDirector,
   rejectProjectDirector,
-  signProjectContract,
+  approveProjectClient,
   rejectProjectClient,
   downloadProjectExcel,
   downloadKpDocument,
@@ -89,7 +89,7 @@ export function ProjectPagePM({
   const [isExporting, setIsExporting] = useState(false);
   const [isGeneratingKP, setIsGeneratingKP] = useState(false);
   const [kpGenerated, setKpGenerated] = useState(false);
-  const [signing, setSigning] = useState(false);
+  const [approvingClient, setApprovingClient] = useState(false);
   const [rejecting, setRejecting] = useState(false);
 
   const resolvedProjectId = projectId; // Let it be a string or a number!
@@ -265,18 +265,23 @@ export function ProjectPagePM({
     }
   };
 
-  const handleSignContract = async () => {
+  const handleClientApprove = async () => {
     if (!project) return;
-    setSigning(true);
+    setApprovingClient(true);
     try {
-      const response = await signProjectContract(project.id);
+      const response = await approveProjectClient(project.id);
       setProject(prev => prev ? { ...prev, status: { id: prev.status?.id || 0, status_name: response.status } } : prev);
-      alert("Договор подписан. Проект переведён в активный закуп.");
+      alert("КП одобрено клиентом и сохранено на странице «Документы».");
+      onNavigate("documents");
     } catch (error) {
-      console.error("Не удалось подписать договор:", error);
-      alert("Ошибка при подписании договора.");
+      console.error("Не удалось зафиксировать одобрение клиента:", error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Ошибка при одобрении КП клиентом.",
+      );
     } finally {
-      setSigning(false);
+      setApprovingClient(false);
     }
   };
 
@@ -478,7 +483,7 @@ export function ProjectPagePM({
                   <AppTooltip text={!kpGenerated ? "Сначала сгенерируйте КП" : ""}>
                     <button
                         onClick={handleClientReject}
-                        disabled={signing || rejecting || !kpGenerated}
+                        disabled={approvingClient || rejecting || !kpGenerated}
                         className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-red-300 text-red-600 text-sm font-semibold rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                     >
                       {rejecting ? <Loader2 size={14} className="animate-spin"/> : <XCircle size={14}/>}
@@ -487,12 +492,12 @@ export function ProjectPagePM({
                   </AppTooltip>
                   <AppTooltip text={!kpGenerated ? "Сначала сгенерируйте КП" : ""}>
                     <button
-                        onClick={handleSignContract}
-                        disabled={signing || rejecting || !kpGenerated}
+                        onClick={handleClientApprove}
+                        disabled={approvingClient || rejecting || !kpGenerated}
                         className="flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                     >
-                      {signing ? <Loader2 size={14} className="animate-spin"/> : <CheckCircle2 size={14}/>}
-                      Договор подписан
+                      {approvingClient ? <Loader2 size={14} className="animate-spin"/> : <CheckCircle2 size={14}/>}
+                      Одобрено клиентом
                     </button>
                   </AppTooltip>
                 </div>
