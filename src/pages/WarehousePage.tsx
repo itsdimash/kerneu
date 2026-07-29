@@ -1,27 +1,38 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { InfoBanner } from "../app/components/common/InfoBanner";
 import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
 import { ShipmentModal } from "../app/components/modals/ShipmentModal";
 import { Chip } from "../app/components/common/Chip";
-import { Truck, Search, Eye, AlertTriangle, Loader2, Plus, X, PackageCheck } from "lucide-react";
+import { Truck, Search, Eye, AlertTriangle, Loader2, Plus, X, PackageCheck, Building2 } from "lucide-react";
 import type { ProjectState, BannerVariant, Role } from "../types";
-import { SHIPMENTS } from "../data/stock";
 import {
   fetchWarehouseStocks,
-  fetchWarehouseReceipts, // Наш новый метод из api.ts
+  fetchWarehouseReceipts,
+  fetchWarehouseList,
   postWarehouseIncome,
   updateReceiptStatus,
+  reserveProjectItems,
+  shipProjectItems,
+  fetchWarehouseShipments,
   WarehouseStockResponse,
   WarehouseReceiptResponse,
+  WarehouseInfo,
   ReceiptStatusValue,
 } from "../api/api";
+
+// Стандартные склады по умолчанию, если бэкенд возвращает пустой список
+const DEFAULT_WAREHOUSES: WarehouseInfo[] = [
+  { id: 1, name: "Карабулак", code: "Кар" },
+  { id: 2, name: "Абишова", code: "Аб" },
+];
 
 type StockRow = {
   id: number;
   sku: string;
   name: string;
   unit: string;
+  perWarehouse: Record<number, number>; // warehouse_id -> actual_quantity
   total: number;
   reserved: number;
   defective: number;
@@ -31,6 +42,7 @@ type StockRow = {
 type ArrivalRow = {
   id: number;
   receiptNumber: string;
+  project: string;
   date: string;
   supplier: string;
   item: string;
@@ -39,28 +51,48 @@ type ArrivalRow = {
   status: string;
 };
 
+type ShipmentRow = {
+  id: number;
+  projectId: number;
+  date: string;
+  project: string;
+  items: number;
+  status: string;
+};
+
 function mapStock(item: WarehouseStockResponse): StockRow {
+  const perWarehouse: Record<number, number> = {};
+  let totalSum = 0;
+
+  (item.stocks || []).forEach((s) => {
+    perWarehouse[s.warehouse_id] = s.actual_quantity;
+    totalSum += s.actual_quantity;
+  });
+
+  const total = item.actual_quantity ?? totalSum;
+  const reserved = item.reserved_quantity || 0;
+
   return {
     id: item.id,
-    sku: `P-${item.product_id}`,
+    sku: `P-${item.product_id || item.id}`,
     name: item.name,
-    unit: item.unit,
-    total: item.actual_quantity,
-    reserved: item.reserved_quantity,
-    defective: item.defective_quantity,
-    available: item.actual_quantity - item.reserved_quantity,
+    unit: item.unit || "шт",
+    perWarehouse,
+    total,
+    reserved,
+    defective: item.defective_quantity || 0,
+    available: total - reserved,
   };
 }
 
-// Преобразуем ответ API приходов в удобную структуру для таблицы
 function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
   return {
     id: item.id,
     receiptNumber: item.receipt_number || `ПР-${item.id}`,
+    // Достаем название проекта или пишем его ID
+    project: item.project_name || (item.project_id ? `Проект #${item.project_id}` : "—"), 
     date: item.date ? new Date(item.date).toLocaleDateString("ru-RU") : "—",
-    // Проверяем подгруженный объект supplier
     supplier: item.supplier?.supplier_name || item.supplier?.name || `Поставщик #${item.supplier_id}`,
-    // Проверяем подгруженный объект product
     item: item.product?.name || `Товар #${item.product_id}`,
     qty: item.quantity,
     unit: item.product?.unit || "шт",
@@ -68,7 +100,6 @@ function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
   };
 }
 
-// Порядок статусов прихода для переключения "следующий статус"
 const RECEIPT_STATUS_FLOW: ReceiptStatusValue[] = ["pending", "transit", "arrived"];
 
 function nextReceiptStatus(current: string): ReceiptStatusValue | null {
@@ -84,24 +115,27 @@ const RECEIPT_STATUS_LABEL: Record<string, string> = {
 };
 
 // ==========================================
-// Модалка оприходования товара (только для роли "warehouse")
+// Модалка оприходования товара
 // ==========================================
 function AddStockModal({
+  warehouses,
   onClose,
   onSuccess,
 }: {
+  warehouses: WarehouseInfo[];
   onClose: () => void;
-  onSuccess: (productId: number, quantity: number) => void;
+  onSuccess: () => void;
 }) {
   const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState("");
   const [supplierId, setSupplierId] = useState("");
+  const [warehouseId, setWarehouseId] = useState<string>(warehouses[0] ? String(warehouses[0].id) : "1");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async () => {
-    if (!productId || !quantity || !supplierId) {
-      setError("Укажите товар, количество и поставщика");
+    if (!productId || !quantity || !supplierId || !warehouseId) {
+      setError("Укажите товар, количество, поставщика и склад");
       return;
     }
 
@@ -109,20 +143,19 @@ function AddStockModal({
     setError(null);
 
     try {
-      // Бэкенд принимает список товаров сразу, поэтому оборачиваем в items
       await postWarehouseIncome({
         items: [
           {
             product_id: Number(productId),
             quantity: Number(quantity),
             supplier_id: Number(supplierId),
+            warehouse_id: Number(warehouseId),
           },
         ],
       });
-      onSuccess(Number(productId), Number(quantity));
+      onSuccess();
       onClose();
     } catch (e: any) {
-      // Вытаскиваем реальную причину от FastAPI (поле detail), а не общий текст axios
       const detail = e?.response?.data?.detail;
       const message =
         typeof detail === "string"
@@ -133,7 +166,6 @@ function AddStockModal({
           ? e.message
           : "Не удалось оприходовать товар";
       setError(message);
-      console.error("Ошибка оприходования:", e?.response?.data || e);
     } finally {
       setSubmitting(false);
     }
@@ -157,6 +189,21 @@ function AddStockModal({
         )}
 
         <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Склад *</label>
+            <select
+              value={warehouseId}
+              onChange={(e) => setWarehouseId(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2563EB] bg-white text-slate-700 font-medium"
+            >
+              {warehouses.map((wh) => (
+                <option key={wh.id} value={wh.id}>
+                  {wh.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">ID товара *</label>
             <input
@@ -189,7 +236,6 @@ function AddStockModal({
               className="w-full px-3 py-2 text-sm border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2563EB]"
             />
           </div>
-
         </div>
 
         <div className="flex items-center justify-end gap-2 mt-5">
@@ -221,29 +267,53 @@ export function WarehousePage({
   projectState: ProjectState;
 }) {
   const isWarehouseUser = role === "warehouse";
+  const isPMUser = role === "pm" || role === "admin"; // Доступ для ПМ и админов
 
   const [tab, setTab] = useState<"stock" | "arrivals" | "shipments">("stock");
 
-  // Состояния для остатков (Stock)
+  // Если с API склады еще не пришли, используем DEFAULT_WAREHOUSES
+  const [warehouses, setWarehouses] = useState<WarehouseInfo[]>(DEFAULT_WAREHOUSES);
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<number | "all">("all");
+
   const [stock, setStock] = useState<StockRow[]>([]);
   const [stockLoading, setStockLoading] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
+  const [stockFilter, setStockFilter] = useState<"all" | "low" | "reserved" | "brak">("all");
+  const [stockSearch, setStockSearch] = useState("");
 
-  // Состояния для приходов (Arrivals)
   const [arrivals, setArrivals] = useState<ArrivalRow[]>([]);
   const [arrivalsLoading, setArrivalsLoading] = useState(false);
   const [arrivalsError, setArrivalsError] = useState<string | null>(null);
   const [updatingReceiptId, setUpdatingReceiptId] = useState<number | null>(null);
 
+  const [shipments, setShipments] = useState<ShipmentRow[]>([]);
+  const [shipmentsLoading, setShipmentsLoading] = useState(false);
+  const [shipmentsError, setShipmentsError] = useState<string | null>(null);
+  const [reservingProjectId, setReservingProjectId] = useState<number | null>(null);
+  const [shippingProjectId, setShippingProjectId] = useState<number | null>(null);
+  const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
   const [showShipmentModal, setShowShipmentModal] = useState(false);
   const [showAddStockModal, setShowAddStockModal] = useState(false);
-  const [stockFilter, setStockFilter] = useState<"all" | "low" | "reserved" | "brak">("all");
   const shipmentLocked = !projectState.contractSigned;
 
   useEffect(() => {
+    loadWarehouses();
     loadStock();
     loadArrivals();
+    loadShipments();
   }, []);
+
+  const loadWarehouses = async () => {
+    try {
+      const data = await fetchWarehouseList();
+      if (data && data.length > 0) {
+        setWarehouses(data);
+      }
+    } catch (e) {
+      console.error("Не удалось загрузить список складов, используем по умолчанию:", e);
+    }
+  };
 
   const loadStock = async () => {
     setStockLoading(true);
@@ -259,7 +329,6 @@ export function WarehousePage({
     }
   };
 
-  // Тихая синхронизация в фоне: без спиннера, просто подменяет данные когда сервер ответит
   const syncStockSilently = async () => {
     try {
       const data = await fetchWarehouseStocks();
@@ -269,8 +338,6 @@ export function WarehousePage({
     }
   };
 
-  // То же самое, но для вкладки "Приход" — бэкенд при оприходовании создаёт запись прихода,
-  // поэтому обновляем и её, чтобы не пришлось нажимать F5
   const syncArrivalsSilently = async () => {
     try {
       const data = await fetchWarehouseReceipts();
@@ -280,16 +347,7 @@ export function WarehousePage({
     }
   };
 
-  // Сразу показываем новое количество в таблице, не дожидаясь повторного запроса к серверу,
-  // и параллельно тихо подтягиваем актуальные данные остатков и приходов, чтобы не разойтись с бэкендом
-  const handleStockAdded = (productId: number, quantity: number) => {
-    setStock((prev) =>
-      prev.map((item) =>
-        item.sku === `P-${productId}`
-          ? { ...item, total: item.total + quantity, available: item.available + quantity }
-          : item
-      )
-    );
+  const handleStockAdded = () => {
     syncStockSilently();
     syncArrivalsSilently();
   };
@@ -308,6 +366,93 @@ export function WarehousePage({
     }
   };
 
+  const loadShipments = async () => {
+    setShipmentsLoading(true);
+    setShipmentsError(null);
+    try {
+      const data = await fetchWarehouseShipments();
+      setShipments(
+        data.map((item) => ({
+          id: item.id,
+          projectId: item.project_id,
+          date: item.date ? new Date(item.date).toLocaleDateString("ru-RU") : "—",
+          project: item.project_name,
+          items: item.items_count,
+          status: item.status,
+        }))
+      );
+    } catch (e) {
+      console.error(e);
+      setShipmentsError(e instanceof Error ? e.message : "Не удалось загрузить отгрузки");
+    } finally {
+      setShipmentsLoading(false);
+    }
+  };
+
+  const syncShipmentsSilently = async () => {
+    try {
+      const data = await fetchWarehouseShipments();
+      setShipments(
+        data.map((item) => ({
+          id: item.id,
+          projectId: item.project_id,
+          date: item.date ? new Date(item.date).toLocaleDateString("ru-RU") : "—",
+          project: item.project_name,
+          items: item.items_count,
+          status: item.status,
+        }))
+      );
+    } catch (e) {
+      console.error("Фоновая синхронизация отгрузок не удалась:", e);
+    }
+  };
+
+  const handleReserveProject = async (projectId: number) => {
+    const warehouseId = selectedWarehouseId !== "all" ? selectedWarehouseId : warehouses[0]?.id ?? 1;
+    setReservingProjectId(projectId);
+    setActionMessage(null);
+    try {
+      await reserveProjectItems(projectId, warehouseId);
+      setActionMessage({ type: "success", text: `Проект #${projectId} зарезервирован` });
+      syncStockSilently();
+      syncShipmentsSilently();
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail;
+      const message =
+        typeof detail === "string"
+          ? detail
+          : e instanceof Error
+          ? e.message
+          : "Не удалось зарезервировать проект";
+      setActionMessage({ type: "error", text: message });
+    } finally {
+      setReservingProjectId(null);
+    }
+  };
+
+  const handleShipProject = async (projectId: number) => {
+    const warehouseId = selectedWarehouseId !== "all" ? selectedWarehouseId : warehouses[0]?.id ?? 1;
+    setShippingProjectId(projectId);
+    setActionMessage(null);
+    try {
+      await shipProjectItems(projectId, warehouseId);
+      setActionMessage({ type: "success", text: `Проект #${projectId} отгружен` });
+      syncStockSilently();
+      syncShipmentsSilently();
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail;
+      const message =
+        typeof detail === "string"
+          ? detail
+          : e instanceof Error
+          ? e.message
+          : "Не удалось отгрузить проект";
+      setActionMessage({ type: "error", text: message });
+    } finally {
+      setShippingProjectId(null);
+    }
+  };
+
   const handleShipment = (items: { id: number; qty: number }[]) => {
     setStock((s) =>
       s.map((item) => {
@@ -322,10 +467,10 @@ export function WarehousePage({
     const next = nextReceiptStatus(currentStatus);
     if (!next) return;
 
+    const warehouseId = selectedWarehouseId !== "all" ? selectedWarehouseId : warehouses[0]?.id ?? 1;
     setUpdatingReceiptId(receiptId);
     try {
-      await updateReceiptStatus(receiptId, next);
-      // Если статус дошёл до "arrived", остатки на складе увеличатся на бэке — перезагрузим и остатки, и приходы
+      await updateReceiptStatus(receiptId, next, warehouseId);
       await loadArrivals();
       if (next === "arrived") {
         await loadStock();
@@ -337,12 +482,25 @@ export function WarehousePage({
     }
   };
 
-  const filteredStock = stock.filter((item) =>
-    stockFilter === "all" ? true :
-    stockFilter === "low" ? item.available < 200 :
-    stockFilter === "brak" ? item.defective > 0 :
-    item.reserved > 0
-  );
+  const filteredStock = useMemo(() => {
+    return stock
+      .filter((item) => {
+        if (selectedWarehouseId === "all") return true;
+        return (item.perWarehouse[selectedWarehouseId] || 0) > 0;
+      })
+      .filter((item) =>
+        stockFilter === "all" ? true :
+        stockFilter === "low" ? item.available < 50 :
+        stockFilter === "brak" ? item.defective > 0 :
+        item.reserved > 0
+      )
+      .filter((item) =>
+        stockSearch.trim() === ""
+          ? true
+          : item.name.toLowerCase().includes(stockSearch.trim().toLowerCase()) ||
+            item.sku.toLowerCase().includes(stockSearch.trim().toLowerCase())
+      );
+  }, [stock, selectedWarehouseId, stockFilter, stockSearch]);
 
   const warehouseBanner: { variant: BannerVariant; text: string } = shipmentLocked
     ? { variant: "neutral", text: "Раздел «Склад» доступен для просмотра остатков. Формирование заявок на отгрузку станет доступно после поступления товаров на склад." }
@@ -351,27 +509,14 @@ export function WarehousePage({
   return (
     <PageWrap
       title="Склад"
-      subtitle="Управление остатками, резервом и отгрузками"
-      actions={
-        <div className="flex items-center gap-2">
-          <AppTooltip text={shipmentLocked ? "Доступно после поступления товаров на склад" : ""}>
-            <button
-              onClick={() => !shipmentLocked && setShowShipmentModal(true)}
-              disabled={shipmentLocked}
-              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-colors ${shipmentLocked ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-[#2563EB] text-white hover:bg-[#1d4ed8]"}`}
-            >
-              <Truck size={14} /> Сформировать заявку на отгрузку
-            </button>
-          </AppTooltip>
-        </div>
-      }
+      subtitle={`Управление остатками, резервом и отгрузками по ${warehouses.length} складам`}
     >
       {showShipmentModal && (
         <ShipmentModal stock={stock} onClose={() => setShowShipmentModal(false)} onSubmit={handleShipment} />
       )}
 
       {showAddStockModal && (
-        <AddStockModal onClose={() => setShowAddStockModal(false)} onSuccess={handleStockAdded} />
+        <AddStockModal warehouses={warehouses} onClose={() => setShowAddStockModal(false)} onSuccess={handleStockAdded} />
       )}
 
       <InfoBanner variant={warehouseBanner.variant} text={warehouseBanner.text} />
@@ -390,11 +535,37 @@ export function WarehousePage({
 
       {tab === "stock" && (
         <>
-          <div className="flex items-center gap-3 mb-4">
-            <div className="relative flex-1 max-w-xs">
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <div className="relative flex-1 min-w-[200px] max-w-xs">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input placeholder="Поиск по наименованию…" className="w-full pl-9 pr-3 py-2 text-sm border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2563EB] bg-white" />
+              <input
+                value={stockSearch}
+                onChange={(e) => setStockSearch(e.target.value)}
+                placeholder="Поиск по наименованию…"
+                className="w-full pl-9 pr-3 py-2 text-sm border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2563EB] bg-white"
+              />
             </div>
+
+            {/* Фильтр по складам доступен и ПМ, и Складу */}
+            <div className="flex items-center gap-1 border border-[#E2E8F0] rounded-lg overflow-hidden bg-white p-0.5">
+              <button
+                onClick={() => setSelectedWarehouseId("all")}
+                className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${selectedWarehouseId === "all" ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+              >
+                <Building2 size={12} /> Все склады
+              </button>
+              {warehouses.map((wh) => (
+                <button
+                  key={wh.id}
+                  onClick={() => setSelectedWarehouseId(wh.id)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${selectedWarehouseId === wh.id ? "bg-[#2563EB] text-white" : "text-slate-600 hover:bg-slate-100"}`}
+                  title={wh.name}
+                >
+                  {wh.code || wh.name}
+                </button>
+              ))}
+            </div>
+
             <div className="flex items-center gap-1 border border-[#E2E8F0] rounded-lg overflow-hidden bg-white">
               {[{ key: "all" as const, label: "Все" }, { key: "low" as const, label: "Низкий" }, { key: "reserved" as const, label: "В резерве" }, { key: "brak" as const, label: "Брак" }].map((f) => (
                 <button
@@ -406,15 +577,7 @@ export function WarehousePage({
                 </button>
               ))}
             </div>
-
-            {isWarehouseUser && (
-              <button
-                onClick={() => setShowAddStockModal(true)}
-                className="ml-auto flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
-              >
-                <Plus size={14} /> Добавить на склад
-              </button>
-            )}
+            
           </div>
 
           {stockError && (
@@ -431,31 +594,66 @@ export function WarehousePage({
                 <p className="text-sm text-slate-500">Загрузка остатков…</p>
               </div>
             ) : filteredStock.length === 0 ? (
-              <div className="py-12 text-center text-sm text-slate-400">Нет данных об остатках</div>
+              <div className="py-12 text-center text-sm text-slate-400">
+                {stockSearch.trim() !== "" || stockFilter !== "all" || selectedWarehouseId !== "all"
+                  ? "Ничего не найдено по заданным условиям"
+                  : "Нет данных об остатках"}
+              </div>
             ) : (
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-                    {["Артикул", "Наименование", "Ед. изм.", "Всего", "В резерве", "Брак", "Доступно", "Статус"].map((h, i) => (
-                      <th key={h} className={`px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide ${i >= 3 && i <= 6 ? "text-right" : "text-left"}`}>{h}</th>
-                    ))}
+                    <th className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left">Артикул</th>
+                    <th className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left">Наименование</th>
+                    <th className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left">Ед. изм.</th>
+
+                    {/* ОТОБРАЖЕНИЕ ВСЕХ СКЛАДОВ (Склад 1, Склад 2) для всех аккаунтов */}
+                    {warehouses.map((wh) => (
+  <th
+    key={wh.id}
+    className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-right"
+    title={wh.name}
+  >
+    {wh.code || wh.name}
+  </th>
+))}
+
+                    <th className="px-4 py-2.5 text-xs font-semibold text-slate-800 uppercase tracking-wide text-right bg-slate-100/70">
+                      Всего
+                    </th>
+                    <th className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-right">В резерве</th>
+                    <th className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-right">Брак</th>
+                    <th className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-right">Доступно</th>
+                    <th className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left">Статус</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E2E8F0]">
                   {filteredStock.map((item) => {
-                    const low = item.available < 200;
+                    const low = item.available < 50;
                     const pct = item.total > 0 ? item.reserved / item.total : 0;
                     return (
                       <tr key={item.id} className={`hover:bg-slate-50/50 transition-colors ${low ? "bg-red-50/20" : ""}`}>
                         <td className="px-4 py-3 text-xs font-mono text-slate-500">{item.sku}</td>
                         <td className="px-4 py-3">
-                          <p className="text-sm text-slate-800">{item.name}</p>
+                          <p className="text-sm font-medium text-slate-800">{item.name}</p>
                           <div className="mt-1 w-24 bg-slate-100 rounded-full h-1">
                             <div className="h-1 rounded-full bg-violet-500" style={{ width: `${pct * 100}%` }} />
                           </div>
                         </td>
                         <td className="px-4 py-3 text-xs text-slate-500">{item.unit}</td>
-                        <td className="px-4 py-3 text-sm font-mono text-slate-700 text-right">{item.total.toLocaleString("ru-RU")}</td>
+
+                        {/* Количество на каждом отдельном складе */}
+{warehouses.map((wh) => (
+  <td key={wh.id} className="px-4 py-3 text-sm font-mono text-slate-700 text-right">
+    {(item.perWarehouse[wh.id] || 0).toLocaleString("ru-RU")}
+  </td>
+))}
+
+                        {/* Общее количество по всем складам */}
+                        <td className="px-4 py-3 text-sm font-mono text-slate-900 text-right font-bold bg-slate-50">
+                          {item.total.toLocaleString("ru-RU")}
+                        </td>
+
                         <td className="px-4 py-3 text-sm font-mono text-violet-600 text-right">{item.reserved.toLocaleString("ru-RU")}</td>
                         <td className="px-4 py-3 text-right font-mono text-sm">
                           {item.defective > 0 ? (
@@ -505,7 +703,7 @@ export function WarehousePage({
               <thead>
                 <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
                   {[
-                    "№ Прихода", "Дата", "Поставщик", "Наименование", "Кол-во", "Ед.", "Статус",
+                    "Проект", "№ Прихода", "Дата (Ожидается)", "Поставщик", "Наименование", "Кол-во", "Ед. изм.", "Статус",
                     ...(isWarehouseUser ? [""] : []),
                   ].map((h) => (
                     <th key={h} className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left">{h}</th>
@@ -517,6 +715,10 @@ export function WarehousePage({
                   const next = nextReceiptStatus(a.status);
                   return (
                     <tr key={a.id} className="hover:bg-slate-50/50">
+                      <td className="px-4 py-3 text-sm font-semibold text-blue-700 bg-blue-50/30">
+                          {a.project}
+                      </td>
+                        
                       <td className="px-4 py-3 text-xs font-mono font-medium text-slate-700">{a.receiptNumber}</td>
                       <td className="px-4 py-3 text-sm text-slate-600">{a.date}</td>
                       <td className="px-4 py-3 text-sm font-medium text-slate-800">{a.supplier}</td>
@@ -555,27 +757,91 @@ export function WarehousePage({
 
       {tab === "shipments" && (
         <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-                {["№ Отгрузки", "Дата", "Проект", "Позиций", "Статус", ""].map((h) => (
-                  <th key={h} className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#E2E8F0]">
-              {SHIPMENTS.map((s) => (
-                <tr key={s.id} className="hover:bg-slate-50/50">
-                  <td className="px-4 py-3 text-xs font-mono text-slate-600">{s.id}</td>
-                  <td className="px-4 py-3 text-sm text-slate-600">{s.date}</td>
-                  <td className="px-4 py-3 text-sm text-slate-700">{s.project}</td>
-                  <td className="px-4 py-3 text-sm text-slate-700">{s.items} позиции</td>
-                  <td className="px-4 py-3"><Chip status={s.status} /></td>
-                  <td className="px-4 py-3"><button className="text-xs px-2.5 py-1 border border-[#E2E8F0] rounded hover:bg-slate-50 text-slate-600 flex items-center gap-1"><Eye size={11} />Детали</button></td>
+          {actionMessage && (
+            <div
+              className={`flex items-start gap-3 p-4 border-b ${
+                actionMessage.type === "success"
+                  ? "bg-emerald-50 border-emerald-200"
+                  : "bg-red-50 border-red-200"
+              }`}
+            >
+              <p className={`text-sm ${actionMessage.type === "success" ? "text-emerald-700" : "text-red-700"}`}>
+                {actionMessage.text}
+              </p>
+            </div>
+          )}
+
+          {shipmentsError && (
+            <div className="flex items-start gap-3 p-4 bg-red-50 border-b border-red-200">
+              <AlertTriangle size={15} className="text-red-500 mt-0.5 flex-shrink-0" />
+              <p className="text-sm text-red-700">{shipmentsError}</p>
+            </div>
+          )}
+
+          {shipmentsLoading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Loader2 size={24} className="animate-spin text-[#2563EB] mb-2" />
+              <p className="text-sm text-slate-500">Загрузка отгрузок…</p>
+            </div>
+          ) : shipments.length === 0 ? (
+            <div className="py-12 text-center text-sm text-slate-400">Нет данных об отгрузках</div>
+          ) : (
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
+                  {["№ Отгрузки", "Дата", "Проект", "Позиций", "Статус", ""].map((h) => (
+                    <th key={h} className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left">{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-[#E2E8F0]">
+                {shipments.map((s) => (
+                  <tr key={s.id} className="hover:bg-slate-50/50">
+                    <td className="px-4 py-3 text-xs font-mono text-slate-600">{s.id}</td>
+                    <td className="px-4 py-3 text-sm text-slate-600">{s.date}</td>
+                    <td className="px-4 py-3 text-sm text-slate-700">{s.project}</td>
+                    <td className="px-4 py-3 text-sm text-slate-700">{s.items} позиции</td>
+                    <td className="px-4 py-3"><Chip status={s.status} /></td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <button className="text-xs px-2.5 py-1 border border-[#E2E8F0] rounded hover:bg-slate-50 text-slate-600 flex items-center gap-1">
+                          <Eye size={11} />Детали
+                        </button>
+                        {isWarehouseUser && (
+                          <>
+                            <button
+                              onClick={() => handleReserveProject(s.projectId)}
+                              disabled={reservingProjectId === s.projectId}
+                              className="text-xs px-2.5 py-1 border border-emerald-200 rounded hover:bg-emerald-50 text-emerald-700 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {reservingProjectId === s.projectId ? (
+                                <Loader2 size={11} className="animate-spin" />
+                              ) : (
+                                <PackageCheck size={11} />
+                              )}
+                              В резерв
+                            </button>
+                            <button
+                              onClick={() => handleShipProject(s.projectId)}
+                              disabled={shippingProjectId === s.projectId}
+                              className="text-xs px-2.5 py-1 border border-[#2563EB]/30 rounded hover:bg-blue-50 text-[#2563EB] flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {shippingProjectId === s.projectId ? (
+                                <Loader2 size={11} className="animate-spin" />
+                              ) : (
+                                <Truck size={11} />
+                              )}
+                              Отгрузить
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
     </PageWrap>

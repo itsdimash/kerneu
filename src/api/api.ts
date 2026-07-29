@@ -214,6 +214,34 @@ export async function confirmMlImport(
   return data;
 }
 
+// ==========================================
+// СКЛАДЫ (справочник) — реальные id/названия, без хардкода
+// ==========================================
+
+export interface WarehouseInfo {
+  id: number;
+  name: string; // "Карабулак", "Абишова"
+  code: string; // "KAR", "AB"
+}
+
+export const fetchWarehouseList = async (): Promise<WarehouseInfo[]> => {
+  const { data } = await api.get<WarehouseInfo[]>("/warehouse/list");
+  return data;
+};
+
+// ==========================================
+// ОСТАТКИ (с разбивкой по складам)
+// ==========================================
+
+export interface WarehouseStockDetail {
+  warehouse_id: number;
+  warehouse_name: string;
+  actual_quantity: number;
+  reserved_quantity: number;
+  defective_quantity: number;
+  available_quantity: number;
+}
+
 export interface WarehouseStockResponse {
   id: number;
   product_id: number;
@@ -223,6 +251,7 @@ export interface WarehouseStockResponse {
   actual_quantity: number;
   reserved_quantity: number;
   defective_quantity: number;
+  stocks: WarehouseStockDetail[];
 }
 
 export const fetchWarehouseStocks = async (): Promise<WarehouseStockResponse[]> => {
@@ -233,11 +262,13 @@ export const fetchWarehouseStocks = async (): Promise<WarehouseStockResponse[]> 
 export interface WarehouseIncomeItem {
   product_id: number;
   quantity: number;
-  supplier_id: number;
+  warehouse_id: number; // обязательно: на какой склад приходуем
+  supplier_id?: number;
 }
 
 export interface WarehouseIncomeInput {
   items: WarehouseIncomeItem[];
+  supplier_id?: number;
 }
 
 export const postWarehouseIncome = async (payload: WarehouseIncomeInput) => {
@@ -245,13 +276,17 @@ export const postWarehouseIncome = async (payload: WarehouseIncomeInput) => {
   return data;
 };
 
-export const reserveProjectItems = async (projectId: number) => {
-  const { data } = await api.post(`/warehouse/projects/${projectId}/reserve`);
+export const reserveProjectItems = async (projectId: number, warehouseId: number = 1) => {
+  const { data } = await api.post(
+    `/warehouse/projects/${projectId}/reserve?warehouse_id=${warehouseId}`
+  );
   return data;
 };
 
-export const shipProjectItems = async (projectId: number) => {
-  const { data } = await api.post(`/warehouse/projects/${projectId}/ship`);
+export const shipProjectItems = async (projectId: number, warehouseId: number = 1) => {
+  const { data } = await api.post(
+    `/warehouse/projects/${projectId}/ship?warehouse_id=${warehouseId}`
+  );
   return data;
 };
 
@@ -427,7 +462,9 @@ export const fetchRecentActivity = async (limit: number = 5): Promise<RecentActi
 export interface WarehouseReceiptResponse {
   id: number;
   receipt_number?: string;
-  date: string;
+  project_id?: number;         // <-- ДОБАВЛЕНО: ID проекта
+  project_name?: string;       // <-- ДОБАВЛЕНО: Название проекта
+  date: string;                // Когда придет товар
   supplier_id: number;
   product_id: number;
   quantity: number;
@@ -435,6 +472,7 @@ export interface WarehouseReceiptResponse {
   supplier?: {
     id: number;
     supplier_name: string;
+    name?: string;
   };
   product?: {
     id: number;
@@ -463,11 +501,30 @@ export interface ReceiptStatusUpdateInput {
 
 export async function updateReceiptStatus(
   receiptId: number,
-  status: ReceiptStatusValue
+  status: ReceiptStatusValue,
+  warehouseId: number = 1
 ): Promise<WarehouseReceiptResponse> {
   const { data } = await api.patch<WarehouseReceiptResponse>(
-    `/warehouse/receipts/${receiptId}/status`,
+    `/warehouse/receipts/${receiptId}/status?warehouse_id=${warehouseId}`,
     { status }
   );
   return data;
 }
+
+// ==========================================
+// ОТГРУЗКИ (для вкладки "Отгрузка")
+// ==========================================
+
+export interface ShipmentResponse {
+  id: number;
+  project_id: number;
+  date: string;
+  project_name: string;
+  items_count: number;
+  status: string;
+}
+
+export const fetchWarehouseShipments = async (): Promise<ShipmentResponse[]> => {
+  const { data } = await api.get<ShipmentResponse[]>("/warehouse/shipments");
+  return data;
+};
