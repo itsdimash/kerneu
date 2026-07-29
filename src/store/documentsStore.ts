@@ -1,12 +1,6 @@
-// Локальное состояние закрывающих документов и их согласования.
-//
-// Утверждённые КП здесь не хранятся: DocumentsPage получает их из backend
-// после события «Одобрено клиентом». Поэтому после перезагрузки страницы
-// архивное КП не пропадает и доступно другим ролям, включая комдира.
-
 import type { ProjectDocumentResponse } from "../api/api";
 
-export type DocCategory = "kp" | "closing" | "receipt";
+export type DocCategory = "kp" | "contract" | "power_of_attorney" | "invoice";
 export type DocStatus = "pending" | "uploaded" | "generated" | "approved";
 
 export interface ProjectDocument {
@@ -28,7 +22,6 @@ export interface ProjectSummary {
   statusName: string;
 }
 
-// PM -> Бухгалтер -> Коммерческий директор.
 export type ReviewStage =
   | "none"
   | "pending_accountant"
@@ -53,53 +46,19 @@ const EMPTY_REVIEW: ReviewState = {
   completed: false,
 };
 
-function seedClosingDocs(projectId: string): ProjectDocument[] {
+// Договор загружает PM (остается без изменений). 
+// Доверенность и Накладные не сеются заранее: PM добавляет каждую отдельно.
+function seedProjectDocs(projectId: string): ProjectDocument[] {
   return [
     {
-      id: `${projectId}-ks2`,
+      id: `${projectId}-contract`,
       projectId,
-      name: "Акт выполненных работ (КС-2)",
-      category: "closing",
+      name: "Договор",
+      category: "contract",
       status: "pending",
       date: "",
       required: true,
-    },
-    {
-      id: `${projectId}-ks3`,
-      projectId,
-      name: "Справка о стоимости (КС-3)",
-      category: "closing",
-      status: "pending",
-      date: "",
-      required: true,
-    },
-    {
-      id: `${projectId}-invoice`,
-      projectId,
-      name: "Счёт-фактура закрывающая",
-      category: "closing",
-      status: "pending",
-      date: "",
-      required: true,
-    },
-    {
-      id: `${projectId}-warranty`,
-      projectId,
-      name: "Гарантийное письмо (18 мес.)",
-      category: "closing",
-      status: "pending",
-      date: "",
-      required: true,
-    },
-    {
-      id: `${projectId}-receipt`,
-      projectId,
-      name: "Чек от клиента",
-      category: "receipt",
-      status: "pending",
-      date: "",
-      required: true,
-    },
+    }
   ];
 }
 
@@ -108,15 +67,11 @@ class DocumentsStore {
   private reviews: Record<string, ReviewState> = {};
   private listeners = new Set<Listener>();
 
-  /**
-   * Возвращает одну и ту же ссылку, пока список проекта не изменился.
-   * Это требуется для useSyncExternalStore.
-   */
   getSnapshot = (projectId: string): ProjectDocument[] => {
     if (!projectId) return EMPTY_DOCUMENTS;
 
     if (!this.documents[projectId]) {
-      this.documents[projectId] = seedClosingDocs(projectId);
+      this.documents[projectId] = seedProjectDocs(projectId);
     }
 
     return this.documents[projectId];
@@ -223,6 +178,16 @@ class DocumentsStore {
       document.id === documentId
         ? { ...document, ...patch }
         : document,
+    );
+    this.emit();
+  }
+
+  removeDocument(projectId: string, documentId: string) {
+    if (!projectId) return;
+
+    const list = this.getSnapshot(projectId);
+    this.documents[projectId] = list.filter(
+      (document) => document.id !== documentId,
     );
     this.emit();
   }

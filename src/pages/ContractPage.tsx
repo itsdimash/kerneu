@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Page, Role } from "../types";
 import { PageWrap } from "../app/components/common/PageWrap";
 import {
@@ -11,14 +11,37 @@ import {
   ShoppingCart,
   Upload,
 } from "lucide-react";
+import { documentsStore } from "../store/documentsStore";
+import { uploadProjectDocument, fetchProjectDocuments } from "../api/api";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
 /*                                                                      */
-/* These live locally for now — move Project / SpecItem into your      */
-/* shared ../types module once the backend shape is finalized, and     */
-/* replace MOCK_PROJECTS with real data fetched for the current user.  */
+/* ContractApiProject mirrors ContractProjectResponse from the backend  */
+/* (GET /api/v1/projects/contracts). ContractProject is the shape the   */
+/* UI below actually renders — contractUploaded/fileName/uploadDate     */
+/* stay client-side local state for now since there's no upload         */
+/* endpoint/column yet.                                                 */
 /* ------------------------------------------------------------------ */
+
+interface ApiProductInfo {
+  name: string | null;
+  unit: string;
+}
+
+interface ApiProjectItem {
+  id: number;
+  required_quantity: number | null;
+  sale_price: string | number;
+  product: ApiProductInfo;
+}
+
+interface ContractApiProject {
+  id: number;
+  name: string | null;
+  client: { client_name: string } | null;
+  items: ApiProjectItem[];
+}
 
 interface SpecItem {
   no: number;
@@ -38,50 +61,25 @@ interface ContractProject {
   items: SpecItem[];
 }
 
-const fmt = (n: number) => n.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (n: number) => n.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
-const MOCK_PROJECTS: ContractProject[] = [
-  {
-    id: "proj-1",
-    name: "Офисный комплекс «Башня»",
-    client: "ООО «СтройТех»",
-    contractUploaded: true,
-    fileName: "dogovor_bashnya_2024.pdf",
-    uploadDate: "08.07.2024",
-    items: [
-      { no: 1, name: "Ноутбук Lenovo / IdeaPad Slim 3 15AMN8 / Ryzen 5 / 16 / 512 / мышь", qty: 20000, unit: "шт", price: 368410 },
-      { no: 2, name: "Планшет APPLE 11-inch iPad Wi-Fi 128GB", qty: 20000, unit: "шт", price: 232000 },
-      { no: 3, name: "Стилус Apple Pencil USB-C MUWA3ZM/A", qty: 20000, unit: "шт", price: 54990 },
-      { no: 4, name: "Ноутбук Asus TUF Gaming F16 FX607VJB-RL204 Core i5-210H 16GB / SSD 512GB / RTX 3050 4GB / 90NR0MZ6-M00AT0", qty: 10000, unit: "шт", price: 459990 },
-      { no: 5, name: "Холодильник Samsung / RS80F65J1FWT", qty: 1000, unit: "шт", price: 755410 },
-      { no: 6, name: "Ноутбук Asus Vivobook 15 Core i5 120U 16GB / SSD 512GB / Intel Graphics /90NB13Y1-M012J0", qty: 10000, unit: "шт", price: 289000 },
-      { no: 7, name: "Встраиваемая посудомоечная машина Samsung / DW60A6092BB/WT", qty: 1000, unit: "шт", price: 285989 },
-      { no: 8, name: "Встраиваемая вытяжка Haier / HVX-BI652GB", qty: 2000, unit: "шт", price: 105688 },
-    ],
-  },
-  {
-    id: "proj-2",
-    name: "ЖК «Северный парк»",
-    client: "ТОО «Каспий Девелопмент»",
+const API_BASE = "http://localhost:8000/api/v1";
+
+function mapApiProject(p: ContractApiProject): ContractProject {
+  return {
+    id: String(p.id),
+    name: p.name ?? `Проект #${p.id}`,
+    client: p.client?.client_name ?? "—",
     contractUploaded: false,
-    items: [
-      { no: 1, name: "Фасадные панели HPL 8мм", qty: 3200, unit: "м²", price: 12500 },
-      { no: 2, name: "Кронштейн крепления фасада, оцинкованный", qty: 9800, unit: "шт", price: 1450 },
-      { no: 3, name: "Утеплитель минераловатный 100мм", qty: 4100, unit: "м²", price: 3200 },
-    ],
-  },
-  {
-    id: "proj-3",
-    name: "Логистический центр «Хаб-7»",
-    client: "ООО «ТрансЛогистик»",
-    contractUploaded: false,
-    items: [
-      { no: 1, name: "Металлокаркас складской, оцинкованный", qty: 1, unit: "компл", price: 56000000 },
-      { no: 2, name: "Сэндвич-панель кровельная 100мм", qty: 6200, unit: "м²", price: 8900 },
-      { no: 3, name: "Ворота секционные промышленные 4×4м", qty: 6, unit: "шт", price: 890000 },
-    ],
-  },
-];
+    items: p.items.map((item, index) => ({
+      no: index + 1,
+      name: item.product?.name ?? "—",
+      qty: item.required_quantity ?? 0,
+      unit: item.product?.unit ?? "шт",
+      price: Number(item.sale_price ?? 0),
+    })),
+  };
+}
 
 export function ContractPage({
   onNavigate,
@@ -90,11 +88,72 @@ export function ContractPage({
   onNavigate: (p: Page) => void;
   role: Role;
 }) {
-  const [projects, setProjects] = useState<ContractProject[]>(MOCK_PROJECTS);
+  const [projects, setProjects] = useState<ContractProject[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
 
   const isPm = role === "pm";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setLoading(true);
+        setLoadError(null);
+        const res = await fetch(`${API_BASE}/projects/contracts`, { credentials: "include" });
+        if (!res.ok) throw new Error("Не удалось загрузить проекты");
+        
+        const data: ContractApiProject[] = await res.json();
+
+        // Check the backend for existing documents for each project
+        const projectsWithDocs = await Promise.all(
+          data.map(async (apiProject) => {
+            const project = mapApiProject(apiProject);
+            
+            try {
+              // Fetch real documents from the server to check if a contract exists
+              const docs = await fetchProjectDocuments(project.id);
+              const contractDoc = docs.find((d) => d.category === "contract");
+
+              if (contractDoc) {
+                // If it exists on the server, set it as uploaded!
+                project.contractUploaded = true;
+                project.fileName = contractDoc.file_name;
+                project.uploadDate = new Date(contractDoc.created_at).toLocaleDateString("ru-RU");
+
+                // Keep the global Documents store in sync just in case
+                documentsStore.updateDocument(project.id, `${project.id}-contract`, {
+                  status: "uploaded",
+                  date: project.uploadDate,
+                  fileName: project.fileName,
+                  backendDocument: contractDoc,
+                });
+              }
+            } catch (err) {
+              console.error(`Ошибка загрузки документов для проекта ${project.id}`, err);
+            }
+            
+            return project;
+          })
+        );
+
+        if (!cancelled) setProjects(projectsWithDocs);
+      } catch (err) {
+        if (!cancelled) {
+          setLoadError(err instanceof Error ? err.message : "Не удалось загрузить проекты");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -102,26 +161,64 @@ export function ContractPage({
     fileInputRefs.current[projectId]?.click();
   };
 
-  const handleFileChosen = (projectId: string, file: File | undefined) => {
+  const handleFileChosen = async (projectId: string, file: File | undefined) => {
     if (!file) return;
     setUploadingId(projectId);
-    // TODO: replace with a real upload call to your API/storage.
-    setTimeout(() => {
+    setLoadError(null);
+
+    try {
+      // 1. Upload to the actual backend endpoint
+      const uploadedDoc = await uploadProjectDocument(projectId, "contract", file, "Договор");
+
+      // 2. Update local state
+      const today = new Date().toLocaleDateString("ru-RU");
       setProjects((prev) =>
         prev.map((p) =>
           p.id !== projectId
             ? p
-            : { ...p, contractUploaded: true, fileName: file.name, uploadDate: new Date().toLocaleDateString("ru-RU") }
+            : { ...p, contractUploaded: true, fileName: file.name, uploadDate: today }
         )
       );
+
+      // 3. Update global documentsStore to change status and enable real download
+      documentsStore.updateDocument(projectId, `${projectId}-contract`, {
+        status: "uploaded",
+        date: today,
+        fileName: file.name,
+        backendDocument: uploadedDoc,
+      });
+      
+    } catch (error) {
+      console.error("Upload error:", error);
+      alert("Не удалось загрузить договор. Попробуйте снова.");
+    } finally {
       setUploadingId(null);
-    }, 1200);
+    }
   };
 
   return (
     <PageWrap title="Договор" subtitle="Все проекты">
+      {loading && (
+        <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+          <Loader2 size={14} className="animate-spin" />
+          Загружаем проекты…
+        </div>
+      )}
+
+      {!loading && loadError && (
+        <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          {loadError}
+        </div>
+      )}
+
+      {!loading && !loadError && projects.length === 0 && (
+        <div className="px-4 py-3 bg-slate-50 border border-[#E2E8F0] rounded-lg text-sm text-slate-500">
+          Нет проектов в статусе от «Ожидание подписания» до «Завершен».
+        </div>
+      )}
+
       <div className="space-y-3">
-        {projects.map((project) => {
+        {!loading && !loadError && projects.map((project) => {
           const isOpen = expandedId === project.id;
           const isUploading = uploadingId === project.id;
           const total = project.items.reduce((sum, it) => sum + it.qty * it.price, 0);

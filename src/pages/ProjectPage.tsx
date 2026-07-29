@@ -345,7 +345,7 @@ export function ProjectPagePM({
     if (!project) return;
     try {
       setIsGeneratingKP(true);
-      await downloadKpDocument(project.id);
+      await downloadKpDocument(project.id, project.name);
       setKpGenerated(true);
     } catch (error) {
       console.error("Ошибка генерации КП:", error);

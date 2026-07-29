@@ -334,8 +334,35 @@ export async function fetchProjectDocuments(
   return data;
 }
 
+// ✨ NEW: Uploading project document to the real backend ✨
+export async function uploadProjectDocument(
+  projectId: string | number,
+  category: "contract" | "invoice" | "power_of_attorney",
+  file: File,
+  name?: string
+): Promise<ProjectDocumentResponse> {
+  const formData = new FormData();
+  formData.append("project_id", String(projectId));
+  formData.append("category", category);
+  formData.append("file", file);
+  if (name) formData.append("name", name);
+
+  const { data } = await api.post<ProjectDocumentResponse>(
+    "/documents/upload",
+    formData,
+    {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    }
+  );
+
+  return data;
+}
+
 export async function downloadProjectDocument(
   projectDocument: ProjectDocumentResponse,
+  projectName: string
 ): Promise<void> {
   const { data } = await api.get<Blob>(
     `/documents/${projectDocument.id}/download`,
@@ -349,7 +376,33 @@ export async function downloadProjectDocument(
   const link = document.createElement("a");
 
   link.href = url;
-  link.download = projectDocument.file_name;
+
+  // 1. Clean the project name of illegal characters
+  const safeProjectName = projectName 
+    ? projectName.replace(/[^a-zA-Z0-9а-яА-ЯёЁ _-]/g, "").trim() 
+    : "Unknown_Project";
+
+  // 2. Safely extract the file extension (e.g., .pdf, .docx, .xlsx)
+  const originalFileName = projectDocument.file_name || "document.pdf";
+  const extensionMatch = originalFileName.match(/\.[0-9a-z]+$/i);
+  const extension = extensionMatch ? extensionMatch[0] : "";
+  const baseName = originalFileName.replace(extension, "");
+
+  // 3. Construct the new file name
+  // This defaults to "OriginalName_ProjectName.ext" 
+  // It specifically checks for 'kp' or 'receipt' categories if your backend provides them
+  let filename = `${baseName}_${safeProjectName}${extension}`;
+  
+  // @ts-ignore - Safely checking category just in case it exists on this type
+  if (projectDocument.category === "kp") {
+    filename = `KP_${safeProjectName}${extension}`;
+  } 
+  // @ts-ignore
+  else if (projectDocument.category === "receipt") {
+    filename = `Receipt_${safeProjectName}${extension}`;
+  }
+
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -388,7 +441,7 @@ export const downloadProjectExcel = async (projectId: number): Promise<void> => 
 };
 
 // Функция выгрузки сгенерированного Word КП
-export const downloadKpDocument = async (projectId: number): Promise<void> => {
+export const downloadKpDocument = async (projectId: number, projectName: string): Promise<void> => {
   const response = await api.get(`/projects/${projectId}/generate-kp`, {
     responseType: 'blob',
   });
@@ -399,21 +452,17 @@ export const downloadKpDocument = async (projectId: number): Promise<void> => {
   
   const url = window.URL.createObjectURL(blob);
 
-  let filename = `KP_Project_${projectId}.docx`;
-  const disposition = response.headers['content-disposition'];
-  if (disposition && disposition.includes("filename=")) {
-    const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition);
-    if (matches && matches[1]) {
-      filename = matches[1].replace(/['"]/g, "");
-    }
-  }
+  const safeProjectName = projectName 
+    ? projectName.replace(/[^a-zA-Z0-9а-яА-ЯёЁ _-]/g, "").trim() 
+    : String(projectId);
+
+  const filename = `KP_${safeProjectName}.docx`;
 
   const link = document.createElement('a');
   link.href = url;
-  link.setAttribute('download', filename);
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
-  
   link.remove();
   window.URL.revokeObjectURL(url);
 };
