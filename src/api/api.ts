@@ -523,6 +523,15 @@ export const fetchRecentActivity = async (limit: number = 5): Promise<RecentActi
   return data;
 };
 
+export const signProjectContract = async (projectId: number) => {
+  const { data } = await api.post<{
+    message: string;
+    project_id: number;
+    status: string;
+  }>(`/project-workflow/${projectId}/sign-contract`);
+
+  return data;
+};
 export interface WarehouseReceiptResponse {
   id: number;
   receipt_number?: string;

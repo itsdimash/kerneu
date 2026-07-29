@@ -8,6 +8,7 @@ import { INVOICES_INIT } from "../data/invoices";
 import { STOCK_INIT } from "../data/stock";
 import { AlertTriangle, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText } from "lucide-react";
 import {
+  api,
   fetchProjectDetails,
   fetchProjectItems,
   getMlImport,
@@ -16,7 +17,6 @@ import {
   sendProjectToDirector,
   approveProjectDirector,
   rejectProjectDirector,
-  approveProjectClient,
   rejectProjectClient,
   downloadProjectExcel,
   downloadKpDocument,
@@ -150,7 +150,7 @@ export function ProjectPagePM({
     return () => { cancelled = true; };
   }, [resolvedProjectId, hasValidProjectId]);
 
-  const currentStatus = project?.status?.status_name || "Новый";
+  const currentStatus = project?.status?.status_name || "Новый проект";
 
   useEffect(() => {
     if (!mlImport) return;
@@ -161,44 +161,96 @@ export function ProjectPagePM({
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStatus]);
+const statusToIndex: Record<string, number> = {
+  // Старые названия оставлены для совместимости.
+  "Новый": 0,
+  "Новый проект": 0,
 
-  const statusToIndex: Record<string, number> = {
-    "Новый": 0,
-    "В редактировании": 1,
-    "На согласовании у Комдира": 2,
-    "Отклонено Комдиром": 2,
-    "Одобрено Комдиром": 3,
-    "Ожидание подписания": 3,
-    "Активный закуп": 4,
-    "На отгрузке": 5,
-    "Ожидание документов": 6,
-    "Завершен": 7,
-  };
+  "В редактировании": 1,
 
-  const currentIndex = statusToIndex[currentStatus] ?? 0;
-  const isKpApproved = project ? currentIndex >= 3 : projectState.kpApproved;
-  const isPendingDirector = currentStatus === "На согласовании у Комдира";
-  const isRejected = currentStatus === "Отклонено Комдиром";
-  const isApproved = isKpApproved;
-  const sent = isPendingDirector;
-  // Генерация КП имеет смысл только в окне "Одобрено Комдиром" /
-  // "Ожидание подписания" (index 3) — как только клиент принял решение
-  // (подписал договор / попросил правки) и проект ушёл дальше
-  // ("Активный закуп" и позже, index >= 4), кнопка больше не нужна:
-  // КП уже сгенерировано и решение уже принято.
-  const isPastApprovalWindow = project ? currentIndex >= 4 : false;
+  "На согласовании у Комдира": 2,
+  "Отклонено Комдиром": 2,
 
-  const STAGES = [
-    { label: "Новый", done: currentIndex > 0, active: currentIndex === 0 },
-    { label: "В редактировании", done: currentIndex > 1, active: currentIndex === 1 },
-    { label: "На согласовании", done: currentIndex > 2, active: currentIndex === 2 },
-    { label: "Ожидание подписания", done: currentIndex > 3, active: currentIndex === 3 },
-    { label: "Активный закуп", done: currentIndex > 4, active: currentIndex === 4 },
-    { label: "На отгрузке", done: currentIndex > 5, active: currentIndex === 5 },
-    { label: "Ожидание документов", done: currentIndex > 6, active: currentIndex === 6 },
-    { label: "Завершен", done: currentIndex === 7, active: currentIndex === 7 },
-  ];
+  "Одобрено Комдиром": 3,
+  "Ожидание клиента": 3,
 
+  "Ожидание подписания": 4,
+  "Активный закуп": 5,
+  "На отгрузке": 6,
+  "Ожидание документов": 7,
+  "Завершен": 8,
+};
+
+const currentIndex = statusToIndex[currentStatus] ?? 0;
+
+const isPendingDirector =
+  currentStatus === "На согласовании у Комдира";
+
+const isRejected =
+  currentStatus === "Отклонено Комдиром";
+
+const isKpApproved = project
+  ? currentIndex >= 3
+  : projectState.kpApproved;
+
+const isApproved = isKpApproved;
+const sent = isPendingDirector;
+
+const isWaitingClient =
+  currentStatus === "Ожидание клиента" ||
+  currentStatus === "Одобрено Комдиром";
+
+const isPastApprovalWindow = project
+  ? currentIndex >= 4
+  : false;
+
+const STAGES = [
+  {
+    label: "Новый проект",
+    done: currentIndex > 0,
+    active: currentIndex === 0,
+  },
+  {
+    label: "В редактировании",
+    done: currentIndex > 1,
+    active: currentIndex === 1,
+  },
+  {
+    label: "На согласовании",
+    done: currentIndex > 2,
+    active: currentIndex === 2,
+  },
+  {
+    label: "Ожидание клиента",
+    done: currentIndex > 3,
+    active: currentIndex === 3,
+  },
+  {
+    label: "Ожидание подписания",
+    done: currentIndex > 4,
+    active: currentIndex === 4,
+  },
+  {
+    label: "Активный закуп",
+    done: currentIndex > 5,
+    active: currentIndex === 5,
+  },
+  {
+    label: "На отгрузке",
+    done: currentIndex > 6,
+    active: currentIndex === 6,
+  },
+  {
+    label: "Ожидание документов",
+    done: currentIndex > 7,
+    active: currentIndex === 7,
+  },
+  {
+    label: "Завершен",
+    done: currentIndex === 8,
+    active: currentIndex === 8,
+  },
+];
   const title = project?.name ?? "Офисный комплекс «Башня»";
   const subtitle = project
       ? `${project.client?.client_name ?? "—"} · ${project.pm?.name ?? "—"} · ${project.deadline ? new Date(project.deadline).toLocaleDateString("ru-RU") : "—"}`
@@ -241,8 +293,17 @@ export function ProjectPagePM({
       setConfirmingImport(true);
       setMlImportError(null);
       await confirmMlImport(mlImport.id);
-      const updatedImport = await getMlImport(mlImport.id);
+
+      // Статус проекта меняется на backend вместе с подтверждением импорта.
+      // Повторно загружаем обе сущности, чтобы шкала сразу показала
+      // «В редактировании» без перезагрузки страницы.
+      const [updatedImport, updatedProject] = await Promise.all([
+        getMlImport(mlImport.id),
+        fetchProjectDetails(projectId),
+      ]);
+
       setMlImport(updatedImport);
+      setProject(updatedProject);
     } catch (error) {
       setMlImportError(error instanceof Error ? error.message : "Не удалось подтвердить ML-импорт");
     } finally {
@@ -254,9 +315,11 @@ export function ProjectPagePM({
     if (!project) return;
     setSending(true);
     try {
-      const response = await sendProjectToDirector(project.id);
+      await sendProjectToDirector(project.id);
+      const updatedProject = await fetchProjectDetails(project.id);
+
+      setProject(updatedProject);
       onKpSent();
-      setProject(prev => prev ? { ...prev, status: { id: prev.status?.id || 0, status_name: response.status } } : prev);
     } catch (error) {
       console.error("Не удалось отправить Комдиру:", error);
       alert("Ошибка при отправке Комдиру.");
@@ -264,33 +327,36 @@ export function ProjectPagePM({
       setSending(false);
     }
   };
+const handleClientApprove = async () => {
+  if (!project) return;
 
-  const handleClientApprove = async () => {
-    if (!project) return;
-    setApprovingClient(true);
-    try {
-      const response = await approveProjectClient(project.id);
-      setProject(prev => prev ? { ...prev, status: { id: prev.status?.id || 0, status_name: response.status } } : prev);
-      alert("КП одобрено клиентом и сохранено на странице «Документы».");
-      onNavigate("documents");
-    } catch (error) {
-      console.error("Не удалось зафиксировать одобрение клиента:", error);
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Ошибка при одобрении КП клиентом.",
-      );
-    } finally {
-      setApprovingClient(false);
-    }
-  };
+  setApprovingClient(true);
 
+  try {
+    await api.post<{
+      message: string;
+      project_id: number;
+      status: string;
+    }>(`/projects/${project.id}/client-approve`);
+
+    const updatedProject = await fetchProjectDetails(project.id);
+    setProject(updatedProject);
+  } catch (error) {
+    console.error("Ошибка одобрения клиентом:", error);
+    alert("Не удалось зафиксировать одобрение клиента.");
+  } finally {
+    setApprovingClient(false);
+  }
+};
   const handleClientReject = async () => {
     if (!project) return;
     setRejecting(true);
     try {
-      const response = await rejectProjectClient(project.id);
-      setProject(prev => prev ? { ...prev, status: { id: prev.status?.id || 0, status_name: response.status } } : prev);
+      await rejectProjectClient(project.id);
+
+      const updatedProject = await fetchProjectDetails(project.id);
+      setProject(updatedProject);
+
       if (mlImport) {
         try {
           const refreshedImport = await getMlImport(mlImport.id);
@@ -386,12 +452,12 @@ export function ProjectPagePM({
             <Chip status={currentStatus}/>
             <Chip status="kp"/>
             <AppTooltip text={(!mlImport || mlImport.status !== "confirmed") ? "Сначала подтвердите импорт товаров" : ""}>
-              <button 
+              <button
                 onClick={handleExportExcel}
                 disabled={isExporting || !project || !mlImport || mlImport.status !== "confirmed"}
                 className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />} 
+                {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />}
                 {isExporting ? "Скачивание..." : "Скачать Excel"}
               </button>
             </AppTooltip>
@@ -464,7 +530,7 @@ export function ProjectPagePM({
             </div>
         )}
 
-        {(currentStatus === "Ожидание подписания" || currentStatus === "Одобрено Комдиром") && (
+        {isWaitingClient && (
             <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50/70 shadow-sm p-5">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div className="flex items-start gap-3">
@@ -493,6 +559,7 @@ export function ProjectPagePM({
                   <AppTooltip text={!kpGenerated ? "Сначала сгенерируйте КП" : ""}>
                     <button
                         onClick={handleClientApprove}
+                        type="button"
                         disabled={approvingClient || rejecting || !kpGenerated}
                         className="flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                     >
@@ -524,13 +591,13 @@ export function ProjectPagePM({
 
                   {!isPastApprovalWindow && (
                     <AppTooltip text={
-                      !mlImport || mlImport.status !== "confirmed" 
-                        ? "Сначала подтвердите импорт товаров" 
-                        : !isApproved 
-                        ? "Генерация КП доступна только после одобрения Комдиром" 
+                      !mlImport || mlImport.status !== "confirmed"
+                        ? "Сначала подтвердите импорт товаров"
+                        : !isApproved
+                        ? "Генерация КП доступна только после одобрения Комдиром"
                         : ""
                     }>
-                      <button 
+                      <button
                         onClick={handleGenerateKP}
                         disabled={!mlImport || mlImport.status !== "confirmed" || !isApproved || isGeneratingKP}
                         className={`flex items-center gap-2 px-5 py-2.5 border text-sm font-semibold rounded-lg transition-colors whitespace-nowrap ${
@@ -550,8 +617,8 @@ export function ProjectPagePM({
                     mlImport.status !== "confirmed" ? (isRejected ? "Сначала подтвердите изменённый импорт товаров" : "Сначала подтвердите импорт товаров") :
                     ""
                   }>
-                    <button 
-                      onClick={handleSendToDirector} 
+                    <button
+                      onClick={handleSendToDirector}
                       disabled={!mlImport || mlImport.status !== "confirmed" || sending || sent || isApproved}
                       className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${
                           sent ? "bg-green-600 text-white cursor-default" :
@@ -846,10 +913,15 @@ const [projectItemsError, setProjectItemsError] =
   hasValidProjectId,
   projectId,
 ]);
-  const currentStatus = project?.status?.status_name || "На согласовании у Комдира";
+  const currentStatus = project?.status?.status_name || "Новый проект";
 
   const decision: null | boolean =
-    currentStatus === "Одобрено Комдиром" ? true :
+    [
+      "Одобрено Комдиром",
+      "Ожидание клиента",
+      "Ожидание подписания",
+      "Активный закуп",
+    ].includes(currentStatus) ? true :
     currentStatus === "Отклонено Комдиром" ? false :
     null;
 
@@ -858,13 +930,17 @@ const [projectItemsError, setProjectItemsError] =
     setDeciding(true);
     try {
       if (approve) {
-        const response = await approveProjectDirector(project.id);
-        setProject((prev) => prev ? { ...prev, status: { id: prev.status?.id || 0, status_name: response.status } } : prev);
+        await approveProjectDirector(project.id);
+        const updatedProject = await fetchProjectDetails(project.id);
+
+        setProject(updatedProject);
         onKpApproved();
       } else {
         const reason = window.prompt("Укажите причину отклонения (необязательно):") || undefined;
-        const response = await rejectProjectDirector(project.id, reason);
-        setProject((prev) => prev ? { ...prev, status: { id: prev.status?.id || 0, status_name: response.status } } : prev);
+        await rejectProjectDirector(project.id, reason);
+        const updatedProject = await fetchProjectDetails(project.id);
+
+        setProject(updatedProject);
       }
     } catch (error) {
       console.error("Ошибка при принятии решения:", error);
@@ -924,19 +1000,19 @@ const [projectItemsError, setProjectItemsError] =
 ];
 
   return (
-    <PageWrap 
-      title={title} 
+    <PageWrap
+      title={title}
       subtitle={subtitle}
       actions={
         <div className="flex items-center gap-2">
           <Chip status={currentStatus} />
           <Chip status="kp" />
-          <button 
+          <button
             onClick={handleExportExcel}
             disabled={isExporting || !project}
             className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors whitespace-nowrap disabled:opacity-50"
           >
-            {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />} 
+            {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />}
             {isExporting ? "Скачивание..." : "Скачать Excel"}
           </button>
         </div>
@@ -1102,17 +1178,17 @@ export function ProjectPageAccountant({projectId}: { projectId: number }) {
   };
 
   return (
-    <PageWrap 
+    <PageWrap
       title="Офисный комплекс «Башня»"
       subtitle="ООО «СтройТех» · Счета и оплата"
       actions={
         <div className="flex items-center gap-2">
-          <button 
+          <button
             onClick={handleExportExcel}
             disabled={isExporting}
             className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors whitespace-nowrap disabled:opacity-50"
           >
-            {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />} 
+            {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />}
             {isExporting ? "Скачивание..." : "Скачать Excel"}
           </button>
         </div>
