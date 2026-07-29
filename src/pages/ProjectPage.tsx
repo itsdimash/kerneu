@@ -8,15 +8,16 @@ import { INVOICES_INIT } from "../data/invoices";
 import { STOCK_INIT } from "../data/stock";
 import { AlertTriangle, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText } from "lucide-react";
 import {
-  api,
   fetchProjectDetails,
   fetchProjectItems,
   getMlImport,
   updateMlImportItem,
   confirmMlImport,
+  startProjectEditing,
   sendProjectToDirector,
   approveProjectDirector,
   rejectProjectDirector,
+  approveProjectClient,
   rejectProjectClient,
   downloadProjectExcel,
   downloadKpDocument,
@@ -150,7 +151,14 @@ export function ProjectPagePM({
     return () => { cancelled = true; };
   }, [resolvedProjectId, hasValidProjectId]);
 
-  const currentStatus = project?.status?.status_name || "Новый проект";
+  const currentStatus = project?.status?.status_name || "Новый";
+
+  const refreshProject = async (): Promise<ProjectResponse> => {
+    const updatedProject = await fetchProjectDetails(resolvedProjectId);
+    setProject(updatedProject);
+    setProjectError(null);
+    return updatedProject;
+  };
 
   useEffect(() => {
     if (!mlImport) return;
@@ -161,96 +169,45 @@ export function ProjectPagePM({
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStatus]);
-const statusToIndex: Record<string, number> = {
-  // Старые названия оставлены для совместимости.
-  "Новый": 0,
-  "Новый проект": 0,
 
-  "В редактировании": 1,
+  const statusToIndex: Record<string, number> = {
+    "Новый": 0,
+    "Новый проект": 0,
+    "В редактировании": 1,
+    "На согласовании у Комдира": 2,
+    "Отклонено Комдиром": 2,
+    "Одобрено Комдиром": 3,
+    "Ожидание клиента": 3,
+    "Ожидание подписания": 4,
+    "Активный закуп": 5,
+    "На отгрузке": 6,
+    "Ожидание документов": 7,
+    "Завершен": 8,
+  };
 
-  "На согласовании у Комдира": 2,
-  "Отклонено Комдиром": 2,
+  const currentIndex = statusToIndex[currentStatus] ?? 0;
+  const isKpApproved = project ? currentIndex >= 3 : projectState.kpApproved;
+  const isPendingDirector = currentStatus === "На согласовании у Комдира";
+  const isRejected = currentStatus === "Отклонено Комдиром";
+  const isApproved = isKpApproved;
+  const sent = isPendingDirector;
+  // Генерация КП доступна, пока проект ожидает решения клиента.
+  // После «Одобрено клиентом» проект переходит в отдельный статус
+  // «Ожидание подписания» (index 4), поэтому кнопка больше не нужна.
+  const isPastApprovalWindow = project ? currentIndex >= 4 : false;
 
-  "Одобрено Комдиром": 3,
-  "Ожидание клиента": 3,
+  const STAGES = [
+    { label: "Новый", done: currentIndex > 0, active: currentIndex === 0 },
+    { label: "В редактировании", done: currentIndex > 1, active: currentIndex === 1 },
+    { label: "На согласовании", done: currentIndex > 2, active: currentIndex === 2 },
+    { label: "Ожидание клиента", done: currentIndex > 3, active: currentIndex === 3 },
+    { label: "Ожидание подписания", done: currentIndex > 4, active: currentIndex === 4 },
+    { label: "Активный закуп", done: currentIndex > 5, active: currentIndex === 5 },
+    { label: "На отгрузке", done: currentIndex > 6, active: currentIndex === 6 },
+    { label: "Ожидание документов", done: currentIndex > 7, active: currentIndex === 7 },
+    { label: "Завершен", done: currentIndex === 8, active: currentIndex === 8 },
+  ];
 
-  "Ожидание подписания": 4,
-  "Активный закуп": 5,
-  "На отгрузке": 6,
-  "Ожидание документов": 7,
-  "Завершен": 8,
-};
-
-const currentIndex = statusToIndex[currentStatus] ?? 0;
-
-const isPendingDirector =
-  currentStatus === "На согласовании у Комдира";
-
-const isRejected =
-  currentStatus === "Отклонено Комдиром";
-
-const isKpApproved = project
-  ? currentIndex >= 3
-  : projectState.kpApproved;
-
-const isApproved = isKpApproved;
-const sent = isPendingDirector;
-
-const isWaitingClient =
-  currentStatus === "Ожидание клиента" ||
-  currentStatus === "Одобрено Комдиром";
-
-const isPastApprovalWindow = project
-  ? currentIndex >= 4
-  : false;
-
-const STAGES = [
-  {
-    label: "Новый проект",
-    done: currentIndex > 0,
-    active: currentIndex === 0,
-  },
-  {
-    label: "В редактировании",
-    done: currentIndex > 1,
-    active: currentIndex === 1,
-  },
-  {
-    label: "На согласовании",
-    done: currentIndex > 2,
-    active: currentIndex === 2,
-  },
-  {
-    label: "Ожидание клиента",
-    done: currentIndex > 3,
-    active: currentIndex === 3,
-  },
-  {
-    label: "Ожидание подписания",
-    done: currentIndex > 4,
-    active: currentIndex === 4,
-  },
-  {
-    label: "Активный закуп",
-    done: currentIndex > 5,
-    active: currentIndex === 5,
-  },
-  {
-    label: "На отгрузке",
-    done: currentIndex > 6,
-    active: currentIndex === 6,
-  },
-  {
-    label: "Ожидание документов",
-    done: currentIndex > 7,
-    active: currentIndex === 7,
-  },
-  {
-    label: "Завершен",
-    done: currentIndex === 8,
-    active: currentIndex === 8,
-  },
-];
   const title = project?.name ?? "Офисный комплекс «Башня»";
   const subtitle = project
       ? `${project.client?.client_name ?? "—"} · ${project.pm?.name ?? "—"} · ${project.deadline ? new Date(project.deadline).toLocaleDateString("ru-RU") : "—"}`
@@ -294,16 +251,29 @@ const STAGES = [
       setMlImportError(null);
       await confirmMlImport(mlImport.id);
 
-      // Статус проекта меняется на backend вместе с подтверждением импорта.
-      // Повторно загружаем обе сущности, чтобы шкала сразу показала
-      // «В редактировании» без перезагрузки страницы.
-      const [updatedImport, updatedProject] = await Promise.all([
-        getMlImport(mlImport.id),
-        fetchProjectDetails(projectId),
-      ]);
+      // Подтверждение импорта должно переводить проект:
+      // «Новый» / «Новый проект» → «В редактировании».
+      // Повторно читаем проект с backend, чтобы не оставлять старый статус
+      // в локальном состоянии после git merge/pull.
+      let updatedProject = await refreshProject();
+      const statusName = updatedProject.status?.status_name?.trim();
 
-      setMlImport(updatedImport);
-      setProject(updatedProject);
+      // Совместимость с backend-версиями, где confirm ML-импорта ещё
+      // не вызывает переход START_EDITING самостоятельно.
+      if (statusName === "Новый" || statusName === "Новый проект") {
+        await startProjectEditing(updatedProject.id);
+        updatedProject = await refreshProject();
+      }
+
+      if (updatedProject.status?.status_name !== "В редактировании") {
+        throw new Error(
+          `Импорт подтверждён, но проект остался в статусе «${
+            updatedProject.status?.status_name || "не задан"
+          }»`,
+        );
+      }
+
+      setMlImport(await getMlImport(mlImport.id));
     } catch (error) {
       setMlImportError(error instanceof Error ? error.message : "Не удалось подтвердить ML-импорт");
     } finally {
@@ -316,10 +286,8 @@ const STAGES = [
     setSending(true);
     try {
       await sendProjectToDirector(project.id);
-      const updatedProject = await fetchProjectDetails(project.id);
-
-      setProject(updatedProject);
       onKpSent();
+      await refreshProject();
     } catch (error) {
       console.error("Не удалось отправить Комдиру:", error);
       alert("Ошибка при отправке Комдиру.");
@@ -327,36 +295,33 @@ const STAGES = [
       setSending(false);
     }
   };
-const handleClientApprove = async () => {
-  if (!project) return;
 
-  setApprovingClient(true);
+  const handleClientApprove = async () => {
+    if (!project) return;
+    setApprovingClient(true);
+    try {
+      await approveProjectClient(project.id);
+      await refreshProject();
+      alert("КП одобрено клиентом и сохранено на странице «Документы».");
+      onNavigate("documents");
+    } catch (error) {
+      console.error("Не удалось зафиксировать одобрение клиента:", error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Ошибка при одобрении КП клиентом.",
+      );
+    } finally {
+      setApprovingClient(false);
+    }
+  };
 
-  try {
-    await api.post<{
-      message: string;
-      project_id: number;
-      status: string;
-    }>(`/projects/${project.id}/client-approve`);
-
-    const updatedProject = await fetchProjectDetails(project.id);
-    setProject(updatedProject);
-  } catch (error) {
-    console.error("Ошибка одобрения клиентом:", error);
-    alert("Не удалось зафиксировать одобрение клиента.");
-  } finally {
-    setApprovingClient(false);
-  }
-};
   const handleClientReject = async () => {
     if (!project) return;
     setRejecting(true);
     try {
       await rejectProjectClient(project.id);
-
-      const updatedProject = await fetchProjectDetails(project.id);
-      setProject(updatedProject);
-
+      await refreshProject();
       if (mlImport) {
         try {
           const refreshedImport = await getMlImport(mlImport.id);
@@ -391,7 +356,8 @@ const handleClientApprove = async () => {
       quantity > 0 &&
       price > 0 &&
       priceCost >= 0 &&
-      margin >= 0
+      margin >= 0 &&
+      Boolean(item.supplier_name?.trim())
     );
   });
   const handleExportExcel = async () => {
@@ -411,7 +377,7 @@ const handleClientApprove = async () => {
     if (!project) return;
     try {
       setIsGeneratingKP(true);
-      await downloadKpDocument(project.id, project.name);
+      await downloadKpDocument(project.id);
       setKpGenerated(true);
     } catch (error) {
       console.error("Ошибка генерации КП:", error);
@@ -530,7 +496,7 @@ const handleClientApprove = async () => {
             </div>
         )}
 
-        {isWaitingClient && (
+        {(currentStatus === "Ожидание клиента" || currentStatus === "Одобрено Комдиром") && (
             <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50/70 shadow-sm p-5">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div className="flex items-start gap-3">
@@ -559,7 +525,6 @@ const handleClientApprove = async () => {
                   <AppTooltip text={!kpGenerated ? "Сначала сгенерируйте КП" : ""}>
                     <button
                         onClick={handleClientApprove}
-                        type="button"
                         disabled={approvingClient || rejecting || !kpGenerated}
                         className="flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                     >
@@ -661,17 +626,17 @@ const handleClientApprove = async () => {
             ) : (
               <>
                 <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-x-auto">
-                  <table className="w-full min-w-[1700px] border-collapse">
+                  <table className="w-full min-w-[1900px] border-collapse">
                     <thead>
                       <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-                        {["Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Себестоимость", "Цена", "Сумма", "Маржа", "Доступно", "Комментарий", "Статус"].map((heading) => (
+                        {["Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Поставщик", "Себестоимость", "Цена", "Сумма", "Маржа", "Доступно", "Комментарий", "Статус"].map((heading) => (
                           <th key={heading} className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left whitespace-nowrap">{heading}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#E2E8F0]">
                       {mlImport.items.length === 0 ? (
-                        <tr><td colSpan={11} className="px-4 py-10 text-center text-sm text-slate-400">В ML-импорте нет товаров</td></tr>
+                        <tr><td colSpan={12} className="px-4 py-10 text-center text-sm text-slate-400">В ML-импорте нет товаров</td></tr>
                       ) : (
                         mlImport.items.map((item) => {
                           const isUpdating = updatingItemId === item.id;
@@ -698,6 +663,27 @@ const handleClientApprove = async () => {
                                   <p className="text-sm text-slate-700">{item.matched_product ?? "—"}</p>
                                   {item.matched_external_id &&
                                       <p className="text-xs text-slate-400 mt-1">ML ID: {item.matched_external_id}</p>}
+                                </td>
+                                <td className="px-4 py-3">
+                                  <input
+                                      key={`${item.id}-supplier-${item.supplier_name ?? ""}`}
+                                      type="text"
+                                      maxLength={255}
+                                      disabled={mlImport.status !== "draft" || isUpdating}
+                                      defaultValue={item.supplier_name ?? ""}
+                                      placeholder="Укажите поставщика"
+                                      onBlur={(event) => {
+                                        const supplierName = event.target.value.trim() || null;
+                                        if (supplierName !== item.supplier_name) {
+                                          handleMlItemUpdate(item.id, {supplier_name: supplierName});
+                                        }
+                                      }}
+                                      className={`w-44 px-2 py-1.5 text-sm border rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100 ${
+                                        item.supplier_name?.trim()
+                                          ? "border-[#E2E8F0]"
+                                          : "border-red-300"
+                                      }`}
+                                  />
                                 </td>
                                 <td className="px-4 py-3">
                                   <input
@@ -802,7 +788,7 @@ const handleClientApprove = async () => {
 
                 <div className="flex items-center justify-between gap-4 mt-4">
                   <p className="text-xs text-slate-400">
-                    Перед подтверждением у каждой строки должен быть указан цена товара из таблицы products.
+                    Перед подтверждением у каждой строки должны быть указаны поставщик, цена и количество.
                   </p>
                   <button
                       type="button"
@@ -913,15 +899,11 @@ const [projectItemsError, setProjectItemsError] =
   hasValidProjectId,
   projectId,
 ]);
-  const currentStatus = project?.status?.status_name || "Новый проект";
+  const currentStatus = project?.status?.status_name || "На согласовании у Комдира";
 
   const decision: null | boolean =
-    [
-      "Одобрено Комдиром",
-      "Ожидание клиента",
-      "Ожидание подписания",
-      "Активный закуп",
-    ].includes(currentStatus) ? true :
+    currentStatus === "Ожидание клиента" ||
+    currentStatus === "Одобрено Комдиром" ? true :
     currentStatus === "Отклонено Комдиром" ? false :
     null;
 
@@ -931,16 +913,12 @@ const [projectItemsError, setProjectItemsError] =
     try {
       if (approve) {
         await approveProjectDirector(project.id);
-        const updatedProject = await fetchProjectDetails(project.id);
-
-        setProject(updatedProject);
+        setProject(await fetchProjectDetails(project.id));
         onKpApproved();
       } else {
         const reason = window.prompt("Укажите причину отклонения (необязательно):") || undefined;
         await rejectProjectDirector(project.id, reason);
-        const updatedProject = await fetchProjectDetails(project.id);
-
-        setProject(updatedProject);
+        setProject(await fetchProjectDetails(project.id));
       }
     } catch (error) {
       console.error("Ошибка при принятии решения:", error);
@@ -1033,7 +1011,7 @@ const [projectItemsError, setProjectItemsError] =
             <table className="w-full border-collapse">
               <thead>
               <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-                {["Наименование", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа"].map(h => (
+                {["Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа"].map(h => (
                     <th key={h}
                         className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
                 ))}
@@ -1042,20 +1020,20 @@ const [projectItemsError, setProjectItemsError] =
               <tbody className="divide-y divide-[#E2E8F0]">
                 {projectItemsLoading ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-400">
+                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400">
                       <Loader2 size={16} className="inline-block animate-spin text-[#2563EB] mr-2" />
                       Загружаем позиции проекта…
                     </td>
                   </tr>
                 ) : projectItemsError ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-10 text-center text-sm text-red-500">
+                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-red-500">
                       {projectItemsError}
                     </td>
                   </tr>
                 ) : projectItems.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-400">
+                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400">
                       В проекте нет позиций
                     </td>
                   </tr>
@@ -1070,6 +1048,9 @@ const [projectItemsError, setProjectItemsError] =
                     return (
                         <tr key={item.id} className="hover:bg-slate-50/50">
                           <td className="px-4 py-3 text-sm text-slate-700">{item.product?.name ?? "—"}</td>
+                          <td className="px-4 py-3 text-sm text-slate-700">
+                            {item.supplier_raw_name ?? item.supplier?.supplier_name ?? "—"}
+                          </td>
                           <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
                           <td className="px-4 py-3 text-xs text-slate-500">{item.product?.unit ?? "шт"}</td>
                           <td className="px-4 py-3 text-sm font-mono">{priceCost.toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2,})}</td>
