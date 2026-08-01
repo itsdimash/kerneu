@@ -903,7 +903,7 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
                   <table className="w-full border-collapse">
                     <thead>
                       <tr className="border-b border-[#E2E8F0] bg-slate-50/40">
-                        {["Продукт", "Кол.", "Ед.", "Цена (себестоимость)", "Сумма (себестоимость * кол)", "Маржа"].map((header) => (
+                        {["Продукт", "Кол.", "Ед.", "Цена", "Сумма", "Маржа"].map((header) => (
                           <th key={header} className="px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left whitespace-nowrap">
                             {header}
                           </th>

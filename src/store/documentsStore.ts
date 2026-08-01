@@ -1,6 +1,6 @@
 import type { ProjectDocumentResponse } from "../api/api";
 
-export type DocCategory = "kp" | "contract" | "power_of_attorney" | "invoice";
+export type DocCategory = "kp" | "contract" | "power_of_attorney" | "invoice" | "waybill";
 export type DocStatus = "pending" | "uploaded" | "generated" | "approved";
 
 export interface ProjectDocument {

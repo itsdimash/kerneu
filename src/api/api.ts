@@ -636,3 +636,12 @@ export const fetchWarehouseShipments = async (): Promise<ShipmentResponse[]> => 
   const { data } = await api.get<ShipmentResponse[]>("/warehouse/shipments");
   return data;
 };
+
+export async function deleteProjectDocument(
+  documentId: number
+): Promise<void> {
+  const { data } = await api.delete(
+    `/documents/${documentId}`
+  );
+  return data;
+}
