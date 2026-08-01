@@ -16,6 +16,7 @@ import {
   downloadProjectDocument,
   fetchProjectDocuments,
   uploadProjectDocument,
+  deleteProjectDocument,
 } from "../api/api";
 
 const API_BASE = "http://localhost:8000/api/v1";
@@ -50,13 +51,16 @@ export function DocumentsPage({
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [projectQuery, setProjectQuery] = useState("");
+  
+  // НОВОЕ СОСТОЯНИЕ: Показывать ли завершенные проекты
+  const [showAllProjects, setShowAllProjects] = useState(false);
+
   const [archivedKps, setArchivedKps] = useState<ProjectDocument[]>([]);
   const [archiveLoading, setArchiveLoading] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
 
-  // Состояния загрузки для новых файлов
   const [uploadingPoa, setUploadingPoa] = useState(false);
-  const [uploadingInvoice, setUploadingInvoice] = useState(false);
+  const [uploadingWaybill, setUploadingWaybill] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -96,7 +100,10 @@ export function DocumentsPage({
           const requestedId = projectId ? String(projectId) : "";
           if (requestedId && normalizedProjects.some((project) => project.id === requestedId)) return requestedId;
           if (currentId && normalizedProjects.some((project) => project.id === currentId)) return currentId;
-          return normalizedProjects[0]?.id ?? "";
+          
+          // При начальной загрузке выбираем первый попавшийся активный проект (если есть)
+          const firstActive = normalizedProjects.find(p => p.statusName !== "Завершен");
+          return firstActive?.id ?? normalizedProjects[0]?.id ?? "";
         });
       } catch (error) {
         console.error(error);
@@ -128,10 +135,8 @@ export function DocumentsPage({
           setArchiveError(null);
         }
         
-        // 1. Fetch ALL documents from backend
         const data = await fetchProjectDocuments(selectedProjectId);
         
-        // 2. Process KP (unchanged logic)
         const kpDocs = data
           .filter((item) => item.category === "kp")
           .map<ProjectDocument>((item) => ({
@@ -148,17 +153,27 @@ export function DocumentsPage({
         if (!cancelled) {
           setArchivedKps(kpDocs);
           setArchiveError(null);
+
+          const apiContract = data.find(d => d.category === "contract");
+          if (apiContract) {
+            documentsStore.updateDocument(selectedProjectId, `${selectedProjectId}-contract`, {
+              status: "uploaded",
+              date: new Date(apiContract.created_at).toLocaleDateString("ru-RU"),
+              fileName: apiContract.file_name,
+              backendDocument: apiContract,
+            });
+          }
           
-          // 3. ✨ NEW: Sync POA and Invoice documents to the store so they persist on refresh ✨
-          // (Contract is explicitly untouched!)
           const localDocs = documentsStore.getSnapshot(selectedProjectId);
           const otherDocs = data.filter(
-            item => item.category === "power_of_attorney" || item.category === "invoice"
+            item => 
+              item.category === "power_of_attorney" || 
+              item.category === "waybill" ||
+              (item.category === "invoice" && (item.status === "approved" || item.status === "income"))
           );
           
           otherDocs.forEach(apiDoc => {
             const storeId = `backend-${apiDoc.id}`;
-            // Add only if it's not already in the store
             if (!localDocs.some(d => d.id === storeId)) {
               documentsStore.addDocument(selectedProjectId, {
                 id: storeId,
@@ -167,7 +182,7 @@ export function DocumentsPage({
                 status: "uploaded",
                 date: new Date(apiDoc.created_at).toLocaleDateString("ru-RU"),
                 fileName: apiDoc.file_name,
-                backendDocument: apiDoc, // Connect the real file for download!
+                backendDocument: apiDoc,
               });
             }
           });
@@ -200,7 +215,12 @@ export function DocumentsPage({
   const contractSigned = selectedProject?.contractSigned ?? projectState.contractSigned;
   const uploadsLocked = !contractSigned;
 
-  const filteredProjects = projects.filter(p => p.name.toLowerCase().includes(projectQuery.toLowerCase()));
+  // ОБНОВЛЕННАЯ ЛОГИКА ФИЛЬТРАЦИИ
+  const filteredProjects = projects.filter(p => {
+    const matchesSearch = p.name.toLowerCase().includes(projectQuery.toLowerCase());
+    const matchesStatus = showAllProjects || p.statusName !== "Завершен";
+    return matchesSearch && matchesStatus;
+  });
 
   const review = useSyncExternalStore(
     documentsStore.subscribe,
@@ -218,22 +238,11 @@ export function DocumentsPage({
   const reviewInFlight = reviewStage === "pending_accountant" || reviewStage === "pending_director";
   const docsLocked = completed || uploadsLocked || reviewInFlight;
 
-  // KP and Contract are untouched
   const contractDoc = allDocs.find(d => d.category === "contract");
-  
-  // Power of Attorney and Invoices
   const poaDocs     = allDocs.filter(d => d.category === "power_of_attorney");
+  const waybillDocs = allDocs.filter(d => d.category === "waybill");
   const invoiceDocs = allDocs.filter(d => d.category === "invoice");
 
-  const invoicePlaceholder: ProjectDocument = {
-    id: "invoice-placeholder",
-    projectId: selectedProjectId,
-    name: "Накладные",
-    category: "invoice" as DocCategory,
-    status: "pending" as DocStatus,
-    date: "",
-    required: false,
-  };
   const poaPlaceholder: ProjectDocument = {
     id: "poa-placeholder",
     projectId: selectedProjectId,
@@ -243,17 +252,37 @@ export function DocumentsPage({
     date: "",
     required: false,
   };
+  const invoicePlaceholder: ProjectDocument = {
+    id: "invoice-placeholder",
+    projectId: selectedProjectId,
+    name: "Счета на оплату",
+    category: "invoice" as DocCategory,
+    status: "pending" as DocStatus,
+    date: "",
+    required: false,
+  };
+  const waybillPlaceholder: ProjectDocument = {
+    id: "waybill-placeholder",
+    projectId: selectedProjectId,
+    name: "Накладные",
+    category: "waybill" as DocCategory,
+    status: "pending" as DocStatus,
+    date: "",
+    required: false,
+  };
 
   const displayDocs = [...allDocs];
   if (poaDocs.length === 0) displayDocs.push(poaPlaceholder);
   if (invoiceDocs.length === 0) displayDocs.push(invoicePlaceholder);
+  if (waybillDocs.length === 0) displayDocs.push(waybillPlaceholder);
 
   const contractUploaded = contractDoc?.status === "uploaded";
   const poaUploaded      = poaDocs.some(d => d.status === "uploaded");
-  const hasInvoice       = invoiceDocs.some(d => d.status === "uploaded");
+  const hasWaybill       = waybillDocs.some(d => d.status === "uploaded");
+  const hasInvoice       = invoiceDocs.some(d => d.status === "uploaded"); 
 
-  const requiredDocCount = 4;
-  const doneDocCount = [hasApprovedKp, contractUploaded, poaUploaded, hasInvoice].filter(Boolean).length;
+  const requiredDocCount = 5;
+  const doneDocCount = [hasApprovedKp, contractUploaded, poaUploaded, hasInvoice, hasWaybill].filter(Boolean).length;
   const allUploaded = doneDocCount === requiredDocCount;
   const canComplete = allUploaded && reviewStage === "approved" && !completed;
 
@@ -262,29 +291,43 @@ export function DocumentsPage({
   const [completing,       setCompleting]       = useState(false);
   const [rejectDraft,      setRejectDraft]      = useState("");
   const [showRejectBox,    setShowRejectBox]    = useState(false);
-  const invoiceFileRef = useRef<HTMLInputElement>(null);
+  
   const poaFileRef = useRef<HTMLInputElement>(null);
+  const waybillFileRef = useRef<HTMLInputElement>(null);
 
   const today = () => new Date().toLocaleDateString("ru-RU");
 
-  // Универсальная функция удаления для списков
-  const handleDeleteDoc = (doc: ProjectDocument) => {
+  const handleDeleteDoc = async (doc: ProjectDocument) => {
     if (docsLocked) return;
     if (!window.confirm(`Удалить «${doc.name}»?`)) return;
-    documentsStore.removeDocument(selectedProjectId, doc.id);
+    
+    try {
+      if (doc.backendDocument?.id) {
+        await deleteProjectDocument(doc.backendDocument.id);
+      }
+      documentsStore.removeDocument(selectedProjectId, doc.id);
+    } catch (e) {
+      console.error(e);
+      alert("Не удалось удалить документ. Проверьте соединение с сервером.");
+    }
   };
 
-  // --- 🔥 ЗАГРУЗКА ДОВЕРЕННОСТИ НА БЕКЕНД 🔥 ---
-  const handlePoaUpload = async (file: File) => {
-    setUploadingPoa(true);
+  const handleDocUpload = async (
+    file: File, 
+    category: DocCategory, 
+    prefix: string, 
+    count: number, 
+    setLoading: (v: boolean) => void
+  ) => {
+    setLoading(true);
     try {
-      const docName = `Доверенность ${poaDocs.length + 1}`;
-      const uploadedDoc = await uploadProjectDocument(selectedProjectId, "power_of_attorney", file, docName);
+      const docName = `${prefix} ${count + 1}`;
+      const uploadedDoc = await uploadProjectDocument(selectedProjectId, category, file, docName);
       
       documentsStore.addDocument(selectedProjectId, {
         id: `backend-${uploadedDoc.id}`,
         name: docName,
-        category: "power_of_attorney",
+        category: category,
         status: "uploaded",
         date: today(),
         fileName: file.name,
@@ -292,9 +335,9 @@ export function DocumentsPage({
       });
     } catch (error) {
       console.error(error);
-      alert("Не удалось загрузить доверенность. Попробуйте еще раз.");
+      alert(`Не удалось загрузить документ. Попробуйте еще раз.`);
     } finally {
-      setUploadingPoa(false);
+      setLoading(false);
     }
   };
 
@@ -302,52 +345,26 @@ export function DocumentsPage({
     e.preventDefault();
     if (docsLocked || uploadingPoa) return;
     const file = e.dataTransfer.files?.[0];
-    if (file) await handlePoaUpload(file);
+    if (file) await handleDocUpload(file, "power_of_attorney", "Доверенность", poaDocs.length, setUploadingPoa);
   };
-
   const handlePoaInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (docsLocked || uploadingPoa) return;
     const file = e.target.files?.[0];
-    if (file) await handlePoaUpload(file);
-    if (poaFileRef.current) poaFileRef.current.value = ""; // Сбрасываем input
+    if (file) await handleDocUpload(file, "power_of_attorney", "Доверенность", poaDocs.length, setUploadingPoa);
+    if (poaFileRef.current) poaFileRef.current.value = "";
   };
 
-  // --- 🔥 ЗАГРУЗКА НАКЛАДНОЙ НА БЕКЕНД 🔥 ---
-  const handleInvoiceUpload = async (file: File) => {
-    setUploadingInvoice(true);
-    try {
-      const docName = `Накладная ${invoiceDocs.length + 1}`;
-      const uploadedDoc = await uploadProjectDocument(selectedProjectId, "invoice", file, docName);
-      
-      documentsStore.addDocument(selectedProjectId, {
-        id: `backend-${uploadedDoc.id}`,
-        name: docName,
-        category: "invoice",
-        status: "uploaded",
-        date: today(),
-        fileName: file.name,
-        backendDocument: uploadedDoc,
-      });
-    } catch (error) {
-      console.error(error);
-      alert("Не удалось загрузить накладную. Попробуйте еще раз.");
-    } finally {
-      setUploadingInvoice(false);
-    }
-  };
-
-  const handleInvoiceDrop = async (e: React.DragEvent) => {
+  const handleWaybillDrop = async (e: React.DragEvent) => {
     e.preventDefault();
-    if (docsLocked || uploadingInvoice) return;
+    if (docsLocked || uploadingWaybill) return;
     const file = e.dataTransfer.files?.[0];
-    if (file) await handleInvoiceUpload(file);
+    if (file) await handleDocUpload(file, "waybill", "Накладная", waybillDocs.length, setUploadingWaybill);
   };
-
-  const handleInvoiceInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (docsLocked || uploadingInvoice) return;
+  const handleWaybillInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (docsLocked || uploadingWaybill) return;
     const file = e.target.files?.[0];
-    if (file) await handleInvoiceUpload(file);
-    if (invoiceFileRef.current) invoiceFileRef.current.value = ""; // Сбрасываем input
+    if (file) await handleDocUpload(file, "waybill", "Накладная", waybillDocs.length, setUploadingWaybill);
+    if (waybillFileRef.current) waybillFileRef.current.value = "";
   };
 
   const handleSubmitForReview = () => {
@@ -439,9 +456,10 @@ export function DocumentsPage({
   }
 
   const categoryIcon = (category: ProjectDocument["category"]) => {
-    if (category === "kp")               return <FileText   size={14} className="text-blue-500"   />;
-    if (category === "invoice")          return <ReceiptIcon size={14} className="text-purple-500" />;
-    if (category === "power_of_attorney") return <Lock       size={14} className="text-red-500"  />;
+    if (category === "kp")                return <FileText   size={14} className="text-blue-500"   />;
+    if (category === "invoice")           return <FileCheck  size={14} className="text-amber-500"  />;
+    if (category === "waybill")           return <ReceiptIcon size={14} className="text-purple-500" />;
+    if (category === "power_of_attorney") return <Lock       size={14} className="text-red-500"    />;
     return <FileCheck size={14} className="text-slate-400" />;
   };
 
@@ -472,6 +490,20 @@ export function DocumentsPage({
               className="w-full text-sm outline-none text-slate-700 placeholder:text-slate-400"
             />
           </div>
+          
+          {/* НОВЫЙ БЛОК С ЧЕКБОКСОМ */}
+          <div className="px-3 py-2 border-b border-[#E2E8F0] bg-slate-50">
+            <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showAllProjects}
+                onChange={(e) => setShowAllProjects(e.target.checked)}
+                className="rounded border-slate-300 text-[#2563EB] focus:ring-[#2563EB] cursor-pointer"
+              />
+              Показывать завершенные проекты
+            </label>
+          </div>
+
           <div className="max-h-56 overflow-y-auto">
             {filteredProjects.map(p => (
               <button
@@ -496,7 +528,7 @@ export function DocumentsPage({
       <div className="px-5 py-4 border-b border-[#E2E8F0]">
         <h2 className="text-sm font-semibold text-slate-900">Все документы проекта</h2>
         <p className="text-xs text-slate-400 mt-0.5">
-          КП, договор, доверенность и накладные — в одном месте, доступны для скачивания на любом этапе
+          КП, договор, доверенность, счета и накладные — в одном месте, доступны для скачивания на любом этапе
         </p>
       </div>
       {displayDocs.length === 0 ? (
@@ -522,7 +554,7 @@ export function DocumentsPage({
                     >
                       <Download size={12} />Скачать
                     </button>
-                    {!docsLocked && !doc.id.includes("placeholder") && (doc.category === "invoice" || doc.category === "power_of_attorney") && (
+                    {!docsLocked && !doc.id.includes("placeholder") && !['kp', 'contract', 'invoice'].includes(doc.category) && (
                       <AppTooltip text="Удалить документ">
                         <button
                           onClick={() => handleDeleteDoc(doc)}
@@ -711,53 +743,55 @@ export function DocumentsPage({
             </p>
           </div>
 
-          {/* Доверенность: Pure Dropzone */}
-          <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
-            <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
-              <Lock size={14} className="text-red-500" />Доверенность
-            </h3>
-            <div
-              onDragOver={e => { if (!docsLocked) e.preventDefault(); }}
-              onDrop={handlePoaDrop}
-              onClick={() => !docsLocked && poaFileRef.current?.click()}
-              className={`border-2 border-dashed rounded-lg p-4 text-center transition-all ${
-                docsLocked || uploadingPoa
-                  ? "border-slate-200 bg-slate-50 cursor-not-allowed opacity-60"
-                  : "border-[#E2E8F0] hover:border-[#2563EB]/40 hover:bg-blue-50/20 cursor-pointer"
-              }`}
-            >
-              <input ref={poaFileRef} type="file" className="hidden" onChange={handlePoaInput} />
-              {docsLocked || uploadingPoa
-                ? (uploadingPoa ? <Loader2 size={18} className="mx-auto mb-1.5 text-blue-500 animate-spin" /> : <Lock size={18} className="mx-auto mb-1.5 text-slate-400" />)
-                : <Upload size={18} className="mx-auto mb-1.5 text-slate-400" />}
-              <p className="text-xs text-slate-500">
-                {docsLocked ? "Недоступно" : uploadingPoa ? "Загрузка..." : <><span className="text-[#2563EB]">Выберите файл</span> или перетащите сюда — можно добавить несколько</>}
-              </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Доверенность: Dropzone */}
+            <div className="bg-white rounded-lg border border-[#E2E8F0] p-4">
+              <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                <Lock size={14} className="text-red-500" />Доверенности
+              </h3>
+              <div
+                onDragOver={e => { if (!docsLocked) e.preventDefault(); }}
+                onDrop={handlePoaDrop}
+                onClick={() => !docsLocked && poaFileRef.current?.click()}
+                className={`border-2 border-dashed rounded-lg p-4 text-center transition-all ${
+                  docsLocked || uploadingPoa
+                    ? "border-slate-200 bg-slate-50 cursor-not-allowed opacity-60"
+                    : "border-[#E2E8F0] hover:border-[#2563EB]/40 hover:bg-blue-50/20 cursor-pointer"
+                }`}
+              >
+                <input ref={poaFileRef} type="file" className="hidden" onChange={handlePoaInput} />
+                {docsLocked || uploadingPoa
+                  ? (uploadingPoa ? <Loader2 size={18} className="mx-auto mb-1.5 text-blue-500 animate-spin" /> : <Lock size={18} className="mx-auto mb-1.5 text-slate-400" />)
+                  : <Upload size={18} className="mx-auto mb-1.5 text-slate-400" />}
+                <p className="text-xs text-slate-500">
+                  {docsLocked ? "Недоступно" : uploadingPoa ? "Загрузка..." : <><span className="text-[#2563EB]">Выберите файл</span><br/>или перетащите — можно несколько</>}
+                </p>
+              </div>
             </div>
-          </div>
 
-          {/* Накладные: Pure Dropzone */}
-          <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
-            <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
-              <ReceiptIcon size={14} className="text-purple-500" />Накладные
-            </h3>
-            <div
-              onDragOver={e => { if (!docsLocked) e.preventDefault(); }}
-              onDrop={handleInvoiceDrop}
-              onClick={() => !docsLocked && invoiceFileRef.current?.click()}
-              className={`border-2 border-dashed rounded-lg p-4 text-center transition-all ${
-                docsLocked || uploadingInvoice
-                  ? "border-slate-200 bg-slate-50 cursor-not-allowed opacity-60"
-                  : "border-[#E2E8F0] hover:border-[#2563EB]/40 hover:bg-blue-50/20 cursor-pointer"
-              }`}
-            >
-              <input ref={invoiceFileRef} type="file" className="hidden" onChange={handleInvoiceInput} />
-              {docsLocked || uploadingInvoice
-                ? (uploadingInvoice ? <Loader2 size={18} className="mx-auto mb-1.5 text-blue-500 animate-spin" /> : <Lock size={18} className="mx-auto mb-1.5 text-slate-400" />)
-                : <Upload size={18} className="mx-auto mb-1.5 text-slate-400" />}
-              <p className="text-xs text-slate-500">
-                {docsLocked ? "Недоступно" : uploadingInvoice ? "Загрузка..." : <><span className="text-[#2563EB]">Выберите файл</span> или перетащите сюда — можно добавить ещё</>}
-              </p>
+            {/* Накладные: Dropzone */}
+            <div className="bg-white rounded-lg border border-[#E2E8F0] p-4">
+              <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                <ReceiptIcon size={14} className="text-purple-500" />Накладные
+              </h3>
+              <div
+                onDragOver={e => { if (!docsLocked) e.preventDefault(); }}
+                onDrop={handleWaybillDrop}
+                onClick={() => !docsLocked && waybillFileRef.current?.click()}
+                className={`border-2 border-dashed rounded-lg p-4 text-center transition-all ${
+                  docsLocked || uploadingWaybill
+                    ? "border-slate-200 bg-slate-50 cursor-not-allowed opacity-60"
+                    : "border-[#E2E8F0] hover:border-[#2563EB]/40 hover:bg-blue-50/20 cursor-pointer"
+                }`}
+              >
+                <input ref={waybillFileRef} type="file" className="hidden" onChange={handleWaybillInput} />
+                {docsLocked || uploadingWaybill
+                  ? (uploadingWaybill ? <Loader2 size={18} className="mx-auto mb-1.5 text-blue-500 animate-spin" /> : <Lock size={18} className="mx-auto mb-1.5 text-slate-400" />)
+                  : <Upload size={18} className="mx-auto mb-1.5 text-slate-400" />}
+                <p className="text-xs text-slate-500">
+                  {docsLocked ? "Недоступно" : uploadingWaybill ? "Загрузка..." : <><span className="text-[#2563EB]">Выберите файл</span><br/>или перетащите — можно несколько</>}
+                </p>
+              </div>
             </div>
           </div>
 
