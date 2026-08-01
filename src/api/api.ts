@@ -9,6 +9,8 @@ export interface ProjectItem {
   id: number;
   project_id: number;
   product_id: number;
+  supplier_id?: number | null;
+  supplier_raw_name?: string | null;
   required_quantity: number;
 
   cost_price: number | string;
@@ -20,6 +22,11 @@ export interface ProjectItem {
     name: string;
     unit?: string | null;
     cost_price?: number | string;
+  } | null;
+
+  supplier?: {
+    id: number;
+    supplier_name: string;
   } | null;
 }
 
@@ -94,6 +101,7 @@ export interface MlSimilarVariant {
 
   similarity?: number;
   similarity_percent?: number;
+  supplier_name?: string | null;
 
   [key: string]: unknown;
 }
@@ -118,6 +126,7 @@ export interface MlImportItemResponse {
 
   unit: string | null;
   category: string | null;
+  supplier_name: string | null;
 
   similarity_percent: number | string;
 
@@ -155,6 +164,7 @@ export interface MlImportItemUpdate {
 
   price?: number | null;
   price_cost?: number | null;
+  supplier_name?: string | null;
 
   user_comment?: string | null;
 }
@@ -248,6 +258,7 @@ export interface WarehouseStockResponse {
   category: string;
   name: string;
   unit: string;
+  supplier_name?: string | null;
   actual_quantity: number;
   reserved_quantity: number;
   defective_quantity: number;
@@ -311,6 +322,13 @@ export async function sendProjectToDirector(projectId: number): Promise<Workflow
   return data;
 }
 
+export async function startProjectEditing(projectId: number): Promise<WorkflowResponse> {
+  const { data } = await api.post<WorkflowResponse>(
+    `/projects/${projectId}/start-editing`
+  );
+  return data;
+}
+
 export async function approveProjectDirector(projectId: number): Promise<WorkflowResponse> {
   const { data } = await api.post<WorkflowResponse>(
     `/projects/${projectId}/approve`
@@ -368,19 +386,21 @@ export async function fetchProjectDocuments(
   );
   return data;
 }
-
-// ✨ NEW: Uploading project document to the real backend ✨
 export async function uploadProjectDocument(
   projectId: string | number,
   category: "contract" | "invoice" | "power_of_attorney",
   file: File,
-  name?: string
+  name?: string,
 ): Promise<ProjectDocumentResponse> {
   const formData = new FormData();
+
   formData.append("project_id", String(projectId));
   formData.append("category", category);
   formData.append("file", file);
-  if (name) formData.append("name", name);
+
+  if (name) {
+    formData.append("name", name);
+  }
 
   const { data } = await api.post<ProjectDocumentResponse>(
     "/documents/upload",
@@ -389,7 +409,7 @@ export async function uploadProjectDocument(
       headers: {
         "Content-Type": "multipart/form-data",
       },
-    }
+    },
   );
 
   return data;
@@ -397,7 +417,6 @@ export async function uploadProjectDocument(
 
 export async function downloadProjectDocument(
   projectDocument: ProjectDocumentResponse,
-  projectName: string
 ): Promise<void> {
   const { data } = await api.get<Blob>(
     `/documents/${projectDocument.id}/download`,
@@ -411,33 +430,7 @@ export async function downloadProjectDocument(
   const link = document.createElement("a");
 
   link.href = url;
-
-  // 1. Clean the project name of illegal characters
-  const safeProjectName = projectName 
-    ? projectName.replace(/[^a-zA-Z0-9а-яА-ЯёЁ _-]/g, "").trim() 
-    : "Unknown_Project";
-
-  // 2. Safely extract the file extension (e.g., .pdf, .docx, .xlsx)
-  const originalFileName = projectDocument.file_name || "document.pdf";
-  const extensionMatch = originalFileName.match(/\.[0-9a-z]+$/i);
-  const extension = extensionMatch ? extensionMatch[0] : "";
-  const baseName = originalFileName.replace(extension, "");
-
-  // 3. Construct the new file name
-  // This defaults to "OriginalName_ProjectName.ext" 
-  // It specifically checks for 'kp' or 'receipt' categories if your backend provides them
-  let filename = `${baseName}_${safeProjectName}${extension}`;
-  
-  // @ts-ignore - Safely checking category just in case it exists on this type
-  if (projectDocument.category === "kp") {
-    filename = `KP_${safeProjectName}${extension}`;
-  } 
-  // @ts-ignore
-  else if (projectDocument.category === "receipt") {
-    filename = `Receipt_${safeProjectName}${extension}`;
-  }
-
-  link.download = filename;
+  link.download = projectDocument.file_name;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -476,7 +469,7 @@ export const downloadProjectExcel = async (projectId: number): Promise<void> => 
 };
 
 // Функция выгрузки сгенерированного Word КП
-export const downloadKpDocument = async (projectId: number, projectName: string): Promise<void> => {
+export const downloadKpDocument = async (projectId: number): Promise<void> => {
   const response = await api.get(`/projects/${projectId}/generate-kp`, {
     responseType: 'blob',
   });
@@ -487,17 +480,21 @@ export const downloadKpDocument = async (projectId: number, projectName: string)
   
   const url = window.URL.createObjectURL(blob);
 
-  const safeProjectName = projectName 
-    ? projectName.replace(/[^a-zA-Z0-9а-яА-ЯёЁ _-]/g, "").trim() 
-    : String(projectId);
-
-  const filename = `KP_${safeProjectName}.docx`;
+  let filename = `KP_Project_${projectId}.docx`;
+  const disposition = response.headers['content-disposition'];
+  if (disposition && disposition.includes("filename=")) {
+    const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition);
+    if (matches && matches[1]) {
+      filename = matches[1].replace(/['"]/g, "");
+    }
+  }
 
   const link = document.createElement('a');
   link.href = url;
-  link.download = filename;
+  link.setAttribute('download', filename);
   document.body.appendChild(link);
   link.click();
+  
   link.remove();
   window.URL.revokeObjectURL(url);
 };
@@ -513,14 +510,23 @@ export interface StatusInfo {
   id: number;
   status_name: string;
 }
+
+export interface SupplierInfo {
+  id: number;
+  supplier_name: string;
+}
+
 export interface ProjectItemResponse {
   id: number;
   required_quantity: number | null;
+  cost_price: number | string;
   sale_price: number | string;
   total_sum: number | string;
+  supplier_raw_name: string | null;
 
   product: ProductInfo;
   status: StatusInfo | null;
+  supplier: SupplierInfo | null;
 }
 export async function fetchProjectItems(
   projectId: number,
@@ -557,16 +563,14 @@ export const fetchRecentActivity = async (limit: number = 5): Promise<RecentActi
   const { data } = await api.get<RecentActivity[]>(`/dashboard/recent-activity?limit=${limit}`);
   return data;
 };
-
 export const signProjectContract = async (projectId: number) => {
-  const { data } = await api.post<{
-    message: string;
-    project_id: number;
-    status: string;
-  }>(`/project-workflow/${projectId}/sign-contract`);
+  const { data } = await api.post<WorkflowResponse>(
+    `/project-workflow/${projectId}/sign-contract`,
+  );
 
   return data;
 };
+
 export interface WarehouseReceiptResponse {
   id: number;
   receipt_number?: string;
@@ -577,6 +581,7 @@ export interface WarehouseReceiptResponse {
   product_id: number;
   quantity: number;
   status: string;
+
   supplier?: {
     id: number;
     supplier_name: string;
@@ -586,26 +591,20 @@ export interface WarehouseReceiptResponse {
     id: number;
     name: string;
     unit: string;
-  };
+  } | null;
 }
 
-export async function fetchWarehouseReceipts(): Promise<WarehouseReceiptResponse[]> {
-  const res = await fetch("http://localhost:8000/api/v1/warehouse/receipts"); // укажите адрес вашего API
-  if (!res.ok) {
-    throw new Error(`Ошибка загрузки приходов: ${res.statusText}`);
-  }
-  return res.json();
+export async function fetchWarehouseReceipts(): Promise<
+  WarehouseReceiptResponse[]
+> {
+  const { data } = await api.get<WarehouseReceiptResponse[]>(
+    "/warehouse/receipts",
+  );
+
+  return data;
 }
 
-// ==========================================
-// ОБНОВЛЕНИЕ СТАТУСА ПРИХОДА (для роли "warehouse")
-// ==========================================
-
-export type ReceiptStatusValue = "pending" | "transit" | "arrived"; // проверь актуальные значения enum ReceiptStatus на бэке
-
-export interface ReceiptStatusUpdateInput {
-  status: ReceiptStatusValue;
-}
+export type ReceiptStatusValue = "pending" | "transit" | "arrived";
 
 export async function updateReceiptStatus(
   receiptId: number,
@@ -616,6 +615,7 @@ export async function updateReceiptStatus(
     `/warehouse/receipts/${receiptId}/status?warehouse_id=${warehouseId}`,
     { status }
   );
+
   return data;
 }
 
