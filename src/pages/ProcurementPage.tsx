@@ -51,14 +51,23 @@ type ProcurementProjectItem = {
   unit?: string | null;
   status_id?: number | null;
   status_name?: string | null;
-  supplier?: string | null;
+  
+  // Обновленные поля для поставщика согласно новой схеме БД
+  supplier_id?: number | null;
+  supplier_raw_name?: string | null;
+  supplier?: {
+    id?: number;
+    name?: string | null;
+  } | string | null; 
+
   product?: {
     id?: number;
     name?: string | null;
     unit?: string | null;
     price_cost?: number | string | null;
     cost_price?: number | string | null;
-    supplier?: string | null;
+    supplier_raw_name?: string | null;
+    supplier?: any;
   } | null;
   status?: {
     id?: number;
@@ -67,13 +76,6 @@ type ProcurementProjectItem = {
   } | null;
 };
 
-// Статусы согласования счёта. Порядок строго последовательный:
-// draft -> pending_accountant -> pending_director -> approved -> (income, вне этого файла)
-// Отклонение НЕ откатывает статус обратно в draft — иначе факт отклонения
-// теряется при перезагрузке страницы. Вместо этого — свой персистентный
-// статус на каждом шаге (rejected_by_accountant / rejected_by_director),
-// точно как в ProjectPage.tsx статус проекта хранит "Отклонено Комдиром",
-// а не откатывается в "Новый проект".
 type InvoiceWorkflowStatus =
   | 'draft'
   | 'pending_accountant'
@@ -92,20 +94,12 @@ type SupplierWorkflowState = {
   status: InvoiceWorkflowStatus;
   directorApproved: boolean;
   accountantApproved: boolean;
-  // Кто отклонил, выводится напрямую из status (rejected_by_accountant /
-  // rejected_by_director) — отдельного поля роли не нужно.
   rejectionReason?: string | null;
-  // локальный UI-стейт формы отклонения (не персистится)
   rejectFormOpen?: boolean;
   rejectDraftReason?: string;
   actionLoading?: boolean;
 };
 
-// Форма документа, которую отдаёт fetchProjectDocuments. Поля ниже
-// (status/rejection_reason/*_approved_by) должны быть добавлены на бэке
-// (см. procurement_invoice_workflow_router.py) — если сериализатор
-// документов их не отдаёт, статус согласования не будет восстанавливаться
-// после перезагрузки страницы/смены пользователя.
 type ProcurementDocumentDto = {
   id: number;
   category?: string | null;
@@ -133,15 +127,12 @@ const normalizeInvoiceStatus = (raw: unknown): InvoiceWorkflowStatus => {
   return 'draft';
 };
 
-// Счёт, который ещё нужно отправить (или отправить ЗАНОВО после отклонения)
 const isAwaitingSend = (st: InvoiceWorkflowStatus) =>
   st === 'draft' || st === 'rejected_by_accountant' || st === 'rejected_by_director';
 
 const API_BASE_URL = "http://localhost:8000/api/v1";
 const PURCHASE_STATUS = "будет куплено";
 
-// --- Procurement invoice workflow: PM -> Бухгалтер -> Директор ---
-// Обращается к новому роутеру procurement_invoice_workflow_router.py.
 async function postInvoiceAction(documentId: number, action: string, body?: { reason: string }) {
   const response = await fetch(`${API_BASE_URL}/procurement-invoices/${documentId}/${action}`, {
     method: "POST",
@@ -180,17 +171,43 @@ const PROJECT_WORKFLOW = [
 
 const normalizeText = (value: unknown) => String(value ?? "").trim().toLocaleLowerCase("ru-RU");
 
-const getProjectName = (project: ProjectListItem) =>
-  project.name?.trim() || project.project_name?.trim() || project.client?.client_name?.trim() || `Проект №${project.id}`;
+const safeTrim = (val: unknown): string => {
+  if (!val) return "";
+  if (typeof val === "string") return val.trim();
+  if (typeof val === "number") return String(val).trim();
+  if (typeof val === "object") {
+    const obj = val as Record<string, unknown>;
+    const inner = obj.name || obj.supplier_name || obj.client_name || obj.status_name || "";
+    return typeof inner === "string" ? inner.trim() : "";
+  }
+  return "";
+};
 
-const getItemStatusName = (item: ProcurementProjectItem) =>
-  item.status?.status_name || item.status?.name || item.status_name || "";
+const getProjectName = (project: any) =>
+  safeTrim(project.name) || safeTrim(project.project_name) || safeTrim(project.client?.client_name) || `Проект №${project.id}`;
 
-const getItemName = (item: ProcurementProjectItem) =>
-  item.product?.name?.trim() || item.item_name?.trim() || `Товар №${item.product_id ?? item.id}`;
+const getItemStatusName = (item: any) =>
+  safeTrim(item.status?.status_name) || safeTrim(item.status?.name) || safeTrim(item.status_name) || "";
 
-const getSupplierName = (item: ProcurementProjectItem) => 
-  item.supplier?.trim() || item.product?.supplier?.trim() || "Основной поставщик";
+const getItemName = (item: any) =>
+  safeTrim(item.product?.name) || safeTrim(item.item_name) || `Товар №${item.product_id ?? item.id}`;
+
+// ОБНОВЛЕНО: Используем правильную иерархию полей для получения имени поставщика
+const getSupplierName = (item: any) => {
+  // 1. Приоритет отдаем supplier_raw_name (историческое имя)
+  if (item.supplier_raw_name) {
+    return safeTrim(item.supplier_raw_name);
+  }
+  
+  // 2. Если supplier вернулся как объект связи (relationship)
+  if (item.supplier && typeof item.supplier === 'object' && item.supplier.name) {
+    return safeTrim(item.supplier.name);
+  }
+
+  // 3. Fallbacks для старой структуры или данных из продукта
+  const fallback = safeTrim(item.supplier) || safeTrim(item.product?.supplier_raw_name) || safeTrim(item.product?.supplier);
+  return fallback || "Основной поставщик";
+};
 
 const toNumber = (value: number | string | null | undefined) => {
   const parsed = Number(String(value ?? 0).replace(",", "."));
@@ -232,7 +249,7 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
         const activeIndex = PROJECT_WORKFLOW.indexOf("Активный закуп");
 
         const filtered = data.filter(p => {
-           const statusName = p.status?.status_name || p.status_name || "Новый проект";
+           const statusName = safeTrim(p.status?.status_name) || safeTrim(p.status_name) || "Новый проект";
            const idx = PROJECT_WORKFLOW.indexOf(statusName);
            return idx >= activeIndex;
         });
@@ -272,14 +289,14 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
       Object.keys(grouped).forEach(supplier => {
         expanded[supplier] = true;
         
-        const existingDoc = docs.find(d => d.category === "invoice" && d.name === supplier);
+        const existingDoc = docs.find(d => d.category === "invoice" && safeTrim(d.name) === supplier);
         
         if (existingDoc) {
           const docStatus = normalizeInvoiceStatus(existingDoc.status);
           workflows[supplier] = {
             file: null,
-            fileName: existingDoc.file_name,
-            downloadUrl: existingDoc.download_url,
+            fileName: existingDoc.file_name || undefined,
+            downloadUrl: existingDoc.download_url || undefined,
             docId: existingDoc.id,
             status: docStatus,
             accountantApproved: docStatus === 'pending_director' || docStatus === 'approved' || docStatus === 'income',
@@ -348,14 +365,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
         supplier
       );
 
-      // Если ответ загрузки содержит свой status — доверяем ему (например,
-      // если "Заменить" на бэке создаёт новый документ, у него уже будет
-      // честный статус). Если ответ его не содержит — НЕ трогаем текущий
-      // локальный статус: если счёт был отклонён (rejected_by_accountant/
-      // rejected_by_director), баннер "Отклонено..." и кнопка "Отправить
-      // заново" должны остаться видимыми до реальной повторной отправки —
-      // так же, как в ProjectPage.tsx статус "Отклонено Комдиром" не
-      // пропадает при простом редактировании позиций.
       const uploadedStatus = (uploadedDoc as { status?: string | null }).status;
 
       setSupplierWorkflows(prev => {
@@ -416,7 +425,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
   const closeRejectForm = (supplier: string) => updateSupplierWorkflow(supplier, { rejectFormOpen: false, rejectDraftReason: "" });
   const setRejectDraftReason = (supplier: string, value: string) => updateSupplierWorkflow(supplier, { rejectDraftReason: value });
 
-  // Бухгалтер подтверждает -> счёт уходит директору
   const handleAccountantApprove = async (supplier: string) => {
     const docId = supplierWorkflows[supplier]?.docId;
     if (!docId) return;
@@ -431,7 +439,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
     }
   };
 
-  // Бухгалтер отклоняет -> персистентный статус rejected_by_accountant + комментарий
   const handleAccountantReject = async (supplier: string) => {
     const wf = supplierWorkflows[supplier];
     const reason = wf?.rejectDraftReason?.trim();
@@ -455,7 +462,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
     }
   };
 
-  // Директор подтверждает -> счёт готов, PM сможет отправить на приход
   const handleDirectorApprove = async (supplier: string) => {
     const docId = supplierWorkflows[supplier]?.docId;
     if (!docId) return;
@@ -470,9 +476,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
     }
   };
 
-  // Директор отклоняет -> тот же цикл: draft + комментарий, PM меняет файл и шлёт заново
-  // Директор отклоняет -> персистентный статус rejected_by_director + комментарий,
-  // тот же цикл: PM меняет файл и шлёт заново (снова через бухгалтера)
   const handleDirectorReject = async (supplier: string) => {
     const wf = supplierWorkflows[supplier];
     const reason = wf?.rejectDraftReason?.trim();
@@ -496,12 +499,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
     }
   };
 
-  // Workflow Checks for Global Actions
-  // Поставщики, чей счёт ещё нужно отправить (или отправить ЗАНОВО после
-  // отклонения бухгалтером/директором) — именно на этом подмножестве
-  // работает нижняя кнопка "Отправить на проверку" / "Отправить заново".
-  // Остальные поставщики могут быть уже дальше по цепочке (у бухгалтера/
-  // директора/одобрены) — их это не касается.
   const pendingSendSuppliers = useMemo(() => {
     return supplierKeys.filter(sup => isAwaitingSend(supplierWorkflows[sup]?.status ?? 'draft'));
   }, [supplierKeys, supplierWorkflows]);
@@ -513,9 +510,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
   const hasPendingSendSuppliers = pendingSendSuppliers.length > 0;
   const allPendingSendFilesUploaded = pendingSendSuppliers.length > 0 && pendingSendSuppliers.length === pendingSendSuppliersWithFile.length;
 
-  // Если среди ожидающих отправки есть хотя бы один ранее отклонённый счёт —
-  // это (полностью или частично) повторная отправка, подписываем кнопку
-  // "Отправить заново" вместо "Отправить на проверку".
   const hasRejectedPendingSuppliers = useMemo(() => {
     return pendingSendSuppliers.some(sup => {
       const st = supplierWorkflows[sup]?.status;
@@ -538,7 +532,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
     return supplierKeys.every(sup => supplierWorkflows[sup]?.status === 'income');
   }, [supplierKeys, supplierWorkflows]);
 
-  // Handle Global Actions
   const [isSendingToCheck, setIsSendingToCheck] = useState(false);
 
   const handleGlobalSendToCheck = async () => {
@@ -574,10 +567,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
     }
   };
 
-  // NOTE: "Отправить на приход" сознательно оставлен как локальное
-  // изменение статуса — бэкенд для этого шага реализуется отдельно.
-  // Когда он будет готов, замените тело на реальный вызов API (по докам
-  // с status === 'approved') аналогично handleGlobalSendToCheck выше.
   const handleGlobalSendToIncome = () => {
     setSupplierWorkflows(prev => {
       const next = { ...prev };
@@ -592,7 +581,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
 
   return (
     <PageWrap title="Закупки" subtitle="Оформление счетов и отправка на приход">
-      {/* Project Selector Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 bg-white p-4 rounded-lg border border-[#E2E8F0] shadow-sm">
         <div className="flex-1">
           <label className="block text-xs font-medium text-slate-500 mb-1.5">Выберите активный проект</label>
@@ -653,7 +641,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
         </div>
       )}
 
-      {/* Supplier Tables */}
       {supplierKeys.map(supplier => {
         const items = groupedItems[supplier];
         const isExpanded = expandedSuppliers[supplier] || false;
@@ -676,7 +663,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
                 </div>
               </div>
 
-              {/* Header Badges */}
               <div className="flex items-center gap-3">
                 {wfState.status === 'income' && (
                   <span className="px-2.5 py-1 text-xs font-semibold bg-green-100 text-green-700 rounded-full flex items-center gap-1">
@@ -736,7 +722,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
                 )}
 
                 <div className="px-5 py-4 border-b border-[#E2E8F0] bg-white flex flex-wrap items-center justify-between gap-4">
-                  {/* Upload / File Info */}
                   <div className="flex items-center gap-3">
                     {wfState.isUploading ? (
                        <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border border-slate-200 text-slate-500 text-sm font-medium rounded-lg">
@@ -788,9 +773,7 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
                     )}
                   </div>
 
-                  {/* Role Specific Actions inside Card */}
                   <div className="flex items-center gap-3">
-                    {/* Accountant: acts first, only while pending_accountant */}
                     {isAccountant && wfState.status === 'pending_accountant' && (
                       wfState.rejectFormOpen ? (
                         <div className="flex flex-col gap-2 bg-red-50 border border-red-200 rounded-lg p-3 w-full sm:w-80">
@@ -843,7 +826,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
                       <span className="text-xs text-slate-400 italic">Ожидает отправки от менеджера</span>
                     )}
 
-                    {/* Director: only acts once the accountant has already approved */}
                     {isDirector && wfState.status === 'pending_director' && (
                       wfState.rejectFormOpen ? (
                         <div className="flex flex-col gap-2 bg-red-50 border border-red-200 rounded-lg p-3 w-full sm:w-80">
@@ -898,7 +880,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
                   </div>
                 </div>
 
-                {/* Items Table with "Ед." Column */}
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse">
                     <thead>
@@ -913,7 +894,7 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
                     <tbody className="divide-y divide-[#E2E8F0]">
                       {items.map((item) => {
                         const quantity = toNumber(item.required_quantity ?? item.quantity);
-                        const unit = item.product?.unit || item.unit || "шт";
+                        const unit = safeTrim(item.product?.unit) || safeTrim(item.unit) || "шт";
                         const costPrice = getPurchasePrice(item);
                         const salePrice = getSalePrice(item);
                         
@@ -954,7 +935,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
         );
       })}
 
-      {/* --- GLOBAL BOTTOM ACTION BAR BELOW ALL TABLES --- */}
       {selectedProject && supplierKeys.length > 0 && isPm && (
         <div className="mt-8 mb-10 flex flex-col items-end gap-3 border-t border-[#E2E8F0] pt-6">
           {allSuppliersIncomed ? (
@@ -964,11 +944,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
             </div>
           ) : (
             <>
-              {/* Send to check: only affects suppliers currently awaiting send
-                  (never sent, or kicked back — rejected_by_accountant /
-                  rejected_by_director) — covers both the very first send and
-                  a resend after a rejection, without disturbing suppliers
-                  already further along. */}
               {hasPendingSendSuppliers && (
                 <div className="flex flex-col items-end gap-2">
                   {!allPendingSendFilesUploaded && (
@@ -993,8 +968,6 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
                 </div>
               )}
 
-              {/* Send to income: only once every supplier has cleared both
-                  the accountant and the director. */}
               {!hasPendingSendSuppliers && (
                 <div className="flex flex-col items-end gap-2">
                   {!canGlobalSendToIncome && (
