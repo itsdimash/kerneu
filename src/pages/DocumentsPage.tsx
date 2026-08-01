@@ -5,7 +5,7 @@ import type { Page, ProjectState, Role } from "../types";
 import {
   CheckCircle2, Clock, Download, Loader2, Upload, Check, FileCheck,
   FileText, Receipt as ReceiptIcon, ChevronDown, Search, Lock, X,
-  Send, AlertTriangle, Trash2,
+  Send, AlertTriangle, Trash2, Handshake
 } from "lucide-react";
 import {
   documentsStore,
@@ -457,10 +457,11 @@ export function DocumentsPage({
 
   const categoryIcon = (category: ProjectDocument["category"]) => {
     if (category === "kp")                return <FileText   size={14} className="text-blue-500"   />;
+    if (category === "contract")          return <Handshake  size={14} className="text-emerald-500"/>;
     if (category === "invoice")           return <FileCheck  size={14} className="text-amber-500"  />;
     if (category === "waybill")           return <ReceiptIcon size={14} className="text-purple-500" />;
     if (category === "power_of_attorney") return <Lock       size={14} className="text-red-500"    />;
-    return <FileCheck size={14} className="text-slate-400" />;
+    return <FileText size={14} className="text-slate-400" />;
   };
 
   const tooltipComplete = !allUploaded
