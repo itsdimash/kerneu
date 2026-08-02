@@ -1,19 +1,13 @@
 import { ChevronDown, LogOut, User } from "lucide-react";
-import { UPLOAD_NOTIFICATIONS } from "../../../data/notifications";
 import { Page, Role } from "../../../types";
 import { ROLES } from "../../../data/roles";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuLabel,
   DropdownMenuItem, DropdownMenuSeparator,
 } from "../ui/dropdown-menu";
+import { NotificationBell } from "../common/NotificationBell";
 import getme from "../api/user"
-const NOTIF_STYLE: Record<string, string> = {
-  warning: "text-amber-500", error: "text-red-500", success: "text-green-500", neutral: "text-slate-400",
-};
-const NOTIF_DOT: Record<string, string> = {
-  warning: "bg-amber-400", error: "bg-red-400", success: "bg-green-400", neutral: "bg-slate-300",
-};
-const attentionCount = UPLOAD_NOTIFICATIONS.filter(n => n.variant === "warning" || n.variant === "error").length;
+
 type UserData = {
     id: number;
     name: string;
@@ -21,14 +15,36 @@ type UserData = {
     role: string;
     created_at: string;
 };
-export function TopBar({ role, user, onNavigate, onLogout }: {
-  role: Role; onNavigate: (p: Page) => void; onLogout: () => void; user: UserData | null;
+
+export function TopBar({ role, user, onNavigate, onLogout, onOpenProject, onSelectProject }: {
+  role: Role;
+  onNavigate: (p: Page) => void;
+  onLogout: () => void;
+  user: UserData | null;
+  /** Same lookup AppShell already uses for the sidebar search — reused here so
+   *  a notification's "Открыть проект" CTA lands on the real project, not
+   *  just a bare page switch. Optional so TopBar still works if a screen
+   *  doesn't have project lookup wired yet. */
+  onOpenProject?: (idOrName: number | string) => void;
+  /** Resolves + selects a project WITHOUT navigating anywhere — used by
+   *  NotificationBell so an invoice/document notification can preload the
+   *  right project and then land on its own page (procurement/documents),
+   *  instead of always being forced onto the Project page like onOpenProject. */
+  onSelectProject?: (idOrName: number | string) => Promise<void> | void;
 }) {
   const cfg = ROLES[role];
   return (
     <header className="h-14 bg-white border-b border-[#E2E8F0] flex items-center justify-between px-6 flex-shrink-0">
       <div />
       <div className="flex items-center gap-3">
+        <NotificationBell
+          role={role}
+          onNavigate={onNavigate}
+          onSelectProject={onSelectProject}
+        />
+
+        <div className="h-5 w-px bg-[#E2E8F0]" />
+
         {/* User profile — opens downward */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

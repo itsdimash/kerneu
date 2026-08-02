@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { fmt } from "../lib/format";
 import type { Role, ProjectState } from "../types";
@@ -221,7 +221,18 @@ const getPurchasePrice = (item: ProcurementProjectItem) =>
 const getSalePrice = (item: ProcurementProjectItem) =>
   toNumber(item.sale_price ?? item.price ?? 0);
 
-export function ProcurementPage({ role, projectState }: { role: Role | string; projectState: ProjectState }) {
+export function ProcurementPage({
+  role,
+  projectState,
+  initialProjectId,
+}: {
+  role: Role | string;
+  projectState: ProjectState;
+  /** When set, auto-selects this project once the dropdown's project list
+   *  has loaded — used so an invoice notification's "Открыть закупки" CTA
+   *  lands directly on the right project, not an empty selector. */
+  initialProjectId?: number | string | null;
+}) {
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
@@ -336,6 +347,25 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
       setPurchaseItems([]);
     }
   };
+
+  // NEW: применяем initialProjectId, как только список проектов загрузится.
+  // Ref нужен, чтобы не выбирать проект повторно на каждый ререндер, но
+  // при этом среагировать, если пришло уведомление на ДРУГОЙ проект.
+  const appliedInitialProjectId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!initialProjectId) return;
+    const idStr = String(initialProjectId);
+    if (appliedInitialProjectId.current === idStr) return;
+    if (projects.length === 0) return; // ждём загрузки списка
+
+    const match = projects.find((p) => String(p.id) === idStr);
+    if (match) {
+      appliedInitialProjectId.current = idStr;
+      setSelectedProjectId(idStr);
+      loadProjectPurchases(match);
+    }
+  }, [initialProjectId, projects]);
 
   const groupBySupplier = (items: ProcurementProjectItem[]) => {
     const groups: Record<string, ProcurementProjectItem[]> = {};
