@@ -80,12 +80,17 @@ export function AppShell({
       ? Number(selectedProjectId)
       : null;
 
-  const handleFindProject = async (
+  // NEW: ядро поиска/выбора проекта, БЕЗ переключения страницы. Раньше это
+  // было частью handleFindProject, которая всегда жёстко переключала на
+  // "project" в конце — что подходило для сайдбар-поиска, но было неверно
+  // для уведомлений про закупки/документы (они должны остаться на своей
+  // странице, просто с предзагруженным проектом).
+  const resolveAndSelectProject = async (
     searchInput: number | string,
-  ) => {
+  ): Promise<number | null> => {
     if (!searchInput) {
       setProjectLoadError("Введите ID или название проекта");
-      return;
+      return null;
     }
 
     try {
@@ -127,7 +132,7 @@ export function AppShell({
       setProjectItems(data);
       setSelectedProjectId(finalProjectId);
 
-      onPage("project");
+      return finalProjectId;
     } catch (error) {
       console.error("Ошибка загрузки проекта:", error);
 
@@ -136,8 +141,21 @@ export function AppShell({
           ? error.message
           : "Не удалось загрузить проект",
       );
+
+      return null;
     } finally {
       setProjectLoading(false);
+    }
+  };
+
+  // Прежнее поведение — сайдбар-поиск явно хочет попасть на страницу
+  // проекта, так что здесь просто резолвим и переключаем страницу.
+  const handleFindProject = async (
+    searchInput: number | string,
+  ) => {
+    const id = await resolveAndSelectProject(searchInput);
+    if (id !== null) {
+      onPage("project");
     }
   };
 
@@ -162,6 +180,8 @@ export function AppShell({
           user={user}
           onNavigate={onPage}
           onLogout={onLogout}
+          onOpenProject={handleFindProject}
+          onSelectProject={resolveAndSelectProject}
         />
 
         <main className="flex-1 overflow-y-auto">
@@ -242,6 +262,7 @@ export function AppShell({
             <ProcurementPage
               role={role}
               projectState={projectState}
+              initialProjectId={selectedProjectId}
             />
           )}
 

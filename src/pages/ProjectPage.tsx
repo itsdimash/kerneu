@@ -830,6 +830,8 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
   const [projectError, setProjectError] = useState<string | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [showRejectForm, setShowRejectForm] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
 
   const resolvedProjectId = Number(projectId);
   const hasValidProjectId = Number.isInteger(resolvedProjectId) && resolvedProjectId > 0;
@@ -903,14 +905,23 @@ const [projectItemsError, setProjectItemsError] =
 ]);
   const currentStatus = project?.status?.status_name || "На согласовании у Комдира";
 
+  const PENDING_DIRECTOR_STATUS = "На согласовании у Комдира";
+  const REJECTED_STATUS = "Отклонено Комдиром";
+
   const decision: null | boolean =
-    currentStatus === "Ожидание клиента" ||
-    currentStatus === "Одобрено Комдиром" ? true :
-    currentStatus === "Отклонено Комдиром" ? false :
-    null;
+    currentStatus === REJECTED_STATUS ? false :
+    currentStatus === PENDING_DIRECTOR_STATUS ? null :
+    true;
 
   const decide = async (approve: boolean) => {
     if (!project) return;
+
+    if (!approve && !showRejectForm) {
+      // Первый клик по "Отклонить КП" просто открывает форму с комментарием.
+      setShowRejectForm(true);
+      return;
+    }
+
     setDeciding(true);
     try {
       if (approve) {
@@ -918,9 +929,10 @@ const [projectItemsError, setProjectItemsError] =
         setProject(await fetchProjectDetails(project.id));
         onKpApproved();
       } else {
-        const reason = window.prompt("Укажите причину отклонения (необязательно):") || undefined;
-        await rejectProjectDirector(project.id, reason);
+        await rejectProjectDirector(project.id, rejectReason.trim() || undefined);
         setProject(await fetchProjectDetails(project.id));
+        setShowRejectForm(false);
+        setRejectReason("");
       }
     } catch (error) {
       console.error("Ошибка при принятии решения:", error);
@@ -1079,16 +1091,42 @@ const [projectItemsError, setProjectItemsError] =
                                                                                          className="animate-spin text-[#2563EB]"/>Сохранение
                   решения…</div>
             ) : decision === null ? (
-                <div className="flex items-center gap-3">
-                  <button onClick={() => decide(true)} disabled={!project}
-                          className="flex items-center gap-2 px-5 py-2.5 bg-[#16A34A] text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
-                    <CheckCircle2 size={15}/> Подтверждаю
-                  </button>
-                  <button onClick={() => decide(false)} disabled={!project}
-                          className="flex items-center gap-2 px-5 py-2.5 bg-white text-red-600 text-sm font-medium rounded-lg border border-[#E2E8F0] hover:bg-red-50 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
-                    <XCircle size={15}/> Отклонить КП
-                  </button>
-                </div>
+                showRejectForm ? (
+                  <div className="space-y-3">
+                    <textarea
+                      value={rejectReason}
+                      onChange={(e) => setRejectReason(e.target.value)}
+                      placeholder="Причина отклонения (необязательно)"
+                      rows={3}
+                      className="w-full rounded-lg border border-[#E2E8F0] px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-200"
+                    />
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => decide(false)}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap"
+                      >
+                        <XCircle size={15}/> Отклонить
+                      </button>
+                      <button
+                        onClick={() => { setShowRejectForm(false); setRejectReason(""); }}
+                        className="px-5 py-2.5 bg-white text-slate-600 text-sm font-medium rounded-lg border border-[#E2E8F0] hover:bg-slate-50 transition-colors whitespace-nowrap"
+                      >
+                        Отмена
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => decide(true)} disabled={!project}
+                            className="flex items-center gap-2 px-5 py-2.5 bg-[#16A34A] text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+                      <CheckCircle2 size={15}/> Подтверждаю
+                    </button>
+                    <button onClick={() => decide(false)} disabled={!project}
+                            className="flex items-center gap-2 px-5 py-2.5 bg-white text-red-600 text-sm font-medium rounded-lg border border-[#E2E8F0] hover:bg-red-50 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+                      <XCircle size={15}/> Отклонить КП
+                    </button>
+                  </div>
+                )
             ) : decision ? (
                 <div className="flex items-center gap-2 px-4 py-3 bg-green-50 rounded-lg border border-green-200">
                   <CheckCircle2 size={16} className="text-green-600"/><span

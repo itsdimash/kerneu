@@ -256,7 +256,9 @@ export function DocumentsPage({
   const hasApprovedKp = archivedKps.some((document) => document.status === "approved");
 
   const reviewInFlight = reviewStage === "pending_accountant" || reviewStage === "pending_director";
-  const docsLocked = completed || uploadsLocked || reviewInFlight;
+  // После полного согласования (approved) PM больше не может редактировать
+  // документы — блокировка остаётся навсегда, а не только до завершения проекта.
+  const docsLocked = completed || uploadsLocked || reviewInFlight || reviewStage === "approved";
 
   const contractDoc = allDocs.find(d => d.category === "contract");
   const poaDocs     = allDocs.filter(d => d.category === "power_of_attorney");
@@ -317,18 +319,29 @@ export function DocumentsPage({
 
   const today = () => new Date().toLocaleDateString("ru-RU");
 
-  const handleDeleteDoc = async (doc: ProjectDocument) => {
+  // Кастомное модальное окно подтверждения удаления (вместо window.confirm)
+  const [docToDelete, setDocToDelete] = useState<ProjectDocument | null>(null);
+  const [deletingDoc, setDeletingDoc] = useState(false);
+
+  const handleDeleteDoc = (doc: ProjectDocument) => {
     if (docsLocked) return;
-    if (!window.confirm(`Удалить «${doc.name}»?`)) return;
-    
+    setDocToDelete(doc);
+  };
+
+  const confirmDeleteDoc = async () => {
+    if (!docToDelete) return;
+    setDeletingDoc(true);
     try {
-      if (doc.backendDocument?.id) {
-        await deleteProjectDocument(doc.backendDocument.id);
+      if (docToDelete.backendDocument?.id) {
+        await deleteProjectDocument(docToDelete.backendDocument.id);
       }
-      documentsStore.removeDocument(selectedProjectId, doc.id);
+      documentsStore.removeDocument(selectedProjectId, docToDelete.id);
+      setDocToDelete(null);
     } catch (e) {
       console.error(e);
       alert("Не удалось удалить документ. Проверьте соединение с сервером.");
+    } finally {
+      setDeletingDoc(false);
     }
   };
 
@@ -733,6 +746,7 @@ export function DocumentsPage({
   // PM VIEW
   // ==========================================================================
   return (
+    <>
     <PageWrap
       title="Документы"
       subtitle={`${selectedProjectName}${completed ? " · Архив (только чтение)" : ""}`}
@@ -790,29 +804,49 @@ export function DocumentsPage({
             </p>
           </div>
 
+          {!reviewInFlight && reviewStage !== "approved" && !completed && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Доверенность: Dropzone */}
             <div className="bg-white rounded-lg border border-[#E2E8F0] p-4">
               <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
                 <Lock size={14} className="text-red-500" />Доверенности
               </h3>
+              <div className="relative w-full group">
               <div
                 onDragOver={e => { if (!docsLocked) e.preventDefault(); }}
                 onDrop={handlePoaDrop}
                 onClick={() => !docsLocked && poaFileRef.current?.click()}
-                className={`border-2 border-dashed rounded-lg p-4 text-center transition-all ${
+                className={`flex flex-col items-center justify-center gap-1.5 min-h-[112px] w-full px-4 rounded-lg border-2 border-dashed text-center transition-all ${
                   docsLocked || uploadingPoa
-                    ? "border-slate-200 bg-slate-50 cursor-not-allowed opacity-60"
+                    ? "border-slate-200 bg-slate-50 cursor-not-allowed"
                     : "border-[#E2E8F0] hover:border-[#2563EB]/40 hover:bg-blue-50/20 cursor-pointer"
                 }`}
               >
                 <input ref={poaFileRef} type="file" className="hidden" onChange={handlePoaInput} />
                 {docsLocked || uploadingPoa
-                  ? (uploadingPoa ? <Loader2 size={18} className="mx-auto mb-1.5 text-blue-500 animate-spin" /> : <Lock size={18} className="mx-auto mb-1.5 text-slate-400" />)
-                  : <Upload size={18} className="mx-auto mb-1.5 text-slate-400" />}
-                <p className="text-xs text-slate-500">
-                  {docsLocked ? "Недоступно" : uploadingPoa ? "Загрузка..." : <><span className="text-[#2563EB]">Выберите файл</span><br/>или перетащите — можно несколько</>}
-                </p>
+                  ? (uploadingPoa ? <Loader2 size={18} className="text-blue-500 animate-spin" /> : <Lock size={18} className="text-slate-400" />)
+                  : <Upload size={18} className="text-slate-400" />}
+                {docsLocked ? (
+                  <p className="text-xs text-slate-400">
+                    <span className="font-medium text-slate-500">Недоступно</span>
+                    <br />
+                    {uploadsLocked ? "до подписания договора" : "проверка документов"}
+                  </p>
+                ) : uploadingPoa ? (
+                  <p className="text-xs text-slate-500">Загрузка...</p>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    <span className="text-[#2563EB]">Выберите файл</span>
+                    <br />
+                    или перетащите — можно несколько
+                  </p>
+                )}
+              </div>
+              {uploadsLocked && (
+                <div className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 -translate-y-[calc(100%+8px)] whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 z-10">
+                  Доступно только после подписания договора
+                </div>
+              )}
               </div>
             </div>
 
@@ -821,26 +855,46 @@ export function DocumentsPage({
               <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
                 <ReceiptIcon size={14} className="text-purple-500" />Накладные
               </h3>
+              <div className="relative w-full group">
               <div
                 onDragOver={e => { if (!docsLocked) e.preventDefault(); }}
                 onDrop={handleWaybillDrop}
                 onClick={() => !docsLocked && waybillFileRef.current?.click()}
-                className={`border-2 border-dashed rounded-lg p-4 text-center transition-all ${
+                className={`flex flex-col items-center justify-center gap-1.5 min-h-[112px] w-full px-4 rounded-lg border-2 border-dashed text-center transition-all ${
                   docsLocked || uploadingWaybill
-                    ? "border-slate-200 bg-slate-50 cursor-not-allowed opacity-60"
+                    ? "border-slate-200 bg-slate-50 cursor-not-allowed"
                     : "border-[#E2E8F0] hover:border-[#2563EB]/40 hover:bg-blue-50/20 cursor-pointer"
                 }`}
               >
                 <input ref={waybillFileRef} type="file" className="hidden" onChange={handleWaybillInput} />
                 {docsLocked || uploadingWaybill
-                  ? (uploadingWaybill ? <Loader2 size={18} className="mx-auto mb-1.5 text-blue-500 animate-spin" /> : <Lock size={18} className="mx-auto mb-1.5 text-slate-400" />)
-                  : <Upload size={18} className="mx-auto mb-1.5 text-slate-400" />}
-                <p className="text-xs text-slate-500">
-                  {docsLocked ? "Недоступно" : uploadingWaybill ? "Загрузка..." : <><span className="text-[#2563EB]">Выберите файл</span><br/>или перетащите — можно несколько</>}
-                </p>
+                  ? (uploadingWaybill ? <Loader2 size={18} className="text-blue-500 animate-spin" /> : <Lock size={18} className="text-slate-400" />)
+                  : <Upload size={18} className="text-slate-400" />}
+                {docsLocked ? (
+                  <p className="text-xs text-slate-400">
+                    <span className="font-medium text-slate-500">Недоступно</span>
+                    <br />
+                    {uploadsLocked ? "до подписания договора" : "проверка документов"}
+                  </p>
+                ) : uploadingWaybill ? (
+                  <p className="text-xs text-slate-500">Загрузка...</p>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    <span className="text-[#2563EB]">Выберите файл</span>
+                    <br />
+                    или перетащите — можно несколько
+                  </p>
+                )}
+              </div>
+              {uploadsLocked && (
+                <div className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 -translate-y-[calc(100%+8px)] whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 z-10">
+                  Доступно только после подписания договора
+                </div>
+              )}
               </div>
             </div>
           </div>
+          )}
 
         </div>
 
@@ -951,5 +1005,59 @@ export function DocumentsPage({
         </div>
       </div>
     </PageWrap>
+
+    {docToDelete && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4"
+        onClick={() => !deletingDoc && setDocToDelete(null)}
+      >
+        <div
+          className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-red-50">
+              <Trash2 size={18} className="text-red-500" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-slate-900">
+                Удалить документ?
+              </h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Вы точно уверены, что хотите удалить «{docToDelete.name}»?
+                Это действие нельзя отменить.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={deletingDoc}
+              onClick={() => setDocToDelete(null)}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+            >
+              Отмена
+            </button>
+            <button
+              type="button"
+              disabled={deletingDoc}
+              onClick={confirmDeleteDoc}
+              className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60"
+            >
+              {deletingDoc ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Удаление…
+                </>
+              ) : (
+                "Удалить"
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
