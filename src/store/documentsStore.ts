@@ -1,4 +1,12 @@
-import type { ProjectDocumentResponse } from "../api/api";
+import type { ProjectDocumentResponse, DocumentReviewResponse } from "../api/api";
+import {
+  fetchDocumentsReviewStatus,
+  submitDocumentsForReview,
+  accountantApproveDocuments,
+  accountantRejectDocuments,
+  directorApproveDocuments,
+  directorRejectDocuments,
+} from "../api/api";
 
 export type DocCategory = "kp" | "contract" | "power_of_attorney" | "invoice" | "waybill";
 export type DocStatus = "pending" | "uploaded" | "generated" | "approved";
@@ -107,47 +115,68 @@ class DocumentsStore {
     this.emit();
   }
 
-  submitForReview(projectId: string) {
-    this.setReview(projectId, {
-      stage: "pending_accountant",
-      rejectedBy: undefined,
-      rejectReason: undefined,
-      completed: false,
-    });
+  // Применяет ответ бэкенда к локальному стору. "completed" бэкенд пока не
+  // возвращает (кнопка "Завершить проект" ещё не подключена к API), поэтому
+  // сохраняем текущее локальное значение этого поля.
+  private applyReviewResponse(projectId: string, response: DocumentReviewResponse) {
+    if (!projectId) return;
+
+    const current = this.getReviewSnapshot(projectId);
+    this.reviews[projectId] = {
+      stage: response.stage,
+      rejectedBy: response.rejected_by ?? undefined,
+      rejectReason: response.reject_reason ?? undefined,
+      completed: current.completed,
+    };
+    this.emit();
   }
 
-  accountantApprove(projectId: string) {
-    this.setReview(projectId, {
-      stage: "pending_director",
-      rejectedBy: undefined,
-      rejectReason: undefined,
-    });
+  // Подтягивает актуальный статус согласования с бэкенда. Не бросает
+  // исключение — предназначена для фонового опроса (см. loadReview в
+  // DocumentsPage), чтобы не ронять интерфейс при временной недоступности сети.
+  async loadReview(projectId: string): Promise<void> {
+    if (!projectId) return;
+
+    try {
+      const response = await fetchDocumentsReviewStatus(projectId);
+      this.applyReviewResponse(projectId, response);
+    } catch (error) {
+      console.error("Не удалось загрузить статус согласования документов", error);
+    }
   }
 
-  accountantReject(projectId: string, reason?: string) {
-    this.setReview(projectId, {
-      stage: "rejected",
-      rejectedBy: "accountant",
-      rejectReason: reason,
-    });
+  // PM: отправить / заново отправить документы на проверку бухгалтеру.
+  async submitForReview(projectId: string): Promise<void> {
+    const response = await submitDocumentsForReview(projectId);
+    this.applyReviewResponse(projectId, response);
   }
 
-  directorApprove(projectId: string) {
-    this.setReview(projectId, {
-      stage: "approved",
-      rejectedBy: undefined,
-      rejectReason: undefined,
-    });
+  // Бухгалтер: принять — документы уходят директору.
+  async accountantApprove(projectId: string): Promise<void> {
+    const response = await accountantApproveDocuments(projectId);
+    this.applyReviewResponse(projectId, response);
   }
 
-  directorReject(projectId: string, reason?: string) {
-    this.setReview(projectId, {
-      stage: "rejected",
-      rejectedBy: "commercial_director",
-      rejectReason: reason,
-    });
+  // Бухгалтер: отклонить, с необязательным комментарием для PM.
+  async accountantReject(projectId: string, reason?: string): Promise<void> {
+    const response = await accountantRejectDocuments(projectId, reason);
+    this.applyReviewResponse(projectId, response);
   }
 
+  // Директор: принять — финальное согласование.
+  async directorApprove(projectId: string): Promise<void> {
+    const response = await directorApproveDocuments(projectId);
+    this.applyReviewResponse(projectId, response);
+  }
+
+  // Директор: отклонить, с необязательным комментарием для PM.
+  async directorReject(projectId: string, reason?: string): Promise<void> {
+    const response = await directorRejectDocuments(projectId, reason);
+    this.applyReviewResponse(projectId, response);
+  }
+
+  // NOTE: "Завершить проект" намеренно оставлено локальным — бэкенд для
+  // этой кнопки будет добавлен отдельно (см. договорённость в задаче).
   completeProject(projectId: string) {
     this.setReview(projectId, { completed: true });
   }

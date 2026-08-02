@@ -276,7 +276,7 @@ const handleSave = async () => {
           invoice_amount: 0,
           invoice_status_id: 1,
           file_url: uploadedFileUrl,
-          project_status_id: 1,
+          project_status_id: 2, // "В редактировании" — PM сразу начинает редактировать проект после создания
           planned_margin: 0,
           deadline: projectForm.deadline,
         }
@@ -287,7 +287,7 @@ const handleSave = async () => {
           invoice_amount: 0,
           invoice_status_id: 1,
           file_url: uploadedFileUrl,
-          project_status_id: 1,
+          project_status_id: 2, // "В редактировании" — PM сразу начинает редактировать проект после создания
           pm_id: 1,
           planned_margin: 0,
           deadline: projectForm.deadline,

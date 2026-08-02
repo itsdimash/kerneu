@@ -164,6 +164,7 @@ const PROJECT_WORKFLOW = [
   "Ожидание клиента",
   "Ожидание подписания",
   "Активный закуп", 
+  "На приходе",
   "На отгрузке",
   "Ожидание документов",
   "Завершен"
@@ -247,11 +248,15 @@ export function ProcurementPage({ role, projectState }: { role: Role | string; p
         
         const data: ProjectListItem[] = await response.json();
         const activeIndex = PROJECT_WORKFLOW.indexOf("Активный закуп");
+        const completedIndex = PROJECT_WORKFLOW.indexOf("Завершен");
 
         const filtered = data.filter(p => {
            const statusName = safeTrim(p.status?.status_name) || safeTrim(p.status_name) || "Новый проект";
            const idx = PROJECT_WORKFLOW.indexOf(statusName);
-           return idx >= activeIndex;
+           // Верхняя граница: как только проект переходит в "Завершен",
+           // он больше не должен висеть в закупках (симметрично тому,
+           // как это уже работает на странице "Договор").
+           return idx >= activeIndex && idx < completedIndex;
         });
 
         if (!cancelled) setProjects(filtered);

@@ -345,6 +345,98 @@ export async function rejectProjectDirector(projectId: number, reason?: string):
 }
 
 // ==========================================
+// DOCUMENT REVIEW WORKFLOW (страница "Документы": Бухгалтер -> Директор)
+// ==========================================
+
+export type DocReviewStage =
+  | "none"
+  | "pending_accountant"
+  | "pending_director"
+  | "approved"
+  | "rejected";
+
+export type DocRejector = "accountant" | "commercial_director";
+
+export interface DocumentReviewResponse {
+  message?: string;
+  project_id: number;
+  stage: DocReviewStage;
+  rejected_by: DocRejector | null;
+  reject_reason: string | null;
+  submitted_by: number | null;
+  submitted_at: string | null;
+  accountant_decided_by: number | null;
+  accountant_decided_at: string | null;
+  director_decided_by: number | null;
+  director_decided_at: string | null;
+  updated_at: string | null;
+}
+
+// PM: отправить / заново отправить документы на проверку.
+export async function submitDocumentsForReview(
+  projectId: number | string,
+): Promise<DocumentReviewResponse> {
+  const { data } = await api.post<DocumentReviewResponse>(
+    `/projects/${projectId}/documents/submit-for-review`,
+  );
+  return data;
+}
+
+// Бухгалтер: принять.
+export async function accountantApproveDocuments(
+  projectId: number | string,
+): Promise<DocumentReviewResponse> {
+  const { data } = await api.post<DocumentReviewResponse>(
+    `/projects/${projectId}/documents/accountant-approve`,
+  );
+  return data;
+}
+
+// Бухгалтер: отклонить (с необязательным комментарием).
+export async function accountantRejectDocuments(
+  projectId: number | string,
+  reason?: string,
+): Promise<DocumentReviewResponse> {
+  const { data } = await api.post<DocumentReviewResponse>(
+    `/projects/${projectId}/documents/accountant-reject`,
+    { reason: reason || null },
+  );
+  return data;
+}
+
+// Директор: принять (финальное согласование).
+export async function directorApproveDocuments(
+  projectId: number | string,
+): Promise<DocumentReviewResponse> {
+  const { data } = await api.post<DocumentReviewResponse>(
+    `/projects/${projectId}/documents/director-approve`,
+  );
+  return data;
+}
+
+// Директор: отклонить (с необязательным комментарием).
+export async function directorRejectDocuments(
+  projectId: number | string,
+  reason?: string,
+): Promise<DocumentReviewResponse> {
+  const { data } = await api.post<DocumentReviewResponse>(
+    `/projects/${projectId}/documents/director-reject`,
+    { reason: reason || null },
+  );
+  return data;
+}
+
+// Текущий статус согласования (для опроса вместо локальной симуляции).
+export async function fetchDocumentsReviewStatus(
+  projectId: number | string,
+): Promise<DocumentReviewResponse> {
+  const { data } = await api.get<DocumentReviewResponse>(
+    `/projects/${projectId}/documents/review-status`,
+  );
+  return data;
+}
+
+// ==========================================
 // CLIENT DECISION (Одобрение КП / Правки от клиента)
 // ==========================================
 
@@ -482,7 +574,9 @@ export const downloadKpDocument = async (projectId: number): Promise<void> => {
 
   let filename = `KP_Project_${projectId}.docx`;
   const disposition = response.headers['content-disposition'];
-  if (disposition && disposition.includes("filename=")) {
+  if (disposition && disposition.includes("filename*=UTF-8''")) {
+    filename = decodeURIComponent(disposition.split("filename*=UTF-8''")[1]);
+  } else if (disposition && disposition.includes("filename=")) {
     const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition);
     if (matches && matches[1]) {
       filename = matches[1].replace(/['"]/g, "");
