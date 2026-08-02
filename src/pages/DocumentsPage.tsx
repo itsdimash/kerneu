@@ -210,6 +210,26 @@ export function DocumentsPage({
     };
   }, [selectedProjectId]);
 
+  // Статус согласования документов (бухгалтер -> директор) теперь живёт на
+  // бэкенде — подгружаем его при выборе проекта и опрашиваем, пока страница
+  // открыта, чтобы PM/бухгалтер/директор видели решения друг друга без перезагрузки.
+  useEffect(() => {
+    if (!selectedProjectId) return;
+
+    void documentsStore.loadReview(selectedProjectId);
+
+    const intervalId = window.setInterval(() => {
+      void documentsStore.loadReview(selectedProjectId);
+    }, 5000);
+    const handleFocus = () => { void documentsStore.loadReview(selectedProjectId); };
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [selectedProjectId]);
+
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? projects[0];
   const selectedProjectName = selectedProject?.name ?? "Проект не выбран";
   const contractSigned = selectedProject?.contractSigned ?? projectState.contractSigned;
@@ -367,42 +387,68 @@ export function DocumentsPage({
     if (waybillFileRef.current) waybillFileRef.current.value = "";
   };
 
-  const handleSubmitForReview = () => {
+  const handleSubmitForReview = async () => {
     setSubmittingReview(true);
-    setTimeout(() => {
+    try {
+      await documentsStore.submitForReview(selectedProjectId);
+    } catch (error) {
+      console.error(error);
+      alert("Не удалось отправить документы на проверку. Проверьте соединение с сервером.");
+    } finally {
       setSubmittingReview(false);
-      documentsStore.submitForReview(selectedProjectId);
-    }, 1000);
+    }
   };
 
-  const handleAccountantAccept = () => {
+  const handleAccountantAccept = async () => {
     setDecidingReview(true);
-    setTimeout(() => { setDecidingReview(false); documentsStore.accountantApprove(selectedProjectId); }, 900);
-  };
-
-  const handleAccountantReject = () => {
-    setDecidingReview(true);
-    setTimeout(() => {
+    try {
+      await documentsStore.accountantApprove(selectedProjectId);
+    } catch (error) {
+      console.error(error);
+      alert("Не удалось подтвердить документы. Проверьте соединение с сервером.");
+    } finally {
       setDecidingReview(false);
-      documentsStore.accountantReject(selectedProjectId, rejectDraft.trim() || undefined);
+    }
+  };
+
+  const handleAccountantReject = async () => {
+    setDecidingReview(true);
+    try {
+      await documentsStore.accountantReject(selectedProjectId, rejectDraft.trim() || undefined);
       setRejectDraft("");
       setShowRejectBox(false);
-    }, 900);
-  };
-
-  const handleDirectorAccept = () => {
-    setDecidingReview(true);
-    setTimeout(() => { setDecidingReview(false); documentsStore.directorApprove(selectedProjectId); }, 900);
-  };
-
-  const handleDirectorReject = () => {
-    setDecidingReview(true);
-    setTimeout(() => {
+    } catch (error) {
+      console.error(error);
+      alert("Не удалось отклонить документы. Проверьте соединение с сервером.");
+    } finally {
       setDecidingReview(false);
-      documentsStore.directorReject(selectedProjectId, rejectDraft.trim() || undefined);
+    }
+  };
+
+  const handleDirectorAccept = async () => {
+    setDecidingReview(true);
+    try {
+      await documentsStore.directorApprove(selectedProjectId);
+    } catch (error) {
+      console.error(error);
+      alert("Не удалось подтвердить документы. Проверьте соединение с сервером.");
+    } finally {
+      setDecidingReview(false);
+    }
+  };
+
+  const handleDirectorReject = async () => {
+    setDecidingReview(true);
+    try {
+      await documentsStore.directorReject(selectedProjectId, rejectDraft.trim() || undefined);
       setRejectDraft("");
       setShowRejectBox(false);
-    }, 900);
+    } catch (error) {
+      console.error(error);
+      alert("Не удалось отклонить документы. Проверьте соединение с сервером.");
+    } finally {
+      setDecidingReview(false);
+    }
   };
 
   const handleComplete = () => {

@@ -180,9 +180,10 @@ export function ProjectPagePM({
     "Ожидание клиента": 3,
     "Ожидание подписания": 4,
     "Активный закуп": 5,
-    "На отгрузке": 6,
-    "Ожидание документов": 7,
-    "Завершен": 8,
+    "На приходе": 6,
+    "На отгрузке": 7,
+    "Ожидание документов": 8,
+    "Завершен": 9,
   };
 
   const currentIndex = statusToIndex[currentStatus] ?? 0;
@@ -203,9 +204,10 @@ export function ProjectPagePM({
     { label: "Ожидание клиента", done: currentIndex > 3, active: currentIndex === 3 },
     { label: "Ожидание подписания", done: currentIndex > 4, active: currentIndex === 4 },
     { label: "Активный закуп", done: currentIndex > 5, active: currentIndex === 5 },
-    { label: "На отгрузке", done: currentIndex > 6, active: currentIndex === 6 },
-    { label: "Ожидание документов", done: currentIndex > 7, active: currentIndex === 7 },
-    { label: "Завершен", done: currentIndex === 8, active: currentIndex === 8 },
+    { label: "На приходе", done: currentIndex > 6, active: currentIndex === 6 },
+    { label: "На отгрузке", done: currentIndex > 7, active: currentIndex === 7 },
+    { label: "Ожидание документов", done: currentIndex > 8, active: currentIndex === 8 },
+    { label: "Завершен", done: currentIndex === 9, active: currentIndex === 9 },
   ];
 
   const title = project?.name ?? "Офисный комплекс «Башня»";
