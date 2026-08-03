@@ -93,6 +93,12 @@ export function ContractPage({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
+  // Тихое предупреждение вместо блокирующего alert(), если синхронизация
+  // статуса проекта после загрузки договора не удалась. Сам факт того, что
+  // файл договора загружен, теперь достаточен, чтобы разблокировать
+  // доверенности/накладные на странице "Документы" (см. DocumentsPage),
+  // поэтому это предупреждение — не критично, просто информирует PM.
+  const [statusSyncWarning, setStatusSyncWarning] = useState<string | null>(null);
 
   const isPm = role === "pm";
 
@@ -177,11 +183,15 @@ export function ContractPage({
       //    а не на факт наличия файла договора в архиве документов.
       try {
         await signProjectContract(Number(projectId));
+        setStatusSyncWarning(null);
       } catch (statusError) {
         console.error("Не удалось обновить статус проекта после подписания договора:", statusError);
-        alert(
-          "Файл договора загружен, но не удалось обновить статус проекта на «Активный закуп». " +
-          "Доверенности и накладные могут остаться недоступны для загрузки. Обратитесь к администратору."
+        // Не блокируем PM модалкой — файл договора уже загружен и этого
+        // достаточно, чтобы работать дальше. Просто мягко подсвечиваем,
+        // что фоновая синхронизация статуса не удалась.
+        setStatusSyncWarning(
+          `Договор по проекту «${projects.find((p) => p.id === projectId)?.name ?? projectId}» загружен, ` +
+          "но статус проекта на сервере не обновился. Это не мешает продолжить работу — можно сразу переходить к закупкам."
         );
       }
 
@@ -224,6 +234,19 @@ export function ContractPage({
       {!loading && loadError && (
         <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
           {loadError}
+        </div>
+      )}
+
+      {statusSyncWarning && (
+        <div className="flex items-start justify-between gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
+          <span>{statusSyncWarning}</span>
+          <button
+            onClick={() => setStatusSyncWarning(null)}
+            className="text-amber-500 hover:text-amber-700 flex-shrink-0"
+            aria-label="Закрыть"
+          >
+            ×
+          </button>
         </div>
       )}
 

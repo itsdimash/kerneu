@@ -168,6 +168,9 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
   const selectedClientData = clients.find((c) => c.id === Number(selectedClientId));
   const contractIcon = (s: ContractStatus) => s === "unsigned" ? "🔒" : s === "pending" ? "⏳" : "🔓";
   const [openMenu, setOpenMenu] = useState<number | null>(null);
+  // Проект, ожидающий подтверждения удаления (для кастомного модального окна)
+  const [projectToDelete, setProjectToDelete] = useState<{ id: number; name: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   
   // Клиент "выбран", когда либо указан существующий клиент, либо введено имя нового
   const isClientChosen = isNewClient ? newClientForm.name.trim().length > 0 : !!selectedClientId;
@@ -450,14 +453,20 @@ const handleSave = async () => {
   }
 };
 
-  const handleDelete = async (projectId: number) => {
-    if (!window.confirm("Вы действительно хотите удалить проект?")) {
-        return;
-    }
+  // Открывает кастомное модальное окно подтверждения вместо window.confirm
+  const handleDelete = (projectId: number, projectName: string) => {
+    setOpenMenu(null);
+    setProjectToDelete({ id: projectId, name: projectName });
+  };
 
+  // Выполняет фактическое удаление после подтверждения в модальном окне
+  const confirmDelete = async () => {
+    if (!projectToDelete) return;
+
+    setIsDeleting(true);
     try {
         const response = await fetch(
-            `http://localhost:8000/api/v1/projects/${projectId}`,
+            `http://localhost:8000/api/v1/projects/${projectToDelete.id}`,
             {
                 method: "DELETE",
                 credentials: "include",
@@ -468,12 +477,14 @@ const handleSave = async () => {
             throw new Error(`Ошибка ${response.status}`);
         }
 
-        setOpenMenu(null);
+        setProjectToDelete(null);
         await loadProjects();
         await loadStats();
     } catch (error) {
         console.error(error);
         alert("Ошибка удаления");
+    } finally {
+        setIsDeleting(false);
     }
   };
 
@@ -849,7 +860,7 @@ const handleSave = async () => {
                                       <div className="h-px bg-slate-100"/>
 
                                       <button
-                                          onClick={() => handleDelete(p.id)}
+                                          onClick={() => handleDelete(p.id, p.name ?? `Проект №${p.id}`)}
                                           className="flex w-full items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition-colors"
                                       >
                                           <Trash2 size={19}/>
@@ -910,6 +921,44 @@ const handleSave = async () => {
           </div>
         </div>
       </div>
+
+      {/* ── Модальное окно подтверждения удаления проекта ── */}
+      {projectToDelete && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0">
+                  <Trash2 size={18} className="text-red-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Удалить проект?</h3>
+                  <p className="text-sm text-slate-500 mt-1">
+                    Вы действительно хотите удалить проект «{projectToDelete.name}»? Это действие необратимо.
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-5">
+                <button
+                  onClick={() => setProjectToDelete(null)}
+                  disabled={isDeleting}
+                  className="px-4 py-2 text-sm font-medium text-slate-600 rounded-lg hover:bg-slate-100 transition-colors disabled:opacity-50"
+                >
+                  Отмена
+                </button>
+                <button
+                  onClick={confirmDelete}
+                  disabled={isDeleting}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                >
+                  {isDeleting && <Loader2 size={14} className="animate-spin" />}
+                  Удалить
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </PageWrap>
   );
 }

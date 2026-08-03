@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
 import { PageWrap } from "../app/components/common/PageWrap";
-import { InfoBanner } from "../app/components/common/InfoBanner";
 import { ShipmentModal } from "../app/components/modals/ShipmentModal";
 import {
   Search,
@@ -14,7 +13,7 @@ import {
   Camera,
   Clock,
 } from "lucide-react";
-import type { ProjectState, BannerVariant, Role } from "../types";
+import type { ProjectState, Role } from "../types";
 import {
   fetchWarehouseStocks,
   fetchWarehouseReceipts,
@@ -163,6 +162,24 @@ async function sendProjectToShipment(projectId: number) {
   if (!response.ok) {
     const message = await response.text().catch(() => "");
     throw new Error(message || "Не удалось перевести проект в статус 'На отгрузке'");
+  }
+
+  return response.json().catch(() => null);
+}
+
+// Кладовщик физически отгрузил товар — переводим проект в статус
+// "Ожидание документов". Эндпоинт уже есть на бэке
+// (POST /projects/{project_id}/wait-for-documents), но раньше фронт его
+// не вызывал, поэтому статус проекта "зависал" на "На отгрузке".
+async function sendProjectToDocuments(projectId: number) {
+  const response = await fetch(`${WAREHOUSE_API_BASE}/projects/${projectId}/wait-for-documents`, {
+    method: "POST",
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => "");
+    throw new Error(message || "Не удалось перевести проект в статус 'Ожидание документов'");
   }
 
   return response.json().catch(() => null);
@@ -654,7 +671,6 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
 
   const [showShipmentModal, setShowShipmentModal] = useState(false);
   const [showAddStockModal, setShowAddStockModal] = useState(false);
-  const shipmentLocked = !projectState.contractSigned;
 
   useEffect(() => {
     loadWarehousesList();
@@ -809,6 +825,16 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
         projectId,
         proj.items.map((it) => ({ item_id: it.id, warehouse_id: it.warehouseId as number }))
       );
+
+      // Товар физически ушёл со склада — теперь явно переводим проект
+      // в "Ожидание документов". Раньше этого вызова не было, поэтому
+      // статус проекта не менялся после отгрузки.
+      try {
+        await sendProjectToDocuments(projectId);
+      } catch (statusErr) {
+        console.error("Не удалось перевести проект в статус 'Ожидание документов'", statusErr);
+      }
+
       setPendingShipments((prev) => prev.filter((p) => p.projectId !== projectId));
       loadShipments();
       loadStock();
@@ -893,10 +919,6 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
       );
   }, [stock, selectedWarehouseId, stockFilter, stockSearch]);
 
-  const warehouseBanner: { variant: BannerVariant; text: string } = shipmentLocked
-    ? { variant: "neutral", text: "Раздел «Склад» доступен для просмотра остатков." }
-    : { variant: "info", text: "Товары по проекту поступили на склад." };
-
   return (
     <PageWrap title="Склад" subtitle={`Управление остатками, резервом и отгрузками по ${warehouses.length} складам`}>
       {showAddStockModal && (
@@ -923,8 +945,6 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     <ShipmentModal onClose={() => setShowShipmentModal(false)} onSuccess={loadShipments} />
   )}
 
-
-      <InfoBanner variant={warehouseBanner.variant} text={warehouseBanner.text} />
 
       <div className="flex items-center gap-1 mb-6 border-b border-[#E2E8F0]">
         {[{ key: "stock" as const, label: "Остатки" }, { key: "arrivals" as const, label: "Приход" }, { key: "shipments" as const, label: "Отгрузка" }].map((t) => (
