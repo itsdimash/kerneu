@@ -257,7 +257,7 @@ export function DocumentsPage({
 
   const reviewInFlight = reviewStage === "pending_accountant" || reviewStage === "pending_director";
   // После полного согласования (approved) PM больше не может редактировать
-  // документы — блокировка остаётся навсегда, а не только до завершения проекта.
+  // документов — блокировка остаётся навсегда, а не только до завершения проекта.
   const docsLocked = completed || uploadsLocked || reviewInFlight || reviewStage === "approved";
 
   const contractDoc = allDocs.find(d => d.category === "contract");
@@ -307,6 +307,16 @@ export function DocumentsPage({
   const doneDocCount = [hasApprovedKp, contractUploaded, poaUploaded, hasInvoice, hasWaybill].filter(Boolean).length;
   const allUploaded = doneDocCount === requiredDocCount;
   const canComplete = allUploaded && reviewStage === "approved" && !completed;
+
+  // НОВОЕ: Проверяем, находится ли проект в правильном статусе
+  const isWaitingForDocs = selectedProject?.statusName === "Ожидание документов";
+
+  // НОВОЕ: Динамический текст для подсказки над кнопкой отправки на проверку
+  const tooltipReview = !isWaitingForDocs 
+    ? "Отправка доступна только после того, как склад отгрузит товары" 
+    : !allUploaded 
+    ? "Загрузите все документы сначала" 
+    : "";
 
   const [submittingReview, setSubmittingReview] = useState(false);
   const [decidingReview,   setDecidingReview]   = useState(false);
@@ -929,12 +939,14 @@ export function DocumentsPage({
                     Отклонено{rejectedBy ? ` (${ROLE_LABEL[rejectedBy]})` : ""}{rejectReason ? `: ${rejectReason}` : ""}. Обновите файлы и отправьте повторно.
                   </p>
                 )}
-                <AppTooltip text={!allUploaded ? "Загрузите все документы сначала" : ""}>
+                
+                {/* ОБНОВЛЕНО: Используем новый тултип и блокируем кнопку */}
+                <AppTooltip text={tooltipReview}>
                   <button
-                    onClick={() => allUploaded && handleSubmitForReview()}
-                    disabled={!allUploaded || submittingReview}
+                    onClick={() => allUploaded && isWaitingForDocs && handleSubmitForReview()}
+                    disabled={!allUploaded || submittingReview || !isWaitingForDocs}
                     className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
-                      allUploaded
+                      allUploaded && isWaitingForDocs
                         ? "bg-[#2563EB] text-white hover:bg-[#1d4ed8]"
                         : "bg-slate-100 text-slate-400 cursor-not-allowed"
                     }`}
