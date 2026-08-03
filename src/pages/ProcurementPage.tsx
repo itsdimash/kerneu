@@ -292,12 +292,12 @@ export function ProcurementPage({
         
         const data: ProjectListItem[] = await response.json();
         const activeIndex = PROJECT_WORKFLOW.indexOf("Активный закуп");
-        const completedIndex = PROJECT_WORKFLOW.indexOf("Завершен");
+        const completedIndex = PROJECT_WORKFLOW.indexOf("На отгрузке");
 
         const filtered = data.filter(p => {
            const statusName = safeTrim(p.status?.status_name) || safeTrim(p.status_name) || "Новый проект";
            const idx = PROJECT_WORKFLOW.indexOf(statusName);
-           // Верхняя граница: как только проект переходит в "Завершен",
+           // Верхняя граница: как только проект переходит в "На отгрузке",
            // он больше не должен висеть в закупках (симметрично тому,
            // как это уже работает на странице "Договор").
            return idx >= activeIndex && idx < completedIndex;
