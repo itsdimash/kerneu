@@ -325,6 +325,9 @@ function AddStockModal({
 // ==========================================
 // Модалка подтверждения прихода кладовщиком
 // ==========================================
+// ==========================================
+// Модалка подтверждения прихода кладовщиком
+// ==========================================
 function ConfirmReceiptModal({
   receipt,
   onClose,
@@ -335,6 +338,8 @@ function ConfirmReceiptModal({
   onSuccess: () => void;
 }) {
   const [actualQuantity, setActualQuantity] = useState(String(receipt.qty));
+  // НОВОЕ СОСТОЯНИЕ ДЛЯ БРАКА
+  const [defectiveQuantity, setDefectiveQuantity] = useState("0"); 
   const [comment, setComment] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -342,15 +347,34 @@ function ConfirmReceiptModal({
 
   const handleSubmit = async () => {
     const qty = Number(actualQuantity);
+    const defQty = Number(defectiveQuantity); 
+
     if (!actualQuantity || Number.isNaN(qty) || qty < 0) {
       setError("Укажите корректное фактическое количество");
       return;
     }
+    if (Number.isNaN(defQty) || defQty < 0) {
+      setError("Укажите корректное количество брака");
+      return;
+    }
+
+    // === НОВАЯ ЛОГИКА ПРОВЕРКИ ===
+    if (qty + defQty > receipt.qty) {
+      setError(`Общее количество (нормальные + брак) не может превышать план (${receipt.qty} шт.)`);
+      return;
+    }
+    // =============================
 
     setSubmitting(true);
     setError(null);
+    
     try {
-      await confirmReceipt(receipt.id, { actual_quantity: qty, comment, photo });
+      await confirmReceipt(receipt.id, { 
+        actual_quantity: qty, 
+        defective_quantity: defQty,
+        comment, 
+        photo 
+      });
       onSuccess();
       onClose();
     } catch (e: any) {
@@ -397,6 +421,20 @@ function ConfirmReceiptModal({
             />
           </div>
 
+          {/* НОВОЕ ПОЛЕ: КОЛИЧЕСТВО БРАКА */}
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">
+              Количество брака
+            </label>
+            <input
+              value={defectiveQuantity}
+              onChange={(e) => setDefectiveQuantity(e.target.value)}
+              type="number"
+              min="0"
+              className="w-full px-3 py-2 text-sm border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2563EB]"
+            />
+          </div>
+
           <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">Комментарий кладовщика</label>
             <textarea
@@ -439,7 +477,6 @@ function ConfirmReceiptModal({
     </div>
   );
 }
-
 // ==========================================
 // Модалка просмотра деталей уже подтверждённого прихода
 // (для кладовщика — с возможностью поправить фото/комментарий)

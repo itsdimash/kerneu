@@ -776,6 +776,7 @@ export async function setReceiptCancelled(
 
 export interface ConfirmReceiptPayload {
   actual_quantity: number;
+  defective_quantity?: number; // <-- ДОБАВИТЬ ЭТУ СТРОКУ
   comment?: string;
   photo?: File | null;
 }
@@ -786,6 +787,14 @@ export async function confirmReceipt(
 ): Promise<WarehouseReceiptResponse> {
   const formData = new FormData();
   formData.append("actual_quantity", String(payload.actual_quantity));
+  
+  // Добавляем отправку брака на бэкенд (если не передано, отправляем 0)
+  if (payload.defective_quantity !== undefined) {
+    formData.append("defective_quantity", String(payload.defective_quantity));
+  } else {
+    formData.append("defective_quantity", "0");
+  }
+  
   formData.append("comment", payload.comment || "");
   if (payload.photo) formData.append("photo", payload.photo);
 
@@ -800,6 +809,7 @@ export async function confirmReceipt(
   );
   return data;
 }
+
 
 // ==========================================
 // РЕДАКТИРОВАНИЕ ФОТО/КОММЕНТАРИЯ УЖЕ ПОДТВЕРЖДЁННОГО ПРИХОДА

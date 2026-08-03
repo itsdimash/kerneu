@@ -12,7 +12,7 @@ import {
   Upload,
 } from "lucide-react";
 import { documentsStore } from "../store/documentsStore";
-import { uploadProjectDocument, fetchProjectDocuments } from "../api/api";
+import { uploadProjectDocument, fetchProjectDocuments, signProjectContract } from "../api/api";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -105,14 +105,14 @@ export function ContractPage({
         setLoadError(null);
         const res = await fetch(`${API_BASE}/projects/contracts`, { credentials: "include" });
         if (!res.ok) throw new Error("Не удалось загрузить проекты");
-        
+
         const data: ContractApiProject[] = await res.json();
 
         // Check the backend for existing documents for each project
         const projectsWithDocs = await Promise.all(
           data.map(async (apiProject) => {
             const project = mapApiProject(apiProject);
-            
+
             try {
               // Fetch real documents from the server to check if a contract exists
               const docs = await fetchProjectDocuments(project.id);
@@ -135,7 +135,7 @@ export function ContractPage({
             } catch (err) {
               console.error(`Ошибка загрузки документов для проекта ${project.id}`, err);
             }
-            
+
             return project;
           })
         );
@@ -167,10 +167,25 @@ export function ContractPage({
     setLoadError(null);
 
     try {
-      // 1. Upload to the actual backend endpoint
+      // 1. Загружаем сам файл договора на бэкенд
       const uploadedDoc = await uploadProjectDocument(projectId, "contract", file, "Договор");
 
-      // 2. Update local state
+      // 2. Переводим статус проекта в "Активный закуп" на бэкенде.
+      //    Без этого шага DocumentsPage продолжит считать договор
+      //    неподписанным и будет блокировать загрузку доверенностей/накладных,
+      //    т.к. contractSigned завязан на реальный status_name проекта,
+      //    а не на факт наличия файла договора в архиве документов.
+      try {
+        await signProjectContract(Number(projectId));
+      } catch (statusError) {
+        console.error("Не удалось обновить статус проекта после подписания договора:", statusError);
+        alert(
+          "Файл договора загружен, но не удалось обновить статус проекта на «Активный закуп». " +
+          "Доверенности и накладные могут остаться недоступны для загрузки. Обратитесь к администратору."
+        );
+      }
+
+      // 3. Обновляем локальный state
       const today = new Date().toLocaleDateString("ru-RU");
       setProjects((prev) =>
         prev.map((p) =>
@@ -180,14 +195,15 @@ export function ContractPage({
         )
       );
 
-      // 3. Update global documentsStore to change status and enable real download
+      // 4. Обновляем глобальный documentsStore, чтобы статус и скачивание
+      //    сразу подхватились на странице "Документы"
       documentsStore.updateDocument(projectId, `${projectId}-contract`, {
         status: "uploaded",
         date: today,
         fileName: file.name,
         backendDocument: uploadedDoc,
       });
-      
+
     } catch (error) {
       console.error("Upload error:", error);
       alert("Не удалось загрузить договор. Попробуйте снова.");

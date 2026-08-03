@@ -36,6 +36,20 @@ const ROLE_LABEL: Record<Rejector, string> = {
   commercial_director: "коммерческий директор",
 };
 
+// ИЗМЕНЕНО: раньше здесь сравнивалось только с "Активный закуп" / "Завершен".
+// Но статусы проекта идут по цепочке дальше: Активный закуп -> На отгрузке ->
+// На приходе -> Ожидание клиента -> Завершен. Договор подписан на шаге
+// "Активный закуп" и остаётся подписанным на всех последующих статусах,
+// поэтому сравниваем не с двумя конкретными строками, а со списком всех
+// статусов, которые наступают ПОСЛЕ подписания договора.
+const SIGNED_STATUSES = [
+  "Активный закуп",
+  "На отгрузке",
+  "На приходе",
+  "Ожидание клиента",
+  "Завершен",
+];
+
 export function DocumentsPage({
   onNavigate,
   projectState,
@@ -86,10 +100,15 @@ export function DocumentsPage({
             id: String(item.id),
             name: item.name,
             statusName,
+            // ИЗМЕНЕНО: было
+            //   contractSigned:
+            //     item.contract_signed === true ||
+            //     statusName === "Активный закуп" ||
+            //     statusName === "Завершен",
+            // Стало — проверяем вхождение в список всех статусов "после подписания":
             contractSigned:
               item.contract_signed === true ||
-              statusName === "Активный закуп" ||
-              statusName === "Завершен",
+              SIGNED_STATUSES.includes(statusName),
           };
         });
 
