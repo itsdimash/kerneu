@@ -14,6 +14,8 @@ import {
   ChevronRight,
   Check,
   Receipt,
+  PackagePlus,
+  Truck,
 } from "lucide-react";
 import type { Role, Page } from "../../../types";
 import {
@@ -46,9 +48,11 @@ const CATEGORY_META: Record<
   invoice_pending_director: { icon: Receipt, fg: "#2563EB", bg: "#EFF6FF", label: "Счёт: директор" },
   invoice_approved: { icon: ThumbsUp, fg: "#16A34A", bg: "#F0FDF4", label: "Счёт одобрен" },
   invoice_rejected: { icon: FileX2, fg: "#DC2626", bg: "#FEF2F2", label: "Счёт отклонён" },
+  invoice_sent_to_income: { icon: PackagePlus, fg: "#7C3AED", bg: "#F5F3FF", label: "Ожидается приход" },
   contract_signed: { icon: FileSignature, fg: "#2563EB", bg: "#EFF6FF", label: "Договор" },
   stock_low: { icon: PackageX, fg: "#F59E0B", bg: "#FFFBEB", label: "Склад" },
   goods_arrived: { icon: PackageCheck, fg: "#2563EB", bg: "#EFF6FF", label: "Приход" },
+  goods_shipped: { icon: Truck, fg: "#16A34A", bg: "#F0FDF4", label: "Отгрузка" },
   upload_processed: { icon: UploadCloud, fg: "#7C3AED", bg: "#F5F3FF", label: "Загрузка" },
   deadline: { icon: Clock3, fg: "#DC2626", bg: "#FEF2F2", label: "Дедлайн" },
   docs_pending_accountant: { icon: FileCheck2, fg: "#F59E0B", bg: "#FFFBEB", label: "Документы: бухгалтер" },

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FolderOpen, FileText, ShoppingCart, Package, CheckSquare, Receipt, LayoutDashboard, X, Search } from "lucide-react";
+import { FolderOpen, FileText, ShoppingCart, Package, CheckSquare, Receipt, LayoutDashboard, X, Search, History } from "lucide-react";
 import type { Page, Role, ProjectState } from "../../../types";
 import kLogoImg from "../../../assets/k-logo.png";
 
@@ -10,6 +10,7 @@ export const NAV: { id: Page; label: string; icon: React.ElementType; badge?: nu
   { id: "procurement", label: "Закупки",    icon: ShoppingCart,    roles: ["commercial_director", "pm", "accountant"] },
   { id: "warehouse",   label: "Склад",      icon: Package,         roles: ["commercial_director", "pm", "warehouse"] },
   { id: "documents",   label: "Документы",  icon: CheckSquare,     roles: ["commercial_director", "pm", "accountant"] },
+  { id: "suppliers",   label: "Поставщики", icon: History, roles: ["commercial_director", "pm", "warehouse"] },
 ];
 
 export function Sidebar({ page, onPage, role, projectState, onFindProject }: {

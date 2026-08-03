@@ -1,5 +1,5 @@
 export type Role = "admin" | "commercial_director" | "pm" | "accountant" | "warehouse";
-export type Page = "dashboard" | "project" | "contract" | "procurement" | "warehouse" | "documents" | "upload";
+export type Page = "dashboard" | "project" | "contract" | "procurement" | "warehouse" | "documents" | "upload" | "suppliers";
 export type ContractStatus = "unsigned" | "pending" | "signed";
 export type KPItemStatus = "found" | "history" | "not_found";
 
@@ -31,3 +31,17 @@ export type Receipt = {
 };
 export type BannerVariant = "neutral" | "warning" | "info" | "success";
 
+// --- Supplier History ---
+export type Delivery = {
+  product: string;
+  date: string;   // ISO yyyy-mm-dd
+  qty: string;
+  cost: number;   // KZT ₸
+};
+
+export type Supplier = {
+  id: string;
+  name: string;
+  category: string;
+  deliveries: Delivery[];
+};
