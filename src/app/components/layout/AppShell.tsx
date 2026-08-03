@@ -19,6 +19,7 @@ import { ContractPage } from "../../../pages/ContractPage";
 import { ProcurementPage } from "../../../pages/ProcurementPage";
 import { WarehousePage } from "../../../pages/WarehousePage";
 import { DocumentsPage } from "../../../pages/DocumentsPage";
+import ProductsCatalog from '../common/ProductsCatalog';
 
 type UserData = {
   id: number;
@@ -281,6 +282,9 @@ export function AppShell({
               projectId={numericProjectId}
             />
           )}
+          
+          {/* ВСТАВИТЬ ЭТУ СТРОКУ СЮДА: */}
+      <ProductsCatalog />
         </main>
       </div>
     </div>

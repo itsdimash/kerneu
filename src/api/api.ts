@@ -263,13 +263,19 @@ export async function confirmMlImport(
 }
 
 // ==========================================
-// СКЛАДЫ (справочник) — реальные id/названия, без хардкода
+// СКЛАДЫ (справочник)
 // ==========================================
+// Реальный список складов отдаёт GET /warehouse/list (роут добавлен на бэке
+// поверх уже существовавшего get_all_warehouses в warehouse_service.py).
+// Остатки (/warehouse/stocks) по-прежнему дополнительно содержат
+// warehouse_id/warehouse_name вложенными в item.stocks[] — это используется
+// в WarehousePage.tsx (deriveWarehouses) как подстраховка на случай,
+// если склад окажется без остатков ни по одному товару.
 
 export interface WarehouseInfo {
   id: number;
   name: string; // "Карабулак", "Абишова"
-  code: string; // "KAR", "AB"
+  code: string; // "Кар", "Аб"
 }
 
 export const fetchWarehouseList = async (): Promise<WarehouseInfo[]> => {
@@ -710,14 +716,18 @@ export const signProjectContract = async (projectId: number) => {
 export interface WarehouseReceiptResponse {
   id: number;
   receipt_number?: string;
-  project_id?: number;         // <-- ДОБАВЛЕНО: ID проекта
-  project_name?: string;       // <-- ДОБАВЛЕНО: Название проекта
+  project_id?: number;         // <-- ID проекта
+  project_name?: string;       // <-- Название проекта
   date: string;                // Когда придет товар
   supplier_id: number;
   product_id: number;
+  warehouse_id?: number | null;
   quantity: number;
-  status: string;
-
+  status: string;              // 'pending' | 'arrived' | 'cancelled'
+  actual_quantity?: number | null;
+  photo_path?: string | null;
+  warehouse_comment?: string | null;
+  confirmed_at?: string | null;
   supplier?: {
     id: number;
     supplier_name: string;
@@ -727,6 +737,11 @@ export interface WarehouseReceiptResponse {
     id: number;
     name: string;
     unit: string;
+  };
+  warehouse?: {
+    id: number;
+    name: string;
+    code?: string | null;
   } | null;
 }
 
@@ -740,18 +755,79 @@ export async function fetchWarehouseReceipts(): Promise<
   return data;
 }
 
-export type ReceiptStatusValue = "pending" | "transit" | "arrived";
+// ==========================================
+// ОТМЕНА ПРИХОДА (чекбокс, для роли "warehouse")
+// ==========================================
 
-export async function updateReceiptStatus(
+export async function setReceiptCancelled(
   receiptId: number,
-  status: ReceiptStatusValue,
-  warehouseId: number = 1
+  isCancelled: boolean
 ): Promise<WarehouseReceiptResponse> {
   const { data } = await api.patch<WarehouseReceiptResponse>(
-    `/warehouse/receipts/${receiptId}/status?warehouse_id=${warehouseId}`,
-    { status }
+    `/warehouse/receipts/${receiptId}/cancel`,
+    { is_cancelled: isCancelled }
   );
+  return data;
+}
 
+// ==========================================
+// ПОДТВЕРЖДЕНИЕ ПРИХОДА (фото + факт. количество + комментарий)
+// ==========================================
+
+export interface ConfirmReceiptPayload {
+  actual_quantity: number;
+  comment?: string;
+  photo?: File | null;
+}
+
+export async function confirmReceipt(
+  receiptId: number,
+  payload: ConfirmReceiptPayload
+): Promise<WarehouseReceiptResponse> {
+  const formData = new FormData();
+  formData.append("actual_quantity", String(payload.actual_quantity));
+  formData.append("comment", payload.comment || "");
+  if (payload.photo) formData.append("photo", payload.photo);
+
+  const { data } = await api.post<WarehouseReceiptResponse>(
+    `/warehouse/receipts/${receiptId}/confirm`,
+    formData,
+    {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    }
+  );
+  return data;
+}
+
+// ==========================================
+// РЕДАКТИРОВАНИЕ ФОТО/КОММЕНТАРИЯ УЖЕ ПОДТВЕРЖДЁННОГО ПРИХОДА
+// (количество и остаток на складе этим не трогаются — только эти два поля)
+// ==========================================
+
+export interface UpdateReceiptDetailsPayload {
+  comment?: string;
+  photo?: File | null;
+}
+
+export async function updateReceiptDetails(
+  receiptId: number,
+  payload: UpdateReceiptDetailsPayload
+): Promise<WarehouseReceiptResponse> {
+  const formData = new FormData();
+  if (payload.comment !== undefined) formData.append("comment", payload.comment);
+  if (payload.photo) formData.append("photo", payload.photo);
+
+  const { data } = await api.patch<WarehouseReceiptResponse>(
+    `/warehouse/receipts/${receiptId}/details`,
+    formData,
+    {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    }
+  );
   return data;
 }
 
@@ -767,6 +843,47 @@ export interface ShipmentResponse {
   items_count: number;
   status: string;
 }
+
+export interface ShipmentPendingWarehouseOption {
+  warehouse_id: number;
+  warehouse_name: string;
+}
+
+export interface ShipmentPendingItem {
+  id: number;
+  product_id: number;
+  product_name: string;
+  quantity: number;
+  unit: string;
+  available_warehouses: ShipmentPendingWarehouseOption[];
+}
+
+export interface ShipmentPendingProject {
+  project_id: number;
+  project_name: string;
+  items: ShipmentPendingItem[];
+}
+
+export const fetchPendingShipments = async (): Promise<ShipmentPendingProject[]> => {
+  const { data } = await api.get<ShipmentPendingProject[]>("/warehouse/shipments/pending");
+  return data;
+};
+
+export interface ShipItemWarehouseChoice {
+  item_id: number;
+  warehouse_id: number;
+}
+
+export const shipProjectItemsPerWarehouse = async (
+  projectId: number,
+  items: ShipItemWarehouseChoice[],
+) => {
+  const { data } = await api.post(
+    `/warehouse/projects/${projectId}/ship-items`,
+    { items },
+  );
+  return data;
+};
 
 export const fetchWarehouseShipments = async (): Promise<ShipmentResponse[]> => {
   const { data } = await api.get<ShipmentResponse[]>("/warehouse/shipments");
