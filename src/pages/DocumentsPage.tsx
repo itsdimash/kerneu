@@ -313,7 +313,7 @@ export function DocumentsPage({
 
   // НОВОЕ: Динамический текст для подсказки над кнопкой отправки на проверку
   const tooltipReview = !isWaitingForDocs 
-    ? "Отправка доступна только после того, как склад отгрузит товары" 
+    ? "Отправка доступна только после того, как склад отгрузит товары (статус «Ожидание документов»)" 
     : !allUploaded 
     ? "Загрузите все документы сначала" 
     : "";
@@ -474,9 +474,17 @@ export function DocumentsPage({
     }
   };
 
-  const handleComplete = () => {
+  // ОБНОВЛЕНО: Делаем запрос к бэкенду для смены статуса проекта на Завершен
+  const handleComplete = async () => {
     setCompleting(true);
-    setTimeout(() => { setCompleting(false); documentsStore.completeProject(selectedProjectId); }, 1600);
+    try {
+      await documentsStore.completeProject(selectedProjectId);
+    } catch (error) {
+      console.error(error);
+      alert("Не удалось завершить проект. Проверьте соединение с сервером.");
+    } finally {
+      setCompleting(false);
+    }
   };
 
   const handleDownload = async (doc: ProjectDocument) => {

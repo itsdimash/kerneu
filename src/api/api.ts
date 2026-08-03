@@ -898,3 +898,7 @@ export async function deleteProjectDocument(
   );
   return data;
 }
+
+export async function completeProjectOnBackend(projectId: string | number): Promise<void> {
+  await api.post(`/projects/${projectId}/complete`);
+}
