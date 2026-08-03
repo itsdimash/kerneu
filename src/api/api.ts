@@ -16,12 +16,16 @@ export interface ProjectItem {
   cost_price: number | string;
   sale_price: number | string;
   total_sum: number | string;
+  estimated_price?: number | string | null;
+  estimated_total?: number | string | null;
+  matched_external_id?: string | null;
 
   product?: {
     id: number;
     name: string;
     unit?: string | null;
     cost_price?: number | string;
+    external_id?: string | null;
   } | null;
 
   supplier?: {
@@ -116,6 +120,7 @@ export interface MlImportItemResponse {
 
   matched_product: string | null;
   matched_external_id: string | null;
+  estimated_price: number | string | null;
 
   price_cost: number | string;
   price: number | string;
@@ -164,9 +169,18 @@ export interface MlImportItemUpdate {
 
   price?: number | null;
   price_cost?: number | null;
+  estimated_price?: number | null;
   supplier_name?: string | null;
 
   user_comment?: string | null;
+}
+
+export interface MlImportItemCreateProduct {
+  product_name: string;
+  supplier_name: string;
+  unit: string;
+  price_cost: number;
+  price: number;
 }
 
 export async function createMlImport(
@@ -212,6 +226,30 @@ export async function updateMlImportItem(
   );
 
   return data;
+}
+
+export async function createProductForMlImportItem(
+  importId: number,
+  itemId: number,
+  payload: MlImportItemCreateProduct,
+): Promise<MlImportItemResponse> {
+  try {
+    const { data } = await api.post<MlImportItemResponse>(
+      `/ml-imports/${importId}/items/${itemId}/create-product`,
+      payload,
+    );
+
+    return data;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const detail = error.response?.data?.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        throw new Error(detail);
+      }
+    }
+
+    throw error;
+  }
 }
 
 export async function confirmMlImport(
@@ -504,6 +542,7 @@ export interface ProductInfo {
   unit: string | null;
   cost_price: number | string | null;
   current_stock?: number | string | null;
+  external_id?: string | null;
 }
 
 export interface StatusInfo {
@@ -522,6 +561,9 @@ export interface ProjectItemResponse {
   cost_price: number | string;
   sale_price: number | string;
   total_sum: number | string;
+  estimated_price: number | string | null;
+  estimated_total: number | string | null;
+  matched_external_id?: string | null;
   supplier_raw_name: string | null;
 
   product: ProductInfo;

@@ -6,12 +6,13 @@ import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
 import { fmt } from "../lib/format";
 import { INVOICES_INIT } from "../data/invoices";
 import { STOCK_INIT } from "../data/stock";
-import { AlertTriangle, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText } from "lucide-react";
+import { AlertTriangle, Calculator, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText } from "lucide-react";
 import {
   fetchProjectDetails,
   fetchProjectItems,
   getMlImport,
   updateMlImportItem,
+  createProductForMlImportItem,
   confirmMlImport,
   startProjectEditing,
   sendProjectToDirector,
@@ -28,6 +29,8 @@ import type {
   ProjectResponse,
   ProjectItemResponse,
   MlImportDetailResponse,
+  MlImportItemResponse,
+  MlImportItemCreateProduct,
   MlImportItemUpdate,
 } from "../api/api";
 
@@ -64,6 +67,99 @@ const normalizeMlStatus = (status: string | null | undefined): MlStatus => {
   return "Нет в системе";
 };
 
+type EstimateRow = {
+  id: number;
+  name: string;
+  code: string | null;
+  quantity: number;
+  estimatedPrice: number | null;
+};
+
+function EstimateTable({ rows }: { rows: EstimateRow[] }) {
+  const formatEstimateMoney = (value: number) =>
+    new Intl.NumberFormat("ru-KZ", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(value) + " ₸";
+
+  const estimatedTotal = rows.reduce(
+    (sum, row) => sum + (row.estimatedPrice ?? 0) * row.quantity,
+    0,
+  );
+
+  return (
+    <div className="mb-6 overflow-hidden rounded-lg border border-[#E2E8F0] bg-white">
+      <div className="flex items-start justify-between gap-4 border-b border-[#E2E8F0] bg-slate-50/60 px-5 py-4">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">Смета проекта</h3>
+          <p className="mt-1 text-xs text-slate-500">
+            Справочные цены КазНИИСА. Они не участвуют в расчёте себестоимости и маржи.
+          </p>
+        </div>
+        <span className="whitespace-nowrap rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 ring-1 ring-blue-200">
+          План
+        </span>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[820px] border-collapse">
+          <thead>
+            <tr className="border-b border-[#E2E8F0] bg-white">
+              {["Товар", "Код", "Количество", "Сметная цена", "Сметная сумма"].map((heading) => (
+                <th
+                  key={heading}
+                  className="px-4 py-2.5 text-left text-xs font-medium uppercase tracking-wide text-slate-500"
+                >
+                  {heading}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#E2E8F0]">
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-4 py-10 text-center text-sm text-slate-400">
+                  В смете пока нет позиций
+                </td>
+              </tr>
+            ) : (
+              rows.map((row) => {
+                const rowTotal = (row.estimatedPrice ?? 0) * row.quantity;
+
+                return (
+                  <tr key={row.id} className="hover:bg-slate-50/50">
+                    <td className="px-4 py-3 text-sm text-slate-700">{row.name}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-slate-600">{row.code ?? "—"}</td>
+                    <td className="px-4 py-3 font-mono text-sm text-slate-700">
+                      {row.quantity.toLocaleString("ru-RU")}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-sm text-slate-700">
+                      {row.estimatedPrice == null ? "Не найдена" : formatEstimateMoney(row.estimatedPrice)}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-sm font-semibold text-slate-800">
+                      {row.estimatedPrice == null ? "—" : formatEstimateMoney(rowTotal)}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-[#E2E8F0] bg-slate-50/80">
+              <td colSpan={4} className="px-4 py-3 text-right text-sm font-semibold text-slate-700">
+                Итого по смете
+              </td>
+              <td className="px-4 py-3 font-mono text-base font-bold text-[#2563EB]">
+                {formatEstimateMoney(estimatedTotal)}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export function ProjectPagePM({
   onNavigate,
   projectState,
@@ -92,6 +188,18 @@ export function ProjectPagePM({
   const [kpGenerated, setKpGenerated] = useState(false);
   const [approvingClient, setApprovingClient] = useState(false);
   const [rejecting, setRejecting] = useState(false);
+  const [productModalItem, setProductModalItem] =
+    useState<MlImportItemResponse | null>(null);
+  const [productModalForm, setProductModalForm] = useState({
+    product_name: "",
+    supplier_name: "",
+    unit: "шт",
+    price_cost: "",
+    price: "",
+  });
+  const [productModalError, setProductModalError] = useState<string | null>(null);
+  const [savingProduct, setSavingProduct] = useState(false);
+  const [showEstimate, setShowEstimate] = useState(false);
 
   const resolvedProjectId = projectId; // Let it be a string or a number!
   const hasValidProjectId = Boolean(resolvedProjectId); // Just check that it's not empty
@@ -244,6 +352,99 @@ export function ProjectPagePM({
     }
   };
 
+  const openProductModal = (item: MlImportItemResponse) => {
+    setProductModalItem(item);
+    setProductModalForm({
+      product_name: item.input_product,
+      supplier_name: item.supplier_name ?? "",
+      unit: item.unit?.trim() || "шт",
+      price_cost: Number(item.price_cost ?? 0) > 0
+        ? String(item.price_cost)
+        : "",
+      price: Number(item.price ?? 0) > 0 ? String(item.price) : "",
+    });
+    setProductModalError(null);
+  };
+
+  const closeProductModal = () => {
+    if (savingProduct) return;
+    setProductModalItem(null);
+    setProductModalError(null);
+  };
+
+  const handleCreateProduct = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!mlImport || !productModalItem) return;
+
+    const productName = productModalForm.product_name.trim();
+    const supplierName = productModalForm.supplier_name.trim();
+    const unit = productModalForm.unit.trim();
+    const priceCost = Number(productModalForm.price_cost);
+    const price = Number(productModalForm.price);
+
+    if (!productName || !supplierName || !unit) {
+      setProductModalError(
+        "Заполните название товара, поставщика и единицу измерения.",
+      );
+      return;
+    }
+
+    if (!Number.isFinite(priceCost) || priceCost <= 0) {
+      setProductModalError("Себестоимость должна быть больше нуля.");
+      return;
+    }
+
+    if (!Number.isFinite(price) || price <= 0) {
+      setProductModalError("Цена продажи должна быть больше нуля.");
+      return;
+    }
+
+    if (price < priceCost) {
+      setProductModalError("Цена продажи не может быть ниже себестоимости.");
+      return;
+    }
+
+    const payload: MlImportItemCreateProduct = {
+      product_name: productName,
+      supplier_name: supplierName,
+      unit,
+      price_cost: priceCost,
+      price,
+    };
+
+    try {
+      setSavingProduct(true);
+      setProductModalError(null);
+      setMlImportError(null);
+
+      const updatedItem = await createProductForMlImportItem(
+        mlImport.id,
+        productModalItem.id,
+        payload,
+      );
+
+      setMlImport((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          items: current.items.map((item) =>
+            item.id === updatedItem.id ? updatedItem : item,
+          ),
+        };
+      });
+      setProductModalItem(null);
+    } catch (error) {
+      setProductModalError(
+        error instanceof Error
+          ? error.message
+          : "Не удалось создать товар",
+      );
+    } finally {
+      setSavingProduct(false);
+    }
+  };
+
   const handleConfirmMlImport = async () => {
     if (!mlImport || mlImport.status !== "draft") return;
     try {
@@ -351,13 +552,17 @@ export function ProjectPagePM({
     const price = Number(item.price ?? 0);
     const priceCost = Number(item.price_cost ?? 0);
     const margin = Number(item.margin ?? 0);
+    const noSystemItemReady =
+      normalizeMlStatus(item.ml_status) !== "Нет в системе" ||
+      (item.is_confirmed && item.selected_product_id !== null);
 
     return (
       quantity > 0 &&
       price > 0 &&
       priceCost >= 0 &&
       margin >= 0 &&
-      Boolean(item.supplier_name?.trim())
+      Boolean(item.supplier_name?.trim()) &&
+      noSystemItemReady
     );
   });
   const handleExportExcel = async () => {
@@ -409,6 +614,22 @@ export function ProjectPagePM({
     return new Intl.NumberFormat("ru-KZ", { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(amount) + " ₸";
   };
 
+  const estimateRows: EstimateRow[] = (mlImport?.items ?? []).map((item) => {
+    const parsedPrice = item.estimated_price == null
+      ? null
+      : Number(item.estimated_price);
+
+    return {
+      id: item.id,
+      name: item.matched_product ?? item.input_product,
+      code: item.matched_external_id,
+      quantity: Number(item.final_quantity ?? item.input_quantity ?? 0),
+      estimatedPrice: parsedPrice != null && Number.isFinite(parsedPrice)
+        ? parsedPrice
+        : null,
+    };
+  });
+
   return (
     <PageWrap
         title={title}
@@ -417,6 +638,20 @@ export function ProjectPagePM({
           <div className="flex items-center gap-2">
             <Chip status={currentStatus}/>
             <Chip status="kp"/>
+            <button
+              type="button"
+              onClick={() => setShowEstimate((current) => !current)}
+              disabled={!mlImport}
+              aria-expanded={showEstimate}
+              className={`flex items-center gap-1.5 rounded border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                showEstimate
+                  ? "border-[#2563EB] bg-blue-50 text-[#2563EB]"
+                  : "border-[#E2E8F0] bg-white text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <Calculator size={14}/>
+              Смета
+            </button>
             <AppTooltip text={(!mlImport || mlImport.status !== "confirmed") ? "Сначала подтвердите импорт товаров" : ""}>
               <button
                 onClick={handleExportExcel}
@@ -477,6 +712,8 @@ export function ProjectPagePM({
             )}
           </div>
         </div>
+
+        {showEstimate && <EstimateTable rows={estimateRows}/>} 
 
         {sent && !isApproved && (
             <div className="mb-6 rounded-lg border p-5 bg-slate-50 border-[#E2E8F0]">
@@ -669,7 +906,7 @@ export function ProjectPagePM({
                                       key={`${item.id}-supplier-${item.supplier_name ?? ""}`}
                                       type="text"
                                       maxLength={255}
-                                      disabled={mlImport.status !== "draft" || isUpdating}
+                                      disabled={mlImport.status !== "draft" || isUpdating || item.is_confirmed}
                                       defaultValue={item.supplier_name ?? ""}
                                       placeholder="Укажите поставщика"
                                       onBlur={(event) => {
@@ -689,7 +926,7 @@ export function ProjectPagePM({
                                   <input
                                       key={`${item.id}-cost-${item.price_cost}`}
                                       type="number" min={0} step="1"
-                                      disabled={mlImport.status !== "draft" || isUpdating} defaultValue={priceCost}
+                                      disabled={mlImport.status !== "draft" || isUpdating || item.is_confirmed} defaultValue={priceCost}
                                       onBlur={(event) => {
                                         const newPriceCost = Number(event.target.value);
                                         if (!Number.isFinite(newPriceCost) || newPriceCost < 0) {
@@ -705,7 +942,7 @@ export function ProjectPagePM({
                                   <input
                                       key={`${item.id}-price-${item.price}`}
                                       type="number" min={0} step="1"
-                                      disabled={mlImport.status !== "draft" || isUpdating}
+                                      disabled={mlImport.status !== "draft" || isUpdating || item.is_confirmed}
                                       defaultValue={price}
                                       onBlur={(event) => {
                                         const newPrice = Number(event.target.value);
@@ -731,7 +968,7 @@ export function ProjectPagePM({
                                 <td className="px-4 py-3">
                                   <input
                                       key={`${item.id}-comment-${item.user_comment ?? ""}`}
-                                      type="text" maxLength={1000} disabled={mlImport.status !== "draft" || isUpdating}
+                                      type="text" maxLength={1000} disabled={mlImport.status !== "draft" || isUpdating || item.is_confirmed}
                                       defaultValue={item.user_comment ?? ""} placeholder="Комментарий"
                                       onBlur={(event) => {
                                         const comment = event.target.value.trim() || null;
@@ -754,7 +991,16 @@ export function ProjectPagePM({
       <CheckCircle2 size={14}/>
       Добавлен
     </span>
-                                  ) : item.ml_status === "На складе" ? (
+                                  ) : normalizedStatus === "Нет в системе" ? (
+                                      <button
+                                          type="button"
+                                          onClick={() => openProductModal(item)}
+                                          disabled={mlImport.status !== "draft"}
+                                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-red-600 rounded-md hover:bg-red-700 transition-colors disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                      >
+                                        Добавить товар
+                                      </button>
+                                  ) : normalizedStatus === "На складе" ? (
                                       <span
                                           className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
       <CheckCircle2 size={14}/>
@@ -788,13 +1034,14 @@ export function ProjectPagePM({
 
                 <div className="flex items-center justify-between gap-4 mt-4">
                   <p className="text-xs text-slate-400">
-                    Перед подтверждением у каждой строки должны быть указаны поставщик, цена и количество.
+                    Для строк «Нет в системе» сначала создайте товар через кнопку в строке.
+                    У остальных строк должны быть указаны поставщик, цена и количество.
                   </p>
                   <button
                       type="button"
                       onClick={handleConfirmMlImport}
                       disabled={!canConfirmMlImport || confirmingImport}
-                      className="flex items-center gap-2 px-5 py-2.5 bg-[#2563EB] text-white text-sm font-semibold rounded-lg hover:bg-[#1D4ED8] transition-colors disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed"
+                      className="flex items-center gap-2 px-5 py-2.5 bg-[#2563EB] text-white text-sm font-semibold rounded-lg hover:bg-[#1D4ED8] transition-colors disabled:bg-[#2563EB] disabled:text-white disabled:hover:bg-[#2563EB] disabled:cursor-not-allowed"
                   >
                     {confirmingImport ? (
                         <>
@@ -817,6 +1064,164 @@ export function ProjectPagePM({
               </>
             )}
         </div>
+
+        {productModalItem && (
+          <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="create-product-title"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) closeProductModal();
+              }}
+          >
+            <div className="w-full max-w-lg rounded-xl bg-white shadow-2xl">
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-4">
+                <div>
+                  <h2 id="create-product-title" className="text-lg font-semibold text-slate-900">
+                    Добавить товар в систему
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Строка останется со статусом «Нет в системе», но будет готова к подтверждению.
+                  </p>
+                </div>
+                <button
+                    type="button"
+                    onClick={closeProductModal}
+                    disabled={savingProduct}
+                    className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed"
+                    aria-label="Закрыть"
+                >
+                  <XCircle size={20}/>
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateProduct} className="space-y-4 px-6 py-5">
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Название товара
+                  </span>
+                  <input
+                      type="text"
+                      required
+                      maxLength={255}
+                      value={productModalForm.product_name}
+                      onChange={(event) => setProductModalForm((current) => ({
+                        ...current,
+                        product_name: event.target.value,
+                      }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Поставщик
+                  </span>
+                  <input
+                      type="text"
+                      required
+                      maxLength={255}
+                      value={productModalForm.supplier_name}
+                      onChange={(event) => setProductModalForm((current) => ({
+                        ...current,
+                        supplier_name: event.target.value,
+                      }))}
+                      placeholder="Введите имя поставщика"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700">
+                    Единица измерения
+                  </span>
+                  <input
+                      type="text"
+                      required
+                      maxLength={50}
+                      list="ml-product-unit-options"
+                      value={productModalForm.unit}
+                      onChange={(event) => setProductModalForm((current) => ({
+                        ...current,
+                        unit: event.target.value,
+                      }))}
+                      placeholder="Выберите или введите"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
+                  />
+                  <datalist id="ml-product-unit-options">
+                    {["шт", "компл.", "упак.", "кг", "м", "л"].map((unit) => (
+                      <option key={unit} value={unit}/>
+                    ))}
+                  </datalist>
+                </label>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-medium text-slate-700">
+                      Себестоимость
+                    </span>
+                    <input
+                        type="number"
+                        required
+                        min="0.01"
+                        step="0.01"
+                        value={productModalForm.price_cost}
+                        onChange={(event) => setProductModalForm((current) => ({
+                          ...current,
+                          price_cost: event.target.value,
+                        }))}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-medium text-slate-700">
+                      Цена продажи
+                    </span>
+                    <input
+                        type="number"
+                        required
+                        min="0.01"
+                        step="0.01"
+                        value={productModalForm.price}
+                        onChange={(event) => setProductModalForm((current) => ({
+                          ...current,
+                          price: event.target.value,
+                        }))}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
+                    />
+                  </label>
+                </div>
+
+                {productModalError && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {productModalError}
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-3 border-t border-slate-200 pt-4">
+                  <button
+                      type="button"
+                      onClick={closeProductModal}
+                      disabled={savingProduct}
+                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Отмена
+                  </button>
+                  <button
+                      type="submit"
+                      disabled={savingProduct}
+                      className="inline-flex items-center gap-2 rounded-lg bg-[#2563EB] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1D4ED8] disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    {savingProduct && <Loader2 size={15} className="animate-spin"/>}
+                    {savingProduct ? "Сохранение…" : "Создать товар"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
     </PageWrap>
   );
 }
@@ -828,6 +1233,7 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
   const [projectError, setProjectError] = useState<string | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [showEstimate, setShowEstimate] = useState(false);
 
   const resolvedProjectId = Number(projectId);
   const hasValidProjectId = Number.isInteger(resolvedProjectId) && resolvedProjectId > 0;
@@ -839,6 +1245,22 @@ const [projectItemsLoading, setProjectItemsLoading] =
 
 const [projectItemsError, setProjectItemsError] =
   useState<string | null>(null);
+
+  const estimateRows: EstimateRow[] = projectItems.map((item) => {
+    const parsedPrice = item.estimated_price == null
+      ? null
+      : Number(item.estimated_price);
+
+    return {
+      id: item.id,
+      name: item.product?.name ?? "—",
+      code: item.matched_external_id ?? item.product?.external_id ?? null,
+      quantity: Number(item.required_quantity ?? 0),
+      estimatedPrice: parsedPrice != null && Number.isFinite(parsedPrice)
+        ? parsedPrice
+        : null,
+    };
+  });
   useEffect(() => {
     if (!hasValidProjectId) {
       setProject(null);
@@ -986,6 +1408,20 @@ const [projectItemsError, setProjectItemsError] =
           <Chip status={currentStatus} />
           <Chip status="kp" />
           <button
+            type="button"
+            onClick={() => setShowEstimate((current) => !current)}
+            disabled={projectItemsLoading || projectItems.length === 0}
+            aria-expanded={showEstimate}
+            className={`flex items-center gap-1.5 rounded border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+              showEstimate
+                ? "border-[#2563EB] bg-blue-50 text-[#2563EB]"
+                : "border-[#E2E8F0] bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <Calculator size={14}/>
+            Смета
+          </button>
+          <button
             onClick={handleExportExcel}
             disabled={isExporting || !project}
             className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors whitespace-nowrap disabled:opacity-50"
@@ -1005,6 +1441,7 @@ const [projectItemsError, setProjectItemsError] =
           </div>
         </div>
       )}
+      {showEstimate && <EstimateTable rows={estimateRows}/>} 
       <div className="grid grid-cols-3 gap-6">
         <div className="col-span-2 space-y-5">
           <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
