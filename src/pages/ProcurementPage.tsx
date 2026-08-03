@@ -5,7 +5,9 @@ import type { Role, ProjectState } from "../types";
 import { 
   getProjectItems, 
   uploadProjectDocument, 
-  fetchProjectDocuments 
+  fetchProjectDocuments,
+  fetchWarehouseList,
+  WarehouseInfo
 } from "../api/api";
 import {
   Loader2,
@@ -20,9 +22,10 @@ import {
   PackageCheck,
   ShoppingCart,
   CheckCircle2,
-  Clock,
   AlertCircle,
-  XCircle
+  XCircle,
+  Building2,
+  X
 } from "lucide-react";
 
 type ProjectListItem = {
@@ -133,11 +136,11 @@ const isAwaitingSend = (st: InvoiceWorkflowStatus) =>
 const API_BASE_URL = "http://localhost:8000/api/v1";
 const PURCHASE_STATUS = "будет куплено";
 
-async function postInvoiceAction(documentId: number, action: string, body?: { reason: string }) {
+async function postInvoiceAction(documentId: number, action: string, body?: { reason: string}) {
   const response = await fetch(`${API_BASE_URL}/procurement-invoices/${documentId}/${action}`, {
     method: "POST",
     credentials: "include",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
+    headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
 
@@ -156,6 +159,9 @@ const accountantRejectInvoice = (documentId: number, reason: string) =>
 const directorApproveInvoice = (documentId: number) => postInvoiceAction(documentId, "director-approve");
 const directorRejectInvoice = (documentId: number, reason: string) =>
   postInvoiceAction(documentId, "director-reject", { reason });
+
+const sendInvoiceToIncomeApi = (documentId: number, warehouseId: number, items: Array<{ product_id: number; quantity: number }>) =>
+  postInvoiceAction(documentId, "send-to-income", { warehouse_id: warehouseId, items });
 
 const PROJECT_WORKFLOW = [
   "Новый проект",
@@ -245,6 +251,12 @@ export function ProcurementPage({
   const [expandedSuppliers, setExpandedSuppliers] = useState<Record<string, boolean>>({});
   const [supplierWorkflows, setSupplierWorkflows] = useState<Record<string, SupplierWorkflowState>>({});
 
+  // Модалка выбора склада для отправки на приход
+  const [warehouses, setWarehouses] = useState<WarehouseInfo[]>([]);
+  const [isIncomeModalOpen, setIsIncomeModalOpen] = useState(false);
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<number>(1);
+  const [isSendingToIncome, setIsSendingToIncome] = useState(false);
+
   const isDirector = role === "director" || role === "commercial_director";
   const isAccountant = role === "accountant";
   const isPm = role === "pm";
@@ -278,6 +290,14 @@ export function ProcurementPage({
       }
     };
     fetchProjects();
+    fetchWarehouseList().then(whs => {
+      if (whs && whs.length > 0) {
+        setWarehouses(whs);
+        setSelectedWarehouseId(whs[0].id);
+      }
+    
+    }).catch(e => console.error("Ошибка загрузки складов:", e));
+
     return () => { cancelled = true; };
   }, []);
 
@@ -904,14 +924,6 @@ export function ProcurementPage({
                         </>
                       )
                     )}
-                    {isDirector && (wfState.status === 'approved' || wfState.status === 'income') && (
-                      <span className="text-xs font-semibold text-green-700 bg-green-50 px-3 py-1.5 rounded-lg border border-green-200 flex items-center gap-1">
-                        <CheckCircle2 size={13} /> Директор подтвердил
-                      </span>
-                    )}
-                    {isDirector && (isAwaitingSend(wfState.status) || wfState.status === 'pending_accountant') && (
-                      <span className="text-xs text-slate-400 italic">Ожидает проверки бухгалтера</span>
-                    )}
                   </div>
                 </div>
 
@@ -958,9 +970,9 @@ export function ProcurementPage({
                                 {marginPercent.toFixed(1)}%
                               </span>
                             </td>
-                          </tr>
-                        );
-                      })}
+                            </tr>
+                          );
+                        })}
                     </tbody>
                   </table>
                 </div>
@@ -984,7 +996,7 @@ export function ProcurementPage({
                   {!allPendingSendFilesUploaded && (
                     <p className="text-xs text-slate-500 flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-lg">
                       <AlertCircle size={13} className="text-amber-500" />
-                      Загружено {pendingSendSuppliersWithFile.length} из {pendingSendSuppliers.length} счетов, ожидающих отправки. Загрузите счета для всех поставщиков, прежде чем отправлять на проверку.
+                      Загружено {pendingSendSuppliersWithFile.length} из {pendingSendSuppliers.length} счетов, ожидающих отправки.
                     </p>
                   )}
 
@@ -1008,12 +1020,12 @@ export function ProcurementPage({
                   {!canGlobalSendToIncome && (
                     <p className="text-xs text-slate-500 flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-lg">
                       <AlertCircle size={13} className="text-amber-500" />
-                      Счета отправлены на проверку. Кнопка «Отправить на приход» станет активной после того, как Бухгалтер и Директор по очереди подтвердят все счёта.
+                      Счета отправлены на проверку. Кнопка «Отправить на приход» станет активной после того, как Бухгалтер и Директор подтвердят всё.
                     </p>
                   )}
 
                   <button
-                    onClick={handleGlobalSendToIncome}
+                    onClick={handleOpenSendToIncomeModal}
                     disabled={!canGlobalSendToIncome}
                     className={`flex items-center gap-2.5 px-6 py-3 text-sm font-bold rounded-xl shadow-sm transition-all ${
                       canGlobalSendToIncome
@@ -1028,6 +1040,69 @@ export function ProcurementPage({
               )}
             </>
           )}
+        </div>
+      )}
+
+      {/* Модальное окно выбора склада для отправки на приход */}
+      {isIncomeModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md bg-white rounded-xl shadow-xl p-6 border border-[#E2E8F0]">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2 text-slate-900 font-bold">
+                <Building2 className="text-blue-600" size={20} />
+                <h3>Выбор склада для поступления</h3>
+              </div>
+              <button onClick={() => setIsIncomeModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 mb-4">
+              Выберите склад, на который кладовщик будет принимать ожидаемый товар по одобренным счетам:
+            </p>
+
+            <div className="space-y-2 mb-6">
+              {warehouses.map(wh => (
+                <label
+                  key={wh.id}
+                  className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all ${
+                    selectedWarehouseId === wh.id
+                      ? "border-blue-600 bg-blue-50/50 text-blue-900 font-medium"
+                      : "border-[#E2E8F0] hover:bg-slate-50 text-slate-700"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="warehouse_select"
+                      checked={selectedWarehouseId === wh.id}
+                      onChange={() => setSelectedWarehouseId(wh.id)}
+                      className="text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-sm">{wh.name}</span>
+                  </div>
+                  {wh.code && <span className="text-xs text-slate-400 font-mono">[{wh.code}]</span>}
+                </label>
+              ))}
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setIsIncomeModalOpen(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={handleConfirmGlobalSendToIncome}
+                disabled={isSendingToIncome}
+                className="flex items-center gap-2 px-5 py-2 text-xs font-semibold bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50"
+              >
+                {isSendingToIncome && <Loader2 size={14} className="animate-spin" />}
+                Подтвердить и отправить
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </PageWrap>
