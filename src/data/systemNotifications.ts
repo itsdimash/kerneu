@@ -16,6 +16,7 @@ export type NotificationCategory =
   | "invoice_pending_director"
   | "invoice_approved"
   | "invoice_rejected"
+  | "invoice_sent_to_income"
   | "docs_pending_accountant"
   | "docs_pending_director"
   | "docs_approved"
@@ -23,6 +24,7 @@ export type NotificationCategory =
   | "contract_signed"
   | "stock_low"
   | "goods_arrived"
+  | "goods_shipped"
   | "upload_processed"
   | "deadline";
 

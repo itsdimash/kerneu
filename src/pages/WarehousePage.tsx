@@ -27,6 +27,7 @@ import {
   shipProjectItemsPerWarehouse,
   fetchWarehouseShipments,
   fetchPendingShipments,
+  fetchWarehouseList,
   WarehouseStockResponse,
   WarehouseReceiptResponse,
   WarehouseInfo,
@@ -54,6 +55,7 @@ type ArrivalRow = {
   id: number;
   receiptNumber: string;
   project: string;
+  projectId: number | null;
   date: string;
   warehouseName: string; // Новое поле: на какой склад придет товар
   supplier: string;
@@ -146,11 +148,32 @@ function mapStock(item: WarehouseStockResponse): StockRow {
   };
 }
 
+const WAREHOUSE_API_BASE = "http://localhost:8000/api/v1";
+
+// TODO(backend): эндпоинт ещё не реализован — предполагаемый контракт:
+// POST /projects/{project_id}/send-to-shipment
+// Должен перевести Project.status_id проекта из "На приходе" в
+// "На отгрузке" (id=6 в project_statuses).
+async function sendProjectToShipment(projectId: number) {
+  const response = await fetch(`${WAREHOUSE_API_BASE}/projects/${projectId}/send-to-shipment`, {
+    method: "POST",
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => "");
+    throw new Error(message || "Не удалось перевести проект в статус 'На отгрузке'");
+  }
+
+  return response.json().catch(() => null);
+}
+
 function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
   return {
     id: item.id,
     receiptNumber: item.receipt_number || `ПР-${item.id}`,
     project: item.project_name || (item.project_id ? `Проект #${item.project_id}` : "—"),
+    projectId: item.project_id ?? null,
     date: item.date ? new Date(item.date).toLocaleDateString("ru-RU") : "—",
     warehouseName: item.warehouse?.name || (item.warehouse_id ? `Склад №${item.warehouse_id}` : "—"),
     supplier: item.supplier?.supplier_name || item.supplier?.name || `Поставщик #${item.supplier_id}`,
@@ -597,18 +620,36 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   const shipmentLocked = !projectState.contractSigned;
 
   useEffect(() => {
+    loadWarehousesList();
     loadStock();
     loadArrivals();
     loadShipments();
     loadPendingShipments();
   }, []);
 
+  // Настоящий справочник складов (GET /warehouse/list) — источник истины.
+  // Раньше список складов "угадывался" из /warehouse/stocks (deriveWarehouses),
+  // из-за чего склад, на котором ещё ни разу не было остатка/прихода,
+  // просто не появлялся в таблице, хотя реально существует в БД.
+  const loadWarehousesList = async () => {
+    try {
+      const list = await fetchWarehouseList();
+      if (list && list.length > 0) {
+        setWarehouses(list);
+      }
+    } catch (e) {
+      console.error("Не удалось загрузить справочник складов, используем производный список", e);
+    }
+  };
+
   const loadStock = async () => {
     setStockLoading(true);
     setStockError(null);
     try {
       const data = await fetchWarehouseStocks();
-      setWarehouses(deriveWarehouses(data));
+      // Справочник складов уже приходит из loadWarehousesList(); здесь только
+      // подстраховка на случай, если /warehouse/list недоступен вообще.
+      setWarehouses((prev) => (prev.length > 0 ? prev : deriveWarehouses(data)));
       setStock(data.map(mapStock));
     } catch (e) {
       setStockError(e instanceof Error ? e.message : "Не удалось загрузить остатки склада");
@@ -750,9 +791,36 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     }
   };
 
-  const handleConfirmSuccess = () => {
-    loadArrivals();
+  // Кладовщик подтвердил ещё один приход по проекту (галочка/модалка).
+  // Как только у проекта не остаётся ни одного прихода в статусе
+  // "pending", считаем, что весь приход собран целиком, и переводим
+  // проект в "На отгрузке". "cancelled" тоже считаем закрытым — отменённая
+  // позиция больше никогда не придёт, так что она не должна вечно держать
+  // проект в "На приходе".
+  const handleConfirmSuccess = async (confirmedReceipt: ArrivalRow | null) => {
+    let freshArrivals: ArrivalRow[] = arrivals;
+    try {
+      const data = await fetchWarehouseReceipts();
+      freshArrivals = data.map(mapReceipt);
+      setArrivals(freshArrivals);
+    } catch (e) {
+      console.error("Не удалось обновить список приходов", e);
+    }
     loadStock();
+
+    const projectId = confirmedReceipt?.projectId;
+    if (!projectId) return;
+
+    const projectReceipts = freshArrivals.filter((r) => r.projectId === projectId);
+    const allDone = projectReceipts.length > 0 && projectReceipts.every((r) => r.status !== "pending");
+
+    if (allDone) {
+      try {
+        await sendProjectToShipment(projectId);
+      } catch (e) {
+        console.error("Не удалось перевести проект в статус 'На отгрузке'", e);
+      }
+    }
   };
 
   const handleToggleCancel = async (receipt: ArrivalRow) => {
@@ -799,7 +867,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
       )}
 
       {confirmTarget && (
-        <ConfirmReceiptModal receipt={confirmTarget} onClose={() => setConfirmTarget(null)} onSuccess={handleConfirmSuccess} />
+        <ConfirmReceiptModal receipt={confirmTarget} onClose={() => setConfirmTarget(null)} onSuccess={() => handleConfirmSuccess(confirmTarget)} />
       )}
 
       {detailsTarget && (
@@ -1016,15 +1084,15 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                         {/* 9. Икс или галочка в зависимости от того, принял ли склад */}
                         <td className="px-4 py-3.5 text-center">
                           {isCancelled ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700" title="Отменено">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700 whitespace-nowrap" title="Отменено">
                               <XCircle size={14} /> Отклонено
                             </span>
                           ) : isArrived ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700" title="Принято кладовщиком">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700 whitespace-nowrap" title="Принято кладовщиком">
                               <CheckCircle2 size={14} /> Принято
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800" title="Ожидается доставка">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 whitespace-nowrap" title="Ожидается доставка">
                               <Clock size={14} /> В пути
                             </span>
                           )}

@@ -163,6 +163,27 @@ const directorRejectInvoice = (documentId: number, reason: string) =>
 const sendInvoiceToIncomeApi = (documentId: number, warehouseId: number, items: Array<{ product_id: number; quantity: number }>) =>
   postInvoiceAction(documentId, "send-to-income", { warehouse_id: warehouseId, items });
 
+// TODO(backend): эндпоинт ещё не реализован — предполагаемый контракт:
+// POST /projects/{project_id}/send-to-receiving
+// Должен перевести Project.status_id проекта в статус "На приходе"
+// (id=10 в project_statuses) и вернуть обновлённый проект (как минимум
+// { status: { status_name: "На приходе" } }), чтобы фронт мог
+// синхронизировать локальный state с реальным статусом из БД, а не
+// полагаться только на оптимистичное обновление ниже.
+async function sendProjectToReceiving(projectId: number) {
+  const response = await fetch(`${API_BASE_URL}/projects/${projectId}/send-to-receiving`, {
+    method: "POST",
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => "");
+    throw new Error(message || "Не удалось отправить проект на приход");
+  }
+
+  return response.json().catch(() => null);
+}
+
 const PROJECT_WORKFLOW = [
   "Новый проект",
   "В редактировании",
@@ -622,16 +643,74 @@ export function ProcurementPage({
     }
   };
 
-  const handleGlobalSendToIncome = () => {
-    setSupplierWorkflows(prev => {
-      const next = { ...prev };
-      supplierKeys.forEach(sup => {
-        if (next[sup] && next[sup].status === 'approved') {
-          next[sup] = { ...next[sup], status: 'income' };
+  const handleOpenSendToIncomeModal = () => {
+    if (!canGlobalSendToIncome) return;
+    setIsIncomeModalOpen(true);
+  };
+
+  const handleConfirmGlobalSendToIncome = async () => {
+    if (!selectedWarehouseId) return;
+
+    const approvedSuppliers = supplierKeys.filter(
+      sup => supplierWorkflows[sup]?.status === 'approved'
+    );
+    if (approvedSuppliers.length === 0) {
+      setIsIncomeModalOpen(false);
+      return;
+    }
+
+    setIsSendingToIncome(true);
+    try {
+      await Promise.all(
+        approvedSuppliers.map(sup => {
+          const docId = supplierWorkflows[sup]?.docId;
+          if (!docId) return Promise.resolve();
+
+          const items = (groupedItems[sup] || []).map(item => ({
+            product_id: Number(item.product_id ?? item.product?.id ?? item.id),
+            quantity: toNumber(item.required_quantity ?? item.quantity),
+          }));
+
+          return sendInvoiceToIncomeApi(docId, selectedWarehouseId, items);
+        })
+      );
+
+      // Переводит проект в статус "На приходе" на бэкенде — как только
+      // друг реализует /send-to-receiving, ProjectPage сразу подхватит
+      // новый статус: "Активный закуп" станет done, "На приходе" — active.
+      if (selectedProject) {
+        try {
+          await sendProjectToReceiving(selectedProject.id);
+          const nextStatus = { status_name: "На приходе" };
+          setSelectedProject(prev => (prev ? { ...prev, status: nextStatus } : prev));
+          setProjects(prev =>
+            prev.map(p => (p.id === selectedProject.id ? { ...p, status: nextStatus } : p))
+          );
+        } catch (error) {
+          console.error("Send to receiving failed", error);
+          // Не блокируем остальной флоу счетов из-за этого — просто
+          // предупреждаем, статус проекта можно будет поправить вручную.
+          alert("Счета отправлены на приход, но не удалось обновить статус проекта.");
         }
+      }
+
+      setSupplierWorkflows(prev => {
+        const next = { ...prev };
+        approvedSuppliers.forEach(sup => {
+          if (next[sup]) {
+            next[sup] = { ...next[sup], status: 'income' };
+          }
+        });
+        return next;
       });
-      return next;
-    });
+
+      setIsIncomeModalOpen(false);
+    } catch (error) {
+      console.error("Send to income failed", error);
+      alert("Не удалось отправить счета на приход.");
+    } finally {
+      setIsSendingToIncome(false);
+    }
   };
 
   return (
