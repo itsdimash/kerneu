@@ -251,8 +251,6 @@ export function DocumentsPage({
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? projects[0];
   const selectedProjectName = selectedProject?.name ?? "Проект не выбран";
-  const contractSigned = selectedProject?.contractSigned ?? projectState.contractSigned;
-  const uploadsLocked = !contractSigned;
 
   // ОБНОВЛЕННАЯ ЛОГИКА ФИЛЬТРАЦИИ
   const filteredProjects = projects.filter(p => {
@@ -274,15 +272,28 @@ export function DocumentsPage({
   const allDocs = [...archivedKps, ...localDocs.filter((document) => document.category !== "kp")];
   const hasApprovedKp = archivedKps.some((document) => document.status === "approved");
 
-  const reviewInFlight = reviewStage === "pending_accountant" || reviewStage === "pending_director";
-  // После полного согласования (approved) PM больше не может редактировать
-  // документов — блокировка остаётся навсегда, а не только до завершения проекта.
-  const docsLocked = completed || uploadsLocked || reviewInFlight || reviewStage === "approved";
-
   const contractDoc = allDocs.find(d => d.category === "contract");
   const poaDocs     = allDocs.filter(d => d.category === "power_of_attorney");
   const waybillDocs = allDocs.filter(d => d.category === "waybill");
   const invoiceDocs = allDocs.filter(d => d.category === "invoice");
+
+  // Договор считается подписанным, если файл реально загружен и лежит в
+  // архиве документов проекта (contractDoc.status === "uploaded") — это
+  // надёжный локальный признак. Раньше здесь смотрели только на
+  // backend-статус проекта (SIGNED_STATUSES), а он завязан на отдельный
+  // вызов синхронизации статуса, который может не срабатывать (см.
+  // ContractPage). Из-за этого PM мог загрузить договор, а доверенности и
+  // накладные оставались заблокированы навсегда. Теперь достаточно факта
+  // загрузки файла; backend-статус остаётся как запасной сигнал.
+  const contractSigned =
+    contractDoc?.status === "uploaded" ||
+    (selectedProject?.contractSigned ?? projectState.contractSigned);
+  const uploadsLocked = !contractSigned;
+
+  const reviewInFlight = reviewStage === "pending_accountant" || reviewStage === "pending_director";
+  // После полного согласования (approved) PM больше не может редактировать
+  // документов — блокировка остаётся навсегда, а не только до завершения проекта.
+  const docsLocked = completed || uploadsLocked || reviewInFlight || reviewStage === "approved";
 
   const poaPlaceholder: ProjectDocument = {
     id: "poa-placeholder",
@@ -327,14 +338,13 @@ export function DocumentsPage({
   const allUploaded = doneDocCount === requiredDocCount;
   const canComplete = allUploaded && reviewStage === "approved" && !completed;
 
-  // НОВОЕ: Проверяем, находится ли проект в правильном статусе
-  const isWaitingForDocs = selectedProject?.statusName === "Ожидание документов";
-
-  // НОВОЕ: Динамический текст для подсказки над кнопкой отправки на проверку
-  const tooltipReview = !isWaitingForDocs 
-    ? "Отправка доступна только после того, как склад отгрузит товары (статус «Ожидание документов»)" 
-    : !allUploaded 
-    ? "Загрузите все документы сначала" 
+  // Кнопка «Отправить на проверку» доступна PM в любой момент после
+  // подписания договора, как только все обязательные документы загружены —
+  // без привязки к статусу склада (раньше требовался статус «Ожидание
+  // документов», из-за чего PM не мог отправить пакет на проверку, пока
+  // склад полностью не пройдёт закуп/приход/отгрузку).
+  const tooltipReview = !allUploaded
+    ? "Загрузите все документы сначала"
     : "";
 
   const [submittingReview, setSubmittingReview] = useState(false);
@@ -970,10 +980,10 @@ export function DocumentsPage({
                 {/* ОБНОВЛЕНО: Используем новый тултип и блокируем кнопку */}
                 <AppTooltip text={tooltipReview}>
                   <button
-                    onClick={() => allUploaded && isWaitingForDocs && handleSubmitForReview()}
-                    disabled={!allUploaded || submittingReview || !isWaitingForDocs}
+                    onClick={() => allUploaded && handleSubmitForReview()}
+                    disabled={!allUploaded || submittingReview}
                     className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
-                      allUploaded && isWaitingForDocs
+                      allUploaded
                         ? "bg-[#2563EB] text-white hover:bg-[#1d4ed8]"
                         : "bg-slate-100 text-slate-400 cursor-not-allowed"
                     }`}
