@@ -6,6 +6,7 @@ import {
   accountantRejectDocuments,
   directorApproveDocuments,
   directorRejectDocuments,
+  completeProjectOnBackend, // <-- ДОБАВЛЕН ИМПОРТ
 } from "../api/api";
 
 export type DocCategory = "kp" | "contract" | "power_of_attorney" | "invoice" | "waybill";
@@ -115,9 +116,6 @@ class DocumentsStore {
     this.emit();
   }
 
-  // Применяет ответ бэкенда к локальному стору. "completed" бэкенд пока не
-  // возвращает (кнопка "Завершить проект" ещё не подключена к API), поэтому
-  // сохраняем текущее локальное значение этого поля.
   private applyReviewResponse(projectId: string, response: DocumentReviewResponse) {
     if (!projectId) return;
 
@@ -131,9 +129,6 @@ class DocumentsStore {
     this.emit();
   }
 
-  // Подтягивает актуальный статус согласования с бэкенда. Не бросает
-  // исключение — предназначена для фонового опроса (см. loadReview в
-  // DocumentsPage), чтобы не ронять интерфейс при временной недоступности сети.
   async loadReview(projectId: string): Promise<void> {
     if (!projectId) return;
 
@@ -145,39 +140,39 @@ class DocumentsStore {
     }
   }
 
-  // PM: отправить / заново отправить документы на проверку бухгалтеру.
   async submitForReview(projectId: string): Promise<void> {
     const response = await submitDocumentsForReview(projectId);
     this.applyReviewResponse(projectId, response);
   }
 
-  // Бухгалтер: принять — документы уходят директору.
   async accountantApprove(projectId: string): Promise<void> {
     const response = await accountantApproveDocuments(projectId);
     this.applyReviewResponse(projectId, response);
   }
 
-  // Бухгалтер: отклонить, с необязательным комментарием для PM.
   async accountantReject(projectId: string, reason?: string): Promise<void> {
     const response = await accountantRejectDocuments(projectId, reason);
     this.applyReviewResponse(projectId, response);
   }
 
-  // Директор: принять — финальное согласование.
   async directorApprove(projectId: string): Promise<void> {
     const response = await directorApproveDocuments(projectId);
     this.applyReviewResponse(projectId, response);
   }
 
-  // Директор: отклонить, с необязательным комментарием для PM.
   async directorReject(projectId: string, reason?: string): Promise<void> {
     const response = await directorRejectDocuments(projectId, reason);
     this.applyReviewResponse(projectId, response);
   }
 
-  // NOTE: "Завершить проект" намеренно оставлено локальным — бэкенд для
-  // этой кнопки будет добавлен отдельно (см. договорённость в задаче).
-  completeProject(projectId: string) {
+  // ОБНОВЛЕНО: Теперь метод асинхронный и работает с бэкендом
+  async completeProject(projectId: string): Promise<void> {
+    if (!projectId) return;
+    
+    // 1. Отправляем запрос на сервер
+    await completeProjectOnBackend(projectId);
+    
+    // 2. Обновляем локальный стейт
     this.setReview(projectId, { completed: true });
   }
 
