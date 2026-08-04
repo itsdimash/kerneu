@@ -160,7 +160,7 @@ const directorApproveInvoice = (documentId: number) => postInvoiceAction(documen
 const directorRejectInvoice = (documentId: number, reason: string) =>
   postInvoiceAction(documentId, "director-reject", { reason });
 
-const sendInvoiceToIncomeApi = (documentId: number, warehouseId: number, items: Array<{ product_id: number; quantity: number }>) =>
+const sendInvoiceToIncomeApi = (documentId: number, warehouseId: number, items: Array<{ product_id: number; quantity: number; purchase_price: number }>) =>
   postInvoiceAction(documentId, "send-to-income", { warehouse_id: warehouseId, items });
 
 // TODO(backend): эндпоинт ещё не реализован — предполагаемый контракт:
@@ -669,6 +669,7 @@ export function ProcurementPage({
           const items = (groupedItems[sup] || []).map(item => ({
             product_id: Number(item.product_id ?? item.product?.id ?? item.id),
             quantity: toNumber(item.required_quantity ?? item.quantity),
+            purchase_price: getPurchasePrice(item),
           }));
 
           return sendInvoiceToIncomeApi(docId, selectedWarehouseId, items);

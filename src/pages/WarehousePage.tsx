@@ -861,43 +861,33 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   // позиция больше никогда не придёт, так что она не должна вечно держать
   // проект в "На приходе".
   const handleConfirmSuccess = async (confirmedReceipt: ArrivalRow | null) => {
-    let freshArrivals: ArrivalRow[] = arrivals;
+  let freshArrivals: ArrivalRow[] = arrivals;
+  try {
+    const data = await fetchWarehouseReceipts();
+    freshArrivals = data.map(mapReceipt);
+    setArrivals(freshArrivals);
+  } catch (e) {
+    console.error("Не удалось обновить список приходов", e);
+  }
+  loadStock();
+
+  const projectId = confirmedReceipt?.projectId;
+  if (!projectId) return;
+
+  const projectReceipts = freshArrivals.filter((r) => r.projectId === projectId);
+  const allDone = projectReceipts.length > 0 && projectReceipts.every((r) => r.status !== "pending");
+
+  if (allDone) {
     try {
-      const data = await fetchWarehouseReceipts();
-      freshArrivals = data.map(mapReceipt);
-      setArrivals(freshArrivals);
+      await sendProjectToShipment(projectId);
+      // ДОБАВЛЕНО: сразу подтягиваем список проектов, готовых к отгрузке,
+      // чтобы вкладка "Отгрузка" обновилась без ручного F5.
+      loadPendingShipments();
     } catch (e) {
-      console.error("Не удалось обновить список приходов", e);
+      console.error("Не удалось перевести проект в статус 'На отгрузке'", e);
     }
-    loadStock();
-
-    const projectId = confirmedReceipt?.projectId;
-    if (!projectId) return;
-
-    const projectReceipts = freshArrivals.filter((r) => r.projectId === projectId);
-    const allDone = projectReceipts.length > 0 && projectReceipts.every((r) => r.status !== "pending");
-
-    if (allDone) {
-      try {
-        await sendProjectToShipment(projectId);
-      } catch (e) {
-        console.error("Не удалось перевести проект в статус 'На отгрузке'", e);
-      }
-    }
-  };
-
-  const handleToggleCancel = async (receipt: ArrivalRow) => {
-    setCancellingReceiptId(receipt.id);
-    try {
-      await setReceiptCancelled(receipt.id, receipt.status !== "cancelled");
-      await loadArrivals();
-    } catch (e: any) {
-      const detail = e?.response?.data?.detail;
-      setArrivalsError(typeof detail === "string" ? detail : "Не удалось изменить статус отмены");
-    } finally {
-      setCancellingReceiptId(null);
-    }
-  };
+  }
+};
 
   const filteredStock = useMemo(() => {
     return stock
@@ -1280,13 +1270,15 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                           {proj.items.map((it) => (
                             <tr key={it.id} className="hover:bg-slate-50/40 transition-colors">
                               <td className="px-5 py-3 text-center">
-                                <input
-                                  type="checkbox"
-                                  checked={it.checked}
-                                  disabled={!isWarehouseUser || proj.submitting || !it.warehouseId}
-                                  onChange={() => toggleShipmentItemChecked(proj.projectId, it.id)}
-                                  className="w-4 h-4 accent-[#2563EB] cursor-pointer disabled:cursor-not-allowed"
-                                />
+                              {isWarehouseUser && (
+                              <input
+                                type="checkbox"
+                                checked={it.checked}
+                                disabled={proj.submitting || !it.warehouseId}
+                                onChange={() => toggleShipmentItemChecked(proj.projectId, it.id)}
+                                className="w-4 h-4 accent-[#2563EB] cursor-pointer disabled:cursor-not-allowed"
+                              />
+                              )}
                               </td>
                               <td className="px-5 py-3 text-sm font-medium text-slate-800">{it.productName}</td>
                               <td className="px-5 py-3 text-sm font-mono text-slate-700 text-center">{it.quantity}</td>
