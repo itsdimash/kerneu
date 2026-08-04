@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { Page, Role } from "../types";
 import { PageWrap } from "../app/components/common/PageWrap";
 import {
@@ -7,21 +7,28 @@ import {
   ChevronDown,
   FileText,
   Loader2,
-  RefreshCw,
   ShoppingCart,
-  Upload,
+  X,
 } from "lucide-react";
 import { documentsStore } from "../store/documentsStore";
-import { uploadProjectDocument, fetchProjectDocuments, signProjectContract } from "../api/api";
+import {
+  fetchProjectDocuments,
+  generateContract,
+  type ContractGenerateRequest,
+} from "../api/api";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
 /*                                                                      */
 /* ContractApiProject mirrors ContractProjectResponse from the backend  */
 /* (GET /api/v1/projects/contracts). ContractProject is the shape the   */
-/* UI below actually renders — contractUploaded/fileName/uploadDate     */
-/* stay client-side local state for now since there's no upload         */
-/* endpoint/column yet.                                                 */
+/* UI below actually renders.                                           */
+/*                                                                      */
+/* Upload no longer happens on this page — только бухгалтер генерирует  */
+/* договор здесь, проверяет/правит его локально и загружает готовый     */
+/* файл на странице "Документы". Здесь остаётся только read-only статус */
+/* (загружен / не загружен) для всех ролей, и кнопка "Сгенерировать"    */
+/* только для бухгалтера.                                               */
 /* ------------------------------------------------------------------ */
 
 interface ApiProductInfo {
@@ -81,6 +88,344 @@ function mapApiProject(p: ContractApiProject): ContractProject {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* Generate-contract modal (accountant only)                           */
+/* ------------------------------------------------------------------ */
+
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+type GenerateFormState = {
+  contract_number: string;
+  contract_date: string;
+  contract_valid_until: string;
+  buyer_company_name: string;
+  buyer_director_name: string;
+  buyer_address: string;
+  buyer_bin: string;
+  buyer_iik: string;
+  buyer_bik: string;
+  buyer_kbe: string;
+  specification_number: string;
+  delivery_term_days: string;
+  shipment_method: "pickup" | "delivery";
+  pickup_address: string;
+};
+
+function emptyGenerateForm(clientName: string): GenerateFormState {
+  return {
+    contract_number: "",
+    contract_date: todayIso(),
+    contract_valid_until: "",
+    buyer_company_name: clientName !== "—" ? clientName : "",
+    buyer_director_name: "",
+    buyer_address: "",
+    buyer_bin: "",
+    buyer_iik: "",
+    buyer_bik: "",
+    buyer_kbe: "17",
+    specification_number: "",
+    delivery_term_days: "30",
+    shipment_method: "pickup",
+    pickup_address: "",
+  };
+}
+
+function GenerateContractModal({
+  project,
+  onClose,
+}: {
+  project: ContractProject;
+  onClose: () => void;
+}) {
+  const [form, setForm] = useState<GenerateFormState>(() => emptyGenerateForm(project.client));
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const set = <K extends keyof GenerateFormState>(key: K, value: GenerateFormState[K]) =>
+    setForm((prev) => ({ ...prev, [key]: value }));
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (!/^\d{12}$/.test(form.buyer_bin)) {
+      setError("БИН должен состоять ровно из 12 цифр");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const payload: ContractGenerateRequest = {
+        project_id: Number(project.id),
+        contract_number: form.contract_number.trim(),
+        contract_date: form.contract_date || undefined,
+        contract_valid_until: form.contract_valid_until || undefined,
+        buyer_company_name: form.buyer_company_name.trim(),
+        buyer_director_name: form.buyer_director_name.trim(),
+        buyer_address: form.buyer_address.trim(),
+        buyer_bin: form.buyer_bin.trim(),
+        buyer_iik: form.buyer_iik.trim(),
+        buyer_bik: form.buyer_bik.trim(),
+        buyer_kbe: form.buyer_kbe.trim() || undefined,
+        specification_number: form.specification_number.trim() || undefined,
+        delivery_term_days: form.delivery_term_days ? Number(form.delivery_term_days) : undefined,
+        shipment_method: form.shipment_method,
+        pickup_address: form.shipment_method === "pickup" ? (form.pickup_address.trim() || undefined) : undefined,
+      };
+
+      await generateContract(payload);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось сгенерировать договор");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const inputCls =
+    "w-full text-sm border border-[#E2E8F0] rounded-lg px-3 py-2 outline-none focus:border-[#2563EB]/50";
+  const labelCls = "text-xs font-medium text-slate-600 mb-1 block";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4 py-8 overflow-y-auto"
+      onClick={() => !submitting && onClose()}
+    >
+      <div
+        className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl my-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0]">
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">Сгенерировать договор</h3>
+            <p className="text-xs text-slate-400 mt-0.5">{project.name} · {project.client}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => !submitting && onClose()}
+            className="text-slate-400 hover:text-slate-600 p-1"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5 max-h-[70vh] overflow-y-auto">
+          {error && (
+            <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+              {error}
+            </div>
+          )}
+
+          <div>
+            <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Договор</h4>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className={labelCls}>Номер договора *</label>
+                <input
+                  required
+                  value={form.contract_number}
+                  onChange={(e) => set("contract_number", e.target.value)}
+                  placeholder="015"
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Дата подписания</label>
+                <input
+                  type="date"
+                  value={form.contract_date}
+                  onChange={(e) => set("contract_date", e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Действует до</label>
+                <input
+                  type="date"
+                  value={form.contract_valid_until}
+                  onChange={(e) => set("contract_valid_until", e.target.value)}
+                  className={inputCls}
+                  placeholder="31.12 текущего года"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+              Реквизиты покупателя
+            </h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className={labelCls}>Название компании *</label>
+                <input
+                  required
+                  value={form.buyer_company_name}
+                  onChange={(e) => set("buyer_company_name", e.target.value)}
+                  placeholder='ТОО "Компания"'
+                  className={inputCls}
+                />
+              </div>
+              <div className="col-span-2">
+                <label className={labelCls}>ФИО директора *</label>
+                <input
+                  required
+                  value={form.buyer_director_name}
+                  onChange={(e) => set("buyer_director_name", e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+              <div className="col-span-2">
+                <label className={labelCls}>Адрес *</label>
+                <input
+                  required
+                  value={form.buyer_address}
+                  onChange={(e) => set("buyer_address", e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>БИН (12 цифр) *</label>
+                <input
+                  required
+                  value={form.buyer_bin}
+                  onChange={(e) => set("buyer_bin", e.target.value.replace(/\D/g, "").slice(0, 12))}
+                  inputMode="numeric"
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Кбе</label>
+                <input
+                  value={form.buyer_kbe}
+                  onChange={(e) => set("buyer_kbe", e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>ИИК *</label>
+                <input
+                  required
+                  value={form.buyer_iik}
+                  onChange={(e) => set("buyer_iik", e.target.value)}
+                  placeholder="KZ..."
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>БИК *</label>
+                <input
+                  required
+                  value={form.buyer_bik}
+                  onChange={(e) => set("buyer_bik", e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+              Условия поставки
+            </h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>Срок поставки, дней</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={form.delivery_term_days}
+                  onChange={(e) => set("delivery_term_days", e.target.value)}
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Номер спецификации</label>
+                <input
+                  value={form.specification_number}
+                  onChange={(e) => set("specification_number", e.target.value)}
+                  placeholder="= номер договора"
+                  className={inputCls}
+                />
+              </div>
+
+              <div className="col-span-2">
+                <label className={labelCls}>Место отгрузки</label>
+                <div className="flex gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => set("shipment_method", "pickup")}
+                    className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg border transition-colors ${
+                      form.shipment_method === "pickup"
+                        ? "bg-[#2563EB] border-[#2563EB] text-white"
+                        : "bg-white border-[#E2E8F0] text-slate-600 hover:border-[#2563EB]/40"
+                    }`}
+                  >
+                    Самовывоз
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => set("shipment_method", "delivery")}
+                    className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg border transition-colors ${
+                      form.shipment_method === "delivery"
+                        ? "bg-[#2563EB] border-[#2563EB] text-white"
+                        : "bg-white border-[#E2E8F0] text-slate-600 hover:border-[#2563EB]/40"
+                    }`}
+                  >
+                    Доставка Поставщиком
+                  </button>
+                </div>
+
+                {form.shipment_method === "pickup" ? (
+                  <input
+                    value={form.pickup_address}
+                    onChange={(e) => set("pickup_address", e.target.value)}
+                    placeholder="Адрес склада самовывоза — по умолчанию склад Kerneu Group в Алматы"
+                    className={inputCls}
+                  />
+                ) : (
+                  <p className="text-xs text-slate-400 px-1">
+                    Ничего вводить не нужно — в договоре укажется стандартная формулировка без адреса.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </form>
+
+        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-[#E2E8F0]">
+          <p className="text-xs text-slate-400">
+            Спецификация подтянется автоматически из позиций проекта.
+          </p>
+          <div className="flex gap-2 flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => !submitting && onClose()}
+              disabled={submitting}
+              className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg disabled:opacity-50"
+            >
+              Отмена
+            </button>
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-[#2563EB] hover:bg-[#1d4ed8] text-white transition-colors disabled:opacity-60"
+            >
+              {submitting ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+              {submitting ? "Генерация…" : "Сгенерировать и скачать"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Page                                                                 */
+/* ------------------------------------------------------------------ */
+
 export function ContractPage({
   onNavigate,
   role,
@@ -92,15 +437,9 @@ export function ContractPage({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [uploadingId, setUploadingId] = useState<string | null>(null);
-  // Тихое предупреждение вместо блокирующего alert(), если синхронизация
-  // статуса проекта после загрузки договора не удалась. Сам факт того, что
-  // файл договора загружен, теперь достаточен, чтобы разблокировать
-  // доверенности/накладные на странице "Документы" (см. DocumentsPage),
-  // поэтому это предупреждение — не критично, просто информирует PM.
-  const [statusSyncWarning, setStatusSyncWarning] = useState<string | null>(null);
+  const [generateForProject, setGenerateForProject] = useState<ContractProject | null>(null);
 
-  const isPm = role === "pm";
+  const isAccountant = role === "accountant";
 
   useEffect(() => {
     let cancelled = false;
@@ -161,67 +500,6 @@ export function ContractPage({
     };
   }, []);
 
-  const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
-
-  const triggerUpload = (projectId: string) => {
-    fileInputRefs.current[projectId]?.click();
-  };
-
-  const handleFileChosen = async (projectId: string, file: File | undefined) => {
-    if (!file) return;
-    setUploadingId(projectId);
-    setLoadError(null);
-
-    try {
-      // 1. Загружаем сам файл договора на бэкенд
-      const uploadedDoc = await uploadProjectDocument(projectId, "contract", file, "Договор");
-
-      // 2. Переводим статус проекта в "Активный закуп" на бэкенде.
-      //    Без этого шага DocumentsPage продолжит считать договор
-      //    неподписанным и будет блокировать загрузку доверенностей/накладных,
-      //    т.к. contractSigned завязан на реальный status_name проекта,
-      //    а не на факт наличия файла договора в архиве документов.
-      try {
-        await signProjectContract(Number(projectId));
-        setStatusSyncWarning(null);
-      } catch (statusError) {
-        console.error("Не удалось обновить статус проекта после подписания договора:", statusError);
-        // Не блокируем PM модалкой — файл договора уже загружен и этого
-        // достаточно, чтобы работать дальше. Просто мягко подсвечиваем,
-        // что фоновая синхронизация статуса не удалась.
-        setStatusSyncWarning(
-          `Договор по проекту «${projects.find((p) => p.id === projectId)?.name ?? projectId}» загружен, ` +
-          "но статус проекта на сервере не обновился. Это не мешает продолжить работу — можно сразу переходить к закупкам."
-        );
-      }
-
-      // 3. Обновляем локальный state
-      const today = new Date().toLocaleDateString("ru-RU");
-      setProjects((prev) =>
-        prev.map((p) =>
-          p.id !== projectId
-            ? p
-            : { ...p, contractUploaded: true, fileName: file.name, uploadDate: today }
-        )
-      );
-
-      // 4. Обновляем глобальный documentsStore, чтобы статус и скачивание
-      //    сразу подхватились на странице "Документы"
-      documentsStore.updateDocument(projectId, `${projectId}-contract`, {
-        status: "uploaded",
-        date: today,
-        fileName: file.name,
-        backendDocument: uploadedDoc,
-      });
-
-    } catch (error) {
-      console.error("Upload error:", error);
-      alert("Не удалось загрузить договор. Попробуйте снова.");
-    } finally {
-      setUploadingId(null);
-    }
-  };
-
   return (
     <PageWrap title="Договор" subtitle="Все проекты">
       {loading && (
@@ -237,19 +515,6 @@ export function ContractPage({
         </div>
       )}
 
-      {statusSyncWarning && (
-        <div className="flex items-start justify-between gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
-          <span>{statusSyncWarning}</span>
-          <button
-            onClick={() => setStatusSyncWarning(null)}
-            className="text-amber-500 hover:text-amber-700 flex-shrink-0"
-            aria-label="Закрыть"
-          >
-            ×
-          </button>
-        </div>
-      )}
-
       {!loading && !loadError && projects.length === 0 && (
         <div className="px-4 py-3 bg-slate-50 border border-[#E2E8F0] rounded-lg text-sm text-slate-500">
           Нет проектов в статусе от «Ожидание подписания» до «Завершен».
@@ -259,7 +524,6 @@ export function ContractPage({
       <div className="space-y-3">
         {!loading && !loadError && projects.map((project) => {
           const isOpen = expandedId === project.id;
-          const isUploading = uploadingId === project.id;
           const total = project.items.reduce((sum, it) => sum + it.qty * it.price, 0);
 
           return (
@@ -286,18 +550,18 @@ export function ContractPage({
                   {project.contractUploaded ? (
                     <span className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 rounded-full">
                       <CheckCircle2 size={13} className="text-green-600" />
-                      <span className="text-xs font-medium text-green-700">Договор подписан</span>
+                      <span className="text-xs font-medium text-green-700">Договор загружен</span>
                     </span>
-                  ) : isPm ? (
+                  ) : isAccountant ? (
                     <span
                       onClick={(e) => {
                         e.stopPropagation();
-                        !isUploading && triggerUpload(project.id);
+                        setGenerateForProject(project);
                       }}
-                      className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${isUploading ? "bg-slate-100 text-slate-400 cursor-wait" : "bg-[#2563EB] hover:bg-[#1d4ed8] text-white cursor-pointer"}`}
+                      className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg bg-[#2563EB] hover:bg-[#1d4ed8] text-white cursor-pointer transition-all"
                     >
-                      {isUploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-                      {isUploading ? "Загрузка…" : "Загрузить договор"}
+                      <FileText size={13} />
+                      Сгенерировать договор
                     </span>
                   ) : (
                     <span className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 rounded-full">
@@ -314,24 +578,12 @@ export function ContractPage({
                       className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg bg-white text-slate-700 border border-[#E2E8F0] hover:bg-slate-50 transition-colors"
                     >
                       <ShoppingCart size={13} className="text-slate-500" />
-                      {isPm ? "Перейти к закупкам" : "Посмотреть закупки"}
+                      Посмотреть закупки
                     </button>
                   )}
 
                   <ChevronDown size={16} className={`text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`} />
                 </div>
-
-                <input
-                  ref={(el) => { fileInputRefs.current[project.id] = el; }}
-                  type="file"
-                  accept=".pdf,.doc,.docx"
-                  className="hidden"
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => {
-                    handleFileChosen(project.id, e.target.files?.[0]);
-                    e.target.value = "";
-                  }}
-                />
               </button>
 
               {/* Uploaded-file strip */}
@@ -342,16 +594,6 @@ export function ContractPage({
                     <span className="text-xs text-green-700 truncate">{project.fileName}</span>
                     <span className="text-xs text-green-500 flex-shrink-0">· {project.uploadDate}</span>
                   </div>
-                  {isPm && (
-                    <div className="flex items-center gap-3 flex-shrink-0">
-                      <button
-                        onClick={() => triggerUpload(project.id)}
-                        className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700"
-                      >
-                        <RefreshCw size={12} />Заменить
-                      </button>
-                    </div>
-                  )}
                 </div>
               )}
 
@@ -392,6 +634,13 @@ export function ContractPage({
           );
         })}
       </div>
+
+      {generateForProject && (
+        <GenerateContractModal
+          project={generateForProject}
+          onClose={() => setGenerateForProject(null)}
+        />
+      )}
     </PageWrap>
   );
 }

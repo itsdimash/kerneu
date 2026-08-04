@@ -61,6 +61,12 @@ const STAGE_META: Record<string, StageMeta> = {
     cls: "bg-green-50 text-green-700 ring-1 ring-green-200/80",
   },
 
+  // ── Архив (расторгнутый договор) ──
+  "Договор расторгнут": {
+    label: "Расторгнут",
+    cls: "bg-red-100 text-red-800 ring-1 ring-red-300",
+  },
+
   // Старый общий статус, оставлен для совместимости
   "В работе": {
     label: "В работе",

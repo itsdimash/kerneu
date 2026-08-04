@@ -12,6 +12,7 @@ export type NotificationCategory =
   | "kp_rejected"
   | "kp_approved"
   | "kp_pending"
+  | "client_approved"
   | "invoice_pending_accountant"
   | "invoice_pending_director"
   | "invoice_approved"
@@ -93,6 +94,20 @@ export const MOCK_SYSTEM_NOTIFICATIONS: SystemNotification[] = [
     read: false,
     page: "project",
     ctaLabel: "Рассмотреть КП",
+  },
+  {
+    id: "n-client-approved-1",
+    category: "client_approved",
+    forRole: ["accountant", "admin"],
+    projectId: 1039,
+    projectName: "Android",
+    actorName: "Admin",
+    actorRole: "PM",
+    title: "Клиент одобрил КП по проекту «Android» — можно генерировать договор",
+    createdAt: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
+    read: false,
+    page: "contract",
+    ctaLabel: "Сгенерировать договор",
   },
   {
     id: "n-docs-confirmed-1",

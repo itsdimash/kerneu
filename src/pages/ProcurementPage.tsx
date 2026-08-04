@@ -136,7 +136,7 @@ const isAwaitingSend = (st: InvoiceWorkflowStatus) =>
 const API_BASE_URL = "http://localhost:8000/api/v1";
 const PURCHASE_STATUS = "будет куплено";
 
-async function postInvoiceAction(documentId: number, action: string, body?: { reason: string}) {
+async function postInvoiceAction(documentId: number, action: string, body?: unknown) {
   const response = await fetch(`${API_BASE_URL}/procurement-invoices/${documentId}/${action}`, {
     method: "POST",
     credentials: "include",
@@ -161,6 +161,17 @@ const directorRejectInvoice = (documentId: number, reason: string) =>
   postInvoiceAction(documentId, "director-reject", { reason });
 
 const sendInvoiceToIncomeApi = (documentId: number, warehouseId: number, items: Array<{ product_id: number; quantity: number; purchase_price: number }>) =>
+type SendToIncomeItem = {
+  product_id: number;
+  quantity: number;
+  purchase_price: number;
+};
+
+const sendInvoiceToIncomeApi = (
+  documentId: number,
+  warehouseId: number,
+  items: SendToIncomeItem[],
+) =>
   postInvoiceAction(documentId, "send-to-income", { warehouse_id: warehouseId, items });
 
 // TODO(backend): эндпоинт ещё не реализован — предполагаемый контракт:
@@ -190,7 +201,7 @@ const PROJECT_WORKFLOW = [
   "На согласовании",
   "Ожидание клиента",
   "Ожидание подписания",
-  "Активный закуп", 
+  "Активный закуп",
   "На приходе",
   "На отгрузке",
   "Ожидание документов",
@@ -226,7 +237,7 @@ const getSupplierName = (item: any) => {
   if (item.supplier_raw_name) {
     return safeTrim(item.supplier_raw_name);
   }
-  
+
   // 2. Если supplier вернулся как объект связи (relationship)
   if (item.supplier && typeof item.supplier === 'object' && item.supplier.name) {
     return safeTrim(item.supplier.name);
@@ -264,7 +275,7 @@ export function ProcurementPage({
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [selectedProject, setSelectedProject] = useState<ProjectListItem | null>(null);
-  
+
   const [purchaseItems, setPurchaseItems] = useState<ProcurementProjectItem[]>([]);
   const [purchaseLoading, setPurchaseLoading] = useState(false);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
@@ -289,7 +300,7 @@ export function ProcurementPage({
         setProjectsLoading(true);
         const response = await fetch(`${API_BASE_URL}/projects/`, { credentials: "include" });
         if (!response.ok) throw new Error("Ошибка загрузки");
-        
+
         const data: ProjectListItem[] = await response.json();
         const activeIndex = PROJECT_WORKFLOW.indexOf("Активный закуп");
         const completedIndex = PROJECT_WORKFLOW.indexOf("На отгрузке");
@@ -316,7 +327,7 @@ export function ProcurementPage({
         setWarehouses(whs);
         setSelectedWarehouseId(whs[0].id);
       }
-    
+
     }).catch(e => console.error("Ошибка загрузки складов:", e));
 
     return () => { cancelled = true; };
@@ -326,28 +337,28 @@ export function ProcurementPage({
     try {
       setPurchaseLoading(true);
       setPurchaseError(null);
-      
+
       const [items, docs] = await Promise.all([
         getProjectItems(project.id) as Promise<ProcurementProjectItem[]>,
         fetchProjectDocuments(project.id) as Promise<ProcurementDocumentDto[]>
       ]);
-      
+
       const onlyPurchases = items.filter(
         (item) => normalizeText(getItemStatusName(item)) === PURCHASE_STATUS
       );
-      
+
       setSelectedProject(project);
       setPurchaseItems(onlyPurchases);
-      
+
       const grouped = groupBySupplier(onlyPurchases);
       const expanded: Record<string, boolean> = {};
       const workflows: Record<string, SupplierWorkflowState> = {};
 
       Object.keys(grouped).forEach(supplier => {
         expanded[supplier] = true;
-        
+
         const existingDoc = docs.find(d => d.category === "invoice" && safeTrim(d.name) === supplier);
-        
+
         if (existingDoc) {
           const docStatus = normalizeInvoiceStatus(existingDoc.status);
           workflows[supplier] = {
@@ -361,8 +372,8 @@ export function ProcurementPage({
             rejectionReason: existingDoc.rejection_reason ?? null,
           };
         } else {
-          workflows[supplier] = { 
-            file: null, status: 'draft', directorApproved: false, accountantApproved: false 
+          workflows[supplier] = {
+            file: null, status: 'draft', directorApproved: false, accountantApproved: false
           };
         }
       });
@@ -427,7 +438,7 @@ export function ProcurementPage({
 
   const handleFileUpload = async (supplier: string, file: File) => {
     if (!selectedProjectId) return;
-    
+
     setSupplierWorkflows(prev => ({
       ...prev,
       [supplier]: { ...prev[supplier], isUploading: true }
@@ -435,9 +446,9 @@ export function ProcurementPage({
 
     try {
       const uploadedDoc = await uploadProjectDocument(
-        selectedProjectId, 
-        "invoice", 
-        file, 
+        selectedProjectId,
+        "invoice",
+        file,
         supplier
       );
 
@@ -472,14 +483,14 @@ export function ProcurementPage({
 
   const downloadFile = (wfState: SupplierWorkflowState) => {
     if (wfState.downloadUrl) {
-      const fullUrl = wfState.downloadUrl.startsWith("http") 
-        ? wfState.downloadUrl 
+      const fullUrl = wfState.downloadUrl.startsWith("http")
+        ? wfState.downloadUrl
         : `http://localhost:8000${wfState.downloadUrl}`;
-        
+
       window.open(fullUrl, '_blank');
       return;
     }
-    
+
     if (wfState.file) {
       const url = URL.createObjectURL(wfState.file);
       const a = document.createElement("a");
@@ -672,6 +683,15 @@ export function ProcurementPage({
             purchase_price: getPurchasePrice(item),
           }));
 
+          const itemWithoutPurchasePrice = items.find(
+            item => item.purchase_price <= 0
+          );
+          if (itemWithoutPurchasePrice) {
+            throw new Error(
+              `Не указана себестоимость товара №${itemWithoutPurchasePrice.product_id}`
+            );
+          }
+
           return sendInvoiceToIncomeApi(docId, selectedWarehouseId, items);
         })
       );
@@ -708,7 +728,11 @@ export function ProcurementPage({
       setIsIncomeModalOpen(false);
     } catch (error) {
       console.error("Send to income failed", error);
-      alert("Не удалось отправить счета на приход.");
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Не удалось отправить счета на приход."
+      );
     } finally {
       setIsSendingToIncome(false);
     }

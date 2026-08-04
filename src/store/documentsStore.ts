@@ -55,7 +55,8 @@ const EMPTY_REVIEW: ReviewState = {
   completed: false,
 };
 
-// Договор загружает PM (остается без изменений). 
+// Договор теперь генерирует и загружает бухгалтер (не PM) — см.
+// ContractPage (генерация) и DocumentsPage (загрузка финального файла).
 // Доверенность и Накладные не сеются заранее: PM добавляет каждую отдельно.
 function seedProjectDocs(projectId: string): ProjectDocument[] {
   return [

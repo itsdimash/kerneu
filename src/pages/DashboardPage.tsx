@@ -14,7 +14,7 @@ import { INVOICES_INIT } from "../data/invoices";
 import {
   Plus, FolderOpen, Send, TrendingUp, AlertTriangle, Inbox, BarChart2, 
   Clock, Check, X, CheckCircle2, XCircle, ChevronRight, MoreHorizontal,
-  Archive, Package, Truck, DollarSign, UploadCloud, FileText, Trash2, Loader2
+  Archive, Package, Truck, DollarSign, UploadCloud, FileText, Trash2, Loader2, Search
 } from "lucide-react";
 import {
   fetchDashboardStats,
@@ -57,10 +57,60 @@ function formatPhoneNumber(value: string): string {
   return result;
 }
 
+// Статусы, при которых бэкенд запрещает удаление и вместо этого нужна
+// архивация. Должно совпадать с ARCHIVABLE_STATUSES в
+// app/services/project_service.py на бэкенде.
+const ARCHIVABLE_STATUSES = new Set([
+  "Активный закуп",
+  "На приходе",
+  "На отгрузке",
+  "Ожидание документов",
+  "Завершен",
+]);
+
+function isArchivableStatus(statusName?: string | null): boolean {
+  return !!statusName && ARCHIVABLE_STATUSES.has(statusName);
+}
+
+// Статусы, которые не показываются в списке "Проекты" по умолчанию —
+// только когда PM/Комдир нажимает "Все проекты". "Завершен" был здесь и
+// раньше; "Договор расторгнут" — новый архивный статус, ведёт себя так же.
+const HIDDEN_BY_DEFAULT_STATUSES = new Set(["Завершен", "Договор расторгнут"]);
+
+// Порядок статусов проекта для сортировки таблицы "Проекты" — от начала
+// жизненного цикла сделки к концу. "Новый проект" и "Новый" оба на первом
+// месте, т.к. в Chip.tsx это два алиаса одного и того же раннего статуса
+// (см. также PROJECT_STATUS_ORDER в app/services/project_service.py на
+// бэкенде — тот список короче и используется только для фильтра
+// CONTRACT_VISIBLE_STATUSES, а не для сортировки таблицы).
+const PROJECT_STATUS_DISPLAY_ORDER: string[] = [
+  "Новый проект",
+  "Новый",
+  "В редактировании",
+  "На согласовании у Комдира",
+  "Отклонено Комдиром",
+  "Ожидание клиента",
+  "Ожидание подписания",
+  "Активный закуп",
+  "На приходе",
+  "На отгрузке",
+  "Ожидание документов",
+  "Завершен",
+  "Договор расторгнут",
+];
+
+function projectStatusOrderIndex(statusName?: string | null): number {
+  const idx = PROJECT_STATUS_DISPLAY_ORDER.indexOf(statusName ?? "");
+  // Незнакомый/новый статус, которого ещё нет в списке — не ломаем
+  // сортировку, просто отправляем в конец.
+  return idx === -1 ? PROJECT_STATUS_DISPLAY_ORDER.length : idx;
+}
+
 export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string; onNavigate: (p: Page) => void; onOpenProject: (projectId: number) => void }) {
   // Стейты для модального окна
   const [isKpModalOpen, setIsKpModalOpen] = useState(false);
   const [showAllProjects, setShowAllProjects] = useState(false);
+  const [projectSearch, setProjectSearch] = useState("");
   const [isNewClient, setIsNewClient] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState("");
   const [newClientForm, setNewClientForm] = useState({ name: "", email: "", phone: "" });
@@ -171,6 +221,9 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
   // Проект, ожидающий подтверждения удаления (для кастомного модального окна)
   const [projectToDelete, setProjectToDelete] = useState<{ id: number; name: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  // Проект, ожидающий подтверждения архивации (для кастомного модального окна)
+  const [projectToArchive, setProjectToArchive] = useState<{ id: number; name: string } | null>(null);
+  const [isArchiving, setIsArchiving] = useState(false);
   
   // Клиент "выбран", когда либо указан существующий клиент, либо введено имя нового
   const isClientChosen = isNewClient ? newClientForm.name.trim().length > 0 : !!selectedClientId;
@@ -488,6 +541,41 @@ const handleSave = async () => {
     }
   };
 
+  // Открывает кастомное модальное окно подтверждения архивации
+  const handleArchive = (projectId: number, projectName: string) => {
+    setOpenMenu(null);
+    setProjectToArchive({ id: projectId, name: projectName });
+  };
+
+  // Выполняет перевод проекта в статус "Договор расторгнут" после подтверждения
+  const confirmArchive = async () => {
+    if (!projectToArchive) return;
+
+    setIsArchiving(true);
+    try {
+        const response = await fetch(
+            `http://localhost:8000/api/v1/projects/${projectToArchive.id}/archive`,
+            {
+                method: "PATCH",
+                credentials: "include",
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(`Ошибка ${response.status}`);
+        }
+
+        setProjectToArchive(null);
+        await loadProjects();
+        await loadStats();
+    } catch (error) {
+        console.error(error);
+        alert("Ошибка архивации");
+    } finally {
+        setIsArchiving(false);
+    }
+  };
+
   return (
     <PageWrap 
       title={role === "commercial_director" ? "Дашборд Директора" : "Дашборд PM"} 
@@ -761,9 +849,21 @@ const handleSave = async () => {
       )}
 
       <SectionHeader title="Проекты" action={
-        <button onClick={() => setShowAllProjects(!showAllProjects)} className="text-xs text-[#2563EB] hover:underline flex items-center gap-1">
-          {showAllProjects ? "Только активные" : "Все проекты"} <ChevronRight size={12} />
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={projectSearch}
+              onChange={(e) => setProjectSearch(e.target.value)}
+              placeholder="Поиск по проекту или клиенту..."
+              className="pl-7 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-700 placeholder:text-slate-400 focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] w-56"
+            />
+          </div>
+          <button onClick={() => setShowAllProjects(!showAllProjects)} className="text-xs text-[#2563EB] hover:underline flex items-center gap-1 whitespace-nowrap">
+            {showAllProjects ? "Только активные" : "Все проекты"} <ChevronRight size={12} />
+          </button>
+        </div>
       } />
       <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-visible mb-6">
           <table className="w-full border-collapse">
@@ -777,7 +877,19 @@ const handleSave = async () => {
               </thead>
               <tbody className="divide-y divide-[#E2E8F0]">
               {projects
-                .filter((p: any) => showAllProjects || p.status?.status_name !== "Завершен")
+                .filter((p: any) => showAllProjects || !HIDDEN_BY_DEFAULT_STATUSES.has(p.status?.status_name))
+                .filter((p: any) => {
+                  if (!projectSearch.trim()) return true;
+                  const q = projectSearch.trim().toLowerCase();
+                  return (
+                    (p.name ?? "").toLowerCase().includes(q) ||
+                    (p.client?.client_name ?? "").toLowerCase().includes(q)
+                  );
+                })
+                .slice()
+                .sort((a: any, b: any) =>
+                  projectStatusOrderIndex(a.status?.status_name) - projectStatusOrderIndex(b.status?.status_name)
+                )
                 .map((p: any) => {
                   return (
                       <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
@@ -805,9 +917,11 @@ const handleSave = async () => {
                               <Chip status={p.status?.status_name} />
                           </td>
 
-                          {/* Бюджет */}
+                          {/* Бюджет: сумма (кол-во * себестоимость) по позициям проекта —
+                              считается на бэкенде (project_service._get_budget_map),
+                              а не invoice.amount (тот всегда 0, см. handleSave payload) */}
                           <td className="px-4 py-3 text-sm text-slate-700 font-mono text-right">
-                              {fmt(Number(p.invoice?.amount ?? 0))}
+                              {fmt(Number(p.budget ?? 0))}
                           </td>
 
                           {/* Дедлайн */}
@@ -857,15 +971,31 @@ const handleSave = async () => {
                                           Открыть проект
                                       </button>
 
-                                      <div className="h-px bg-slate-100"/>
-
-                                      <button
-                                          onClick={() => handleDelete(p.id, p.name ?? `Проект №${p.id}`)}
-                                          className="flex w-full items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition-colors"
-                                      >
-                                          <Trash2 size={19}/>
-                                          Удалить
-                                      </button>
+                                      {isArchivableStatus(p.status?.status_name) ? (
+                                          role === "commercial_director" && (
+                                              <>
+                                                  <div className="h-px bg-slate-100"/>
+                                                  <button
+                                                      onClick={() => handleArchive(p.id, p.name ?? `Проект №${p.id}`)}
+                                                      className="flex w-full items-center gap-3 px-4 py-3 text-sm text-amber-700 hover:bg-amber-50 transition-colors"
+                                                  >
+                                                      <Archive size={18}/>
+                                                      Отправить в архив
+                                                  </button>
+                                              </>
+                                          )
+                                      ) : (
+                                          <>
+                                              <div className="h-px bg-slate-100"/>
+                                              <button
+                                                  onClick={() => handleDelete(p.id, p.name ?? `Проект №${p.id}`)}
+                                                  className="flex w-full items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                                              >
+                                                  <Trash2 size={19}/>
+                                                  Удалить
+                                              </button>
+                                          </>
+                                      )}
                                   </div>
                               )}
                           </td>
@@ -953,6 +1083,44 @@ const handleSave = async () => {
                 >
                   {isDeleting && <Loader2 size={14} className="animate-spin" />}
                   Удалить
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Модальное окно подтверждения архивации проекта ── */}
+      {projectToArchive && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-amber-50 flex items-center justify-center flex-shrink-0">
+                  <Archive size={18} className="text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Отправить в архив?</h3>
+                  <p className="text-sm text-slate-500 mt-1">
+                    Проект «{projectToArchive.name}» получит статус «Договор расторгнут». Данные сохранятся, но проект перестанет считаться активной сделкой.
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-5">
+                <button
+                  onClick={() => setProjectToArchive(null)}
+                  disabled={isArchiving}
+                  className="px-4 py-2 text-sm font-medium text-slate-600 rounded-lg hover:bg-slate-100 transition-colors disabled:opacity-50"
+                >
+                  Отмена
+                </button>
+                <button
+                  onClick={confirmArchive}
+                  disabled={isArchiving}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50"
+                >
+                  {isArchiving && <Loader2 size={14} className="animate-spin" />}
+                  Отправить в архив
                 </button>
               </div>
             </div>

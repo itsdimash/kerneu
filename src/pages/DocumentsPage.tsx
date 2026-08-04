@@ -17,6 +17,7 @@ import {
   fetchProjectDocuments,
   uploadProjectDocument,
   deleteProjectDocument,
+  markContractUploaded,
 } from "../api/api";
 
 const API_BASE = "http://localhost:8000/api/v1";
@@ -75,6 +76,11 @@ export function DocumentsPage({
 
   const [uploadingPoa, setUploadingPoa] = useState(false);
   const [uploadingWaybill, setUploadingWaybill] = useState(false);
+  // Финальный (проверенный/исправленный бухгалтером) файл договора — теперь
+  // загружается здесь, а не на странице "Договор". Генерация происходит на
+  // странице "Договор" (только бухгалтер), а сюда бухгалтер приносит уже
+  // готовый, вычитанный файл.
+  const [uploadingContract, setUploadingContract] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -263,7 +269,15 @@ export function DocumentsPage({
     documentsStore.subscribe,
     () => documentsStore.getReviewSnapshot(selectedProjectId)
   );
-  const { stage: reviewStage, rejectedBy, rejectReason, completed } = review;
+  const { stage: reviewStage, rejectedBy, rejectReason, completed: reviewCompleted } = review;
+  // ИСПРАВЛЕНО: review.completed живёт только в памяти (documentsStore —
+  // обычный JS-синглтон), поэтому после F5 он всегда сбрасывается в false,
+  // даже если бэкенд уже реально перевёл проект в статус "Завершен" —
+  // кнопка "Завершить проект" снова становилась активной. Берём "Завершен"
+  // и из selectedProject.statusName (грузится заново из /projects/ при
+  // каждой загрузке страницы) как источник правды в дополнение к
+  // локальному флагу.
+  const completed = reviewCompleted || selectedProject?.statusName === "Завершен";
 
   const localDocs = useSyncExternalStore(
     documentsStore.subscribe,
@@ -355,6 +369,7 @@ export function DocumentsPage({
   
   const poaFileRef = useRef<HTMLInputElement>(null);
   const waybillFileRef = useRef<HTMLInputElement>(null);
+  const contractFileRef = useRef<HTMLInputElement>(null);
 
   const today = () => new Date().toLocaleDateString("ru-RU");
 
@@ -437,6 +452,38 @@ export function DocumentsPage({
     const file = e.target.files?.[0];
     if (file) await handleDocUpload(file, "waybill", "Накладная", waybillDocs.length, setUploadingWaybill);
     if (waybillFileRef.current) waybillFileRef.current.value = "";
+  };
+
+  // Бухгалтер загружает финальный (проверенный/отредактированный) файл
+  // договора сюда после того, как сгенерировал черновик на странице
+  // "Договор". После успешной загрузки переводим проект из "Ожидание
+  // подписания" в "Активный закуп" через markContractUploaded (мягко: если
+  // это не удастся, сам факт загрузки файла всё равно достаточен для
+  // contractSigned выше, а PM всегда может попробовать снова).
+  const handleContractUpload = async (file: File | undefined) => {
+    if (!file || !selectedProjectId) return;
+    setUploadingContract(true);
+    try {
+      const uploadedDoc = await uploadProjectDocument(selectedProjectId, "contract", file, "Договор");
+
+      documentsStore.updateDocument(selectedProjectId, `${selectedProjectId}-contract`, {
+        status: "uploaded",
+        date: today(),
+        fileName: file.name,
+        backendDocument: uploadedDoc,
+      });
+
+      try {
+        await markContractUploaded(selectedProjectId);
+      } catch (statusError) {
+        console.error("Не удалось обновить статус проекта после загрузки договора:", statusError);
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Не удалось загрузить договор. Попробуйте еще раз.");
+    } finally {
+      setUploadingContract(false);
+    }
   };
 
   const handleSubmitForReview = async () => {
@@ -784,6 +831,60 @@ export function DocumentsPage({
             <p className="text-sm text-slate-500">Менеджер ещё не отправил документы на проверку.</p>
           </div>
         )}
+
+        {/* Загрузка финального договора — только бухгалтер. Черновик
+            генерируется на странице "Договор"; сюда попадает уже
+            проверенный/исправленный файл. */}
+        {role === "accountant" && (
+          <div className="bg-white rounded-lg border border-[#E2E8F0] p-5 mb-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2 min-w-0">
+                <Handshake size={16} className="text-emerald-500 flex-shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-900">Договор</p>
+                  <p className="text-xs text-slate-400">
+                    {contractUploaded
+                      ? `Загружен · ${contractDoc?.date || "—"}`
+                      : "Сгенерируйте на странице «Договор», проверьте и загрузите готовый файл сюда."}
+                  </p>
+                </div>
+              </div>
+
+              {contractUploaded ? (
+                <span className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 rounded-full flex-shrink-0">
+                  <CheckCircle2 size={13} className="text-green-600" />
+                  <span className="text-xs font-medium text-green-700">Загружен</span>
+                </span>
+              ) : (
+                <button
+                  onClick={() => !uploadingContract && contractFileRef.current?.click()}
+                  disabled={uploadingContract}
+                  className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex-shrink-0 ${
+                    uploadingContract
+                      ? "bg-slate-100 text-slate-400 cursor-wait"
+                      : "bg-[#2563EB] hover:bg-[#1d4ed8] text-white cursor-pointer"
+                  }`}
+                >
+                  {uploadingContract ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                  {uploadingContract ? "Загрузка…" : "Загрузить договор"}
+                </button>
+              )}
+            </div>
+
+            <input
+              ref={contractFileRef}
+              type="file"
+              accept=".pdf,.doc,.docx"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                void handleContractUpload(file);
+                e.target.value = "";
+              }}
+            />
+          </div>
+        )}
+
         {renderSharedDocumentList()}
       </PageWrap>
     );
