@@ -126,8 +126,12 @@ export function DocumentsPage({
           if (requestedId && normalizedProjects.some((project) => project.id === requestedId)) return requestedId;
           if (currentId && normalizedProjects.some((project) => project.id === currentId)) return currentId;
           
-          // При начальной загрузке выбираем первый попавшийся активный проект (если есть)
-          const firstActive = normalizedProjects.find(p => p.statusName !== "Завершен");
+          // При начальной загрузке выбираем первый попавшийся активный проект (если есть).
+          // "Договор расторгнут" пропускаем — такие проекты не должны попадать
+          // на страницу документов вообще.
+          const firstActive = normalizedProjects.find(
+            p => p.statusName !== "Завершен" && p.statusName !== "Договор расторгнут"
+          );
           return firstActive?.id ?? normalizedProjects[0]?.id ?? "";
         });
       } catch (error) {
@@ -259,10 +263,13 @@ export function DocumentsPage({
   const selectedProjectName = selectedProject?.name ?? "Проект не выбран";
 
   // ОБНОВЛЕННАЯ ЛОГИКА ФИЛЬТРАЦИИ
+  // "Договор расторгнут" скрывается всегда, независимо от showAllProjects —
+  // такие проекты не должны попадать на страницу документов вообще.
   const filteredProjects = projects.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(projectQuery.toLowerCase());
+    const isTerminated = p.statusName === "Договор расторгнут";
     const matchesStatus = showAllProjects || p.statusName !== "Завершен";
-    return matchesSearch && matchesStatus;
+    return matchesSearch && matchesStatus && !isTerminated;
   });
 
   const review = useSyncExternalStore(

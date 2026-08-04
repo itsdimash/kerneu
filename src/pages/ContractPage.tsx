@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Page, Role } from "../types";
 import { PageWrap } from "../app/components/common/PageWrap";
 import {
+  AlertCircle,
   Building2,
   CheckCircle2,
   ChevronDown,
@@ -130,6 +131,37 @@ function emptyGenerateForm(clientName: string): GenerateFormState {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* Full-page validation/error overlay — sits above everything (including */
+/* the generate modal itself), blurring the whole page behind it, rather */
+/* than a small inline banner easy to miss inside a long form.          */
+/* ------------------------------------------------------------------ */
+
+function ErrorOverlay({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/30 backdrop-blur-sm px-4"
+      onClick={onDismiss}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl bg-white shadow-2xl px-6 py-6 text-center"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-red-50">
+          <AlertCircle size={24} className="text-red-500" />
+        </div>
+        <p className="text-sm font-medium leading-snug text-slate-900">{message}</p>
+        <button
+          onClick={onDismiss}
+          className="mt-5 w-full rounded-lg bg-[#2563EB] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#1d4ed8]"
+        >
+          Понятно
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function GenerateContractModal({
   project,
   onClose,
@@ -147,6 +179,26 @@ function GenerateContractModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    // Кнопка вне <form> с type="button" — нативная HTML-валидация required
+    // не срабатывает, так что проверяем сами, до похода на бэкенд.
+    const requiredFields: { key: keyof GenerateFormState; label: string }[] = [
+      { key: "contract_number", label: "Номер договора" },
+      { key: "buyer_company_name", label: "Название компании" },
+      { key: "buyer_director_name", label: "ФИО директора" },
+      { key: "buyer_address", label: "Адрес" },
+      { key: "buyer_bin", label: "БИН" },
+      { key: "buyer_iik", label: "ИИК" },
+      { key: "buyer_bik", label: "БИК" },
+    ];
+    const missing = requiredFields.filter((f) => !form[f.key].trim());
+
+    if (missing.length > 0) {
+      setError(
+        `Заполните все обязательные поля: ${missing.map((f) => f.label).join(", ")}`,
+      );
+      return;
+    }
 
     if (!/^\d{12}$/.test(form.buyer_bin)) {
       setError("БИН должен состоять ровно из 12 цифр");
@@ -187,40 +239,38 @@ function GenerateContractModal({
   const labelCls = "text-xs font-medium text-slate-600 mb-1 block";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4 py-8 overflow-y-auto"
-      onClick={() => !submitting && onClose()}
-    >
+    <>
+      {error && <ErrorOverlay message={error} onDismiss={() => setError(null)} />}
+
       <div
-        className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl my-auto"
-        onClick={(e) => e.stopPropagation()}
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4 py-8 overflow-y-auto"
+        onClick={() => !submitting && onClose()}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0]">
-          <div>
-            <h3 className="text-base font-semibold text-slate-900">Сгенерировать договор</h3>
-            <p className="text-xs text-slate-400 mt-0.5">{project.name} · {project.client}</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => !submitting && onClose()}
-            className="text-slate-400 hover:text-slate-600 p-1"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5 max-h-[70vh] overflow-y-auto">
-          {error && (
-            <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-              {error}
+        <div
+          className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl my-auto"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0]">
+            <div>
+              <h3 className="text-base font-semibold text-slate-900">Сгенерировать договор</h3>
+              <p className="text-xs text-slate-400 mt-0.5">{project.name} · {project.client}</p>
             </div>
-          )}
+            <button
+              type="button"
+              onClick={() => !submitting && onClose()}
+              className="text-slate-400 hover:text-slate-600 p-1"
+            >
+              <X size={18} />
+            </button>
+          </div>
 
-          <div>
-            <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Договор</h4>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className={labelCls}>Номер договора *</label>
+          <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5 max-h-[70vh] overflow-y-auto">
+            <div>
+              <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Договор</h4>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className={labelCls}>Номер договора *</label>
+
                 <input
                   required
                   value={form.contract_number}
@@ -418,7 +468,8 @@ function GenerateContractModal({
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 

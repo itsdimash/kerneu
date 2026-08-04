@@ -913,6 +913,7 @@ export async function completeProjectOnBackend(projectId: string | number): Prom
   await api.post(`/projects/${projectId}/complete`);
 }
 
+
 // ==========================================
 // ДОГОВОР: ГЕНЕРАЦИЯ (только бухгалтер)
 // ==========================================
@@ -943,6 +944,44 @@ export interface ContractGenerateRequest {
   pickup_address?: string;
 }
  
+// Человекочитаемые названия для полей ContractGenerateRequest — используются
+// только чтобы собрать понятное сообщение из 422-ответа Pydantic, если
+// что-то невалидное всё же прошло через проверку на фронте (например,
+// странный формат даты).
+const FIELD_LABELS: Record<string, string> = {
+  contract_number: "Номер договора",
+  buyer_company_name: "Название компании",
+  buyer_director_name: "ФИО директора",
+  buyer_address: "Адрес",
+  buyer_bin: "БИН",
+  buyer_iik: "ИИК",
+  buyer_bik: "БИК",
+  contract_date: "Дата подписания",
+  contract_valid_until: "Действует до",
+  project_id: "Проект",
+};
+ 
+function friendlyErrorFromDetail(detail: unknown): string | null {
+  if (typeof detail === "string") return detail;
+ 
+  // Pydantic 422: detail — массив {loc: [...], msg: "...", type: "..."}
+  if (Array.isArray(detail) && detail.length > 0) {
+    const fieldNames = detail
+      .map((item) => {
+        const loc = item?.loc;
+        const fieldKey = Array.isArray(loc) ? loc[loc.length - 1] : undefined;
+        return (fieldKey && FIELD_LABELS[fieldKey]) || fieldKey;
+      })
+      .filter(Boolean);
+ 
+    return fieldNames.length > 0
+      ? `Заполните все обязательные поля: ${[...new Set(fieldNames)].join(", ")}`
+      : "Заполните все обязательные поля корректно";
+  }
+ 
+  return null;
+}
+ 
 export const generateContract = async (
   payload: ContractGenerateRequest,
 ): Promise<void> => {
@@ -959,13 +998,18 @@ export const generateContract = async (
     // (e.g. "У проекта нет позиций...") instead of a generic axios error.
     if (axios.isAxiosError(error) && error.response?.data instanceof Blob) {
       const errorBlob = error.response.data;
+      let friendly: string | null = null;
       try {
         const text = await errorBlob.text();
         const parsed = JSON.parse(text);
-        if (parsed?.detail) throw new Error(parsed.detail);
+        friendly = friendlyErrorFromDetail(parsed?.detail);
       } catch {
-        // wasn't JSON / no detail field — fall through to rethrow below
+        // wasn't JSON / no detail field — friendly stays null, falls through below
       }
+      // ВАЖНО: throw здесь, а не внутри try выше — иначе его же ловит
+      // соседний catch{} и подменяет вот этим самым generic-сообщением ниже,
+      // и реальный текст ошибки с бэкенда никогда не доходит до пользователя.
+      if (friendly) throw new Error(friendly);
     }
     throw error instanceof Error ? error : new Error("Не удалось сгенерировать договор");
   }
