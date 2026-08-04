@@ -161,17 +161,6 @@ const directorRejectInvoice = (documentId: number, reason: string) =>
   postInvoiceAction(documentId, "director-reject", { reason });
 
 const sendInvoiceToIncomeApi = (documentId: number, warehouseId: number, items: Array<{ product_id: number; quantity: number; purchase_price: number }>) =>
-type SendToIncomeItem = {
-  product_id: number;
-  quantity: number;
-  purchase_price: number;
-};
-
-const sendInvoiceToIncomeApi = (
-  documentId: number,
-  warehouseId: number,
-  items: SendToIncomeItem[],
-) =>
   postInvoiceAction(documentId, "send-to-income", { warehouse_id: warehouseId, items });
 
 // TODO(backend): эндпоинт ещё не реализован — предполагаемый контракт:
