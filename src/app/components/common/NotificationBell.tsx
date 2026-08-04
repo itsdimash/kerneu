@@ -16,6 +16,7 @@ import {
   Receipt,
   PackagePlus,
   Truck,
+  Handshake,
 } from "lucide-react";
 import type { Role, Page } from "../../../types";
 import {
@@ -44,6 +45,7 @@ const CATEGORY_META: Record<
   kp_rejected: { icon: FileX2, fg: "#DC2626", bg: "#FEF2F2", label: "КП отклонено" },
   kp_approved: { icon: ThumbsUp, fg: "#16A34A", bg: "#F0FDF4", label: "КП одобрено" },
   kp_pending: { icon: Inbox, fg: "#F59E0B", bg: "#FFFBEB", label: "На согласовании" },
+  client_approved: { icon: Handshake, fg: "#16A34A", bg: "#F0FDF4", label: "Клиент одобрил" },
   invoice_pending_accountant: { icon: Receipt, fg: "#F59E0B", bg: "#FFFBEB", label: "Счёт: бухгалтер" },
   invoice_pending_director: { icon: Receipt, fg: "#2563EB", bg: "#EFF6FF", label: "Счёт: директор" },
   invoice_approved: { icon: ThumbsUp, fg: "#16A34A", bg: "#F0FDF4", label: "Счёт одобрен" },
