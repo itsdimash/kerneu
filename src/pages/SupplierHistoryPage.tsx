@@ -1,150 +1,269 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { fmt } from "../lib/format";
-import { SUPPLIERS_INIT } from "../data/suppliers";
-import type { Delivery, Supplier } from "../types";
 
-function formatDate(iso: string): string {
-  const [y, m, d] = iso.split("-");
-  return `${d}.${m}.${y}`;
-}
+type SupplierListItem = {
+  supplier_key: string;
+  supplier_kind: "registered" | "raw";
+  supplier_id: number | null;
+  name: string;
+  purchases_count: number;
+  products_count: number;
+  last_purchase_at: string;
+};
 
-function getLastDeliveryDate(deliveries: Delivery[]): string | null {
-  if (deliveries.length === 0) return null;
-  return deliveries.reduce((latest, d) => (d.date > latest ? d.date : latest), deliveries[0].date);
-}
+type SupplierProduct = {
+  product_id: number;
+  product_name: string;
+  unit: string;
+  purchases_count: number;
+  total_quantity: number;
+  last_purchase_at: string;
+  latest_cost_price: string;
+  current_sale_price: string | null;
+};
 
-function sortedDeliveries(deliveries: Delivery[]): Delivery[] {
-  return [...deliveries].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+type SupplierDetail = {
+  supplier_key: string;
+  supplier_kind: "registered" | "raw";
+  supplier_id: number | null;
+  name: string;
+  contact_phone: string | null;
+  supplier_url: string | null;
+  products: SupplierProduct[];
+};
+
+type PriceHistory = {
+  supplier_key: string;
+  supplier_name: string;
+  product_id: number;
+  product_name: string;
+  unit: string;
+  latest_cost_price: string;
+  current_sale_price: string | null;
+  history: {
+    id: number;
+    receipt_id: number | null;
+    receipt_number: string | null;
+    cost_price: string;
+    purchased_at: string;
+    quantity: number | null;
+    offer_url: string | null;
+  }[];
+};
+const API = (
+  import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1"
+).replace(/\/$/, "");
+const formatDate = (value: string) => new Date(value).toLocaleDateString("ru-RU");
+
+async function requestJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, { credentials: "include", signal });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? "Ошибка загрузки данных");
+  }
+  return response.json() as Promise<T>;
 }
 
 export function SupplierHistoryPage() {
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(SUPPLIERS_INIT[0]?.id ?? null);
+  const [suppliers, setSuppliers] = useState<SupplierListItem[]>([]);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [supplier, setSupplier] = useState<SupplierDetail | null>(null);
+  const [priceHistory, setPriceHistory] = useState<PriceHistory | null>(null);
+  const [loadingList, setLoadingList] = useState(true);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Each result carries the supplier plus, when the match came from a
-  // product rather than the supplier name, which product matched — so the
-  // list can show *why* that supplier showed up.
-  const filteredSuppliers = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return SUPPLIERS_INIT.map((s) => ({ supplier: s, matchedProduct: null as string | null }));
-
-    const results: { supplier: Supplier; matchedProduct: string | null }[] = [];
-    for (const s of SUPPLIERS_INIT) {
-      const nameMatch = s.name.toLowerCase().includes(q);
-      const productMatch = s.deliveries.find((d) => d.product.toLowerCase().includes(q));
-      if (nameMatch || productMatch) {
-        results.push({ supplier: s, matchedProduct: nameMatch ? null : productMatch!.product });
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setLoadingList(true);
+      try {
+        const params = query.trim() ? `?query=${encodeURIComponent(query.trim())}` : "";
+        const data = await requestJson<SupplierListItem[]>(
+          `${API}/supplier-history${params}`,
+          controller.signal,
+        );
+        setSuppliers(data);
+        setSelectedKey((current) => current ?? data[0]?.supplier_key ?? null);
+        setError(null);
+      } catch (reason) {
+        if (!controller.signal.aborted) {
+          setError(reason instanceof Error ? reason.message : "Ошибка загрузки");
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoadingList(false);
       }
-    }
-    return results;
+    }, 250);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
   }, [query]);
 
-  // Detail card always reflects the selected supplier, independent of the
-  // current search filter — searching shouldn't clear what's on the right.
-  const selectedSupplier = useMemo(
-    () => SUPPLIERS_INIT.find((s) => s.id === selectedId) ?? null,
-    [selectedId]
-  );
+  useEffect(() => {
+    if (!selectedKey) {
+      setSupplier(null);
+      setPriceHistory(null);
+      return;
+    }
+    const controller = new AbortController();
+    setLoadingDetail(true);
+    setPriceHistory(null);
+    requestJson<SupplierDetail>(
+      `${API}/supplier-history/${encodeURIComponent(selectedKey)}`,
+      controller.signal,
+    )
+      .then((data) => {
+        setSupplier(data);
+        setError(null);
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted) {
+          setError(reason instanceof Error ? reason.message : "Не удалось загрузить поставщика");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingDetail(false);
+      });
+    return () => controller.abort();
+  }, [selectedKey]);
 
-  const deliveries = selectedSupplier ? sortedDeliveries(selectedSupplier.deliveries) : [];
+  const openProduct = async (productId: number) => {
+    if (!selectedKey) return;
+    try {
+      const data = await requestJson<PriceHistory>(
+        `${API}/supplier-history/${encodeURIComponent(selectedKey)}/products/${productId}`,
+      );
+      setPriceHistory(data);
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Не удалось загрузить историю цен");
+    }
+  };
 
   return (
-    <PageWrap title="Поставщики" subtitle="Полная история поставок по всем поставщикам">
+    <PageWrap title="Поставщики" subtitle="История поставок и закупочных цен">
       <div className="flex gap-4">
-        {/* Left: search + supplier list */}
-        <div className="flex w-60 flex-shrink-0 flex-col gap-3">
+        <aside className="flex w-64 flex-shrink-0 flex-col gap-3">
           <div className="relative">
-            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Search
+              size={15}
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+            />
             <input
-              type="text"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Поиск по поставщику или товару"
-              className="w-full rounded-md border border-slate-300 py-2 pl-9 pr-3 text-sm text-slate-900 placeholder-slate-400 outline-none transition-colors focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/30"
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Поставщик или товар"
+              className="w-full rounded-md border border-slate-300 py-2 pl-9 pr-3 text-sm outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/30"
             />
           </div>
 
-          <div className="flex flex-col gap-1.5 overflow-y-auto">
-            {filteredSuppliers.length === 0 ? (
-              <div className="rounded-lg border border-[#E2E8F0] bg-slate-50 px-4 py-6 text-center text-sm text-slate-400">
+          <div className="flex max-h-[70vh] flex-col gap-1.5 overflow-y-auto">
+            {loadingList ? (
+              <p className="px-3 py-4 text-sm text-slate-400">Загрузка…</p>
+            ) : suppliers.length === 0 ? (
+              <p className="rounded-md border bg-slate-50 px-3 py-5 text-center text-sm text-slate-400">
                 Поставщики не найдены
-              </div>
+              </p>
             ) : (
-              filteredSuppliers.map(({ supplier, matchedProduct }) => {
-                const isSelected = supplier.id === selectedId;
-                const lastDelivery = getLastDeliveryDate(supplier.deliveries);
-                return (
-                  <button
-                    key={supplier.id}
-                    onClick={() => setSelectedId(supplier.id)}
-                    className={`flex flex-col gap-0.5 rounded-md border px-3 py-2.5 text-left transition-colors ${
-                      isSelected
-                        ? "border-[#2563EB]/30 bg-[#EFF6FF]"
-                        : "border-transparent hover:bg-slate-50"
-                    }`}
-                  >
-                    <span className={`text-sm font-medium ${isSelected ? "text-[#2563EB]" : "text-slate-900"}`}>
-                      {supplier.name}
+              suppliers.map((item) => (
+                <button
+                  key={item.supplier_key}
+                  onClick={() => setSelectedKey(item.supplier_key)}
+                  className={`rounded-md border px-3 py-2.5 text-left transition-colors ${
+                    item.supplier_key === selectedKey
+                      ? "border-[#2563EB]/30 bg-[#EFF6FF]"
+                      : "border-transparent hover:bg-slate-50"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-sm font-medium ${
+                        item.supplier_key === selectedKey ? "text-[#2563EB]" : "text-slate-900"
+                      }`}
+                    >
+                      {item.name}
                     </span>
-                    <span className="text-xs text-slate-500">
-                      {supplier.category} · {supplier.deliveries.length} поставок
-                    </span>
-                    {matchedProduct ? (
-                      <span className="text-xs text-[#2563EB]">Товар: {matchedProduct}</span>
-                    ) : (
-                      lastDelivery && (
-                        <span className="text-xs text-slate-400">Последняя: {formatDate(lastDelivery)}</span>
-                      )
+                    {item.supplier_kind === "raw" && (
+                      <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
+                        вручную
+                      </span>
                     )}
-                  </button>
-                );
-              })
+                  </div>
+                  <div className="mt-0.5 text-xs text-slate-500">
+                    {item.products_count} товаров · {item.purchases_count} закупок
+                  </div>
+                  <div className="text-xs text-slate-400">
+                    Последняя: {formatDate(item.last_purchase_at)}
+                  </div>
+                </button>
+              ))
             )}
           </div>
-        </div>
+        </aside>
 
-        {/* Right: supplier detail card */}
-        <div className="flex-1 rounded-lg border border-[#E2E8F0] bg-white p-5">
-          {!selectedSupplier ? (
-            <div className="flex h-full items-center justify-center text-sm text-slate-400">
-              Выберите поставщика слева
-            </div>
+        <main className="min-w-0 flex-1 rounded-lg border border-[#E2E8F0] bg-white p-5">
+          {error && <p className="mb-3 rounded bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+          {loadingDetail ? (
+            <p className="py-8 text-center text-sm text-slate-400">Загрузка…</p>
+          ) : !supplier ? (
+            <p className="py-8 text-center text-sm text-slate-400">Выберите поставщика слева</p>
           ) : (
             <>
               <div className="mb-4">
-                <h3 className="text-sm font-semibold text-slate-900">{selectedSupplier.name}</h3>
-                <p className="mt-0.5 text-xs text-slate-500">{selectedSupplier.category}</p>
+                <h3 className="text-sm font-semibold text-slate-900">{supplier.name}</h3>
+                {supplier.contact_phone && (
+                  <p className="mt-0.5 text-xs text-slate-500">{supplier.contact_phone}</p>
+                )}
               </div>
 
-              <div className="overflow-hidden rounded-md border border-[#E2E8F0]">
+              <div className="overflow-x-auto rounded-md border border-[#E2E8F0]">
                 <table className="w-full border-collapse text-sm">
                   <thead>
-                    <tr className="border-b border-[#E2E8F0] bg-slate-50 text-slate-500">
-                      <th className="px-4 py-2.5 text-left text-xs font-medium uppercase tracking-wide">Товар</th>
-                      <th className="px-4 py-2.5 text-left text-xs font-medium uppercase tracking-wide">Дата</th>
-                      <th className="px-4 py-2.5 text-left text-xs font-medium uppercase tracking-wide">Кол-во</th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium uppercase tracking-wide">Себестоимость</th>
+                    <tr className="border-b bg-slate-50 text-xs text-slate-500">
+                      <th className="px-4 py-2.5 text-left font-medium">ТОВАР</th>
+                      <th className="px-4 py-2.5 text-left font-medium">ПОСЛЕДНЯЯ ЗАКУПКА</th>
+                      <th className="px-4 py-2.5 text-right font-medium">КОЛ-ВО</th>
+                      <th className="px-4 py-2.5 text-right font-medium">СЕБЕСТОИМОСТЬ</th>
+                      <th className="px-4 py-2.5 text-right font-medium">ЦЕНА ПРОДАЖИ</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {deliveries.length === 0 ? (
+                    {supplier.products.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                          Поставок пока нет
+                        <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
+                          Закупок пока нет
                         </td>
                       </tr>
                     ) : (
-                      deliveries.map((d, i) => (
+                      supplier.products.map((product) => (
                         <tr
-                          key={`${d.product}-${d.date}-${i}`}
-                          className={i !== deliveries.length - 1 ? "border-b border-slate-100" : ""}
+                          key={product.product_id}
+                          onClick={() => openProduct(product.product_id)}
+                          className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
                         >
-                          <td className="px-4 py-2.5 text-slate-900">{d.product}</td>
-                          <td className="px-4 py-2.5 text-slate-500">{formatDate(d.date)}</td>
-                          <td className="px-4 py-2.5 text-slate-500">{d.qty}</td>
-                          <td className="px-4 py-2.5 text-right text-slate-900">{fmt(d.cost)}</td>
+                          <td className="px-4 py-3 font-medium text-[#2563EB]">
+                            {product.product_name}{" "}
+                            <span className="font-normal text-slate-400">({product.unit})</span>
+                          </td>
+                          <td className="px-4 py-3 text-slate-500">
+                            {formatDate(product.last_purchase_at)}
+                          </td>
+                          <td className="px-4 py-3 text-right text-slate-500">
+                            {product.total_quantity || "—"}
+                          </td>
+                          <td className="px-4 py-3 text-right text-slate-900">
+                            {fmt(Number(product.latest_cost_price))}
+                          </td>
+                          <td className="px-4 py-3 text-right text-slate-900">
+                            {product.current_sale_price
+                              ? fmt(Number(product.current_sale_price))
+                              : "—"}
+                          </td>
                         </tr>
                       ))
                     )}
@@ -153,8 +272,55 @@ export function SupplierHistoryPage() {
               </div>
             </>
           )}
-        </div>
+
+          {priceHistory && (
+            <section className="mt-6 overflow-hidden rounded-md border border-[#E2E8F0]">
+              <div className="flex items-start justify-between bg-slate-50 px-4 py-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-900">
+                    История цен: {priceHistory.product_name}
+                  </h4>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    Себестоимость: {fmt(Number(priceHistory.latest_cost_price))} · Продажа:{" "}
+                    {priceHistory.current_sale_price
+                      ? fmt(Number(priceHistory.current_sale_price))
+                      : "—"}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setPriceHistory(null)}
+                  className="text-xs text-slate-500 hover:text-slate-900"
+                >
+                  Закрыть
+                </button>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-y text-xs text-slate-500">
+                    <th className="px-4 py-2 text-left font-medium">ДАТА</th>
+                    <th className="px-4 py-2 text-left font-medium">ПРИХОД</th>
+                    <th className="px-4 py-2 text-right font-medium">КОЛ-ВО</th>
+                    <th className="px-4 py-2 text-right font-medium">СЕБЕСТОИМОСТЬ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {priceHistory.history.map((item) => (
+                    <tr key={item.id} className="border-b border-slate-100 last:border-0">
+                      <td className="px-4 py-2.5 text-slate-500">{formatDate(item.purchased_at)}</td>
+                      <td className="px-4 py-2.5 text-slate-500">{item.receipt_number ?? "—"}</td>
+                      <td className="px-4 py-2.5 text-right text-slate-500">{item.quantity ?? "—"}</td>
+                      <td className="px-4 py-2.5 text-right font-medium text-slate-900">
+                        {fmt(Number(item.cost_price))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
+        </main>
       </div>
     </PageWrap>
   );
 }
+
