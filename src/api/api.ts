@@ -912,3 +912,90 @@ export async function deleteProjectDocument(
 export async function completeProjectOnBackend(projectId: string | number): Promise<void> {
   await api.post(`/projects/${projectId}/complete`);
 }
+
+// ==========================================
+// ДОГОВОР: ГЕНЕРАЦИЯ (только бухгалтер)
+// ==========================================
+// Бэкенд сам подтягивает Спецификацию из project_items — сюда передаются
+// только реквизиты покупателя и условия договора. Ничего не сохраняется
+// на бэкенде (см. POST /contracts/generate) — только generate -> download.
+// Проверенный/исправленный файл бухгалтер потом отдельно загружает на
+// странице "Документы" через уже существующий uploadProjectDocument().
+ 
+export interface ContractGenerateRequest {
+  project_id: number;
+  contract_number: string;
+  contract_date?: string; // YYYY-MM-DD; по умолчанию на бэкенде — сегодня
+  contract_valid_until?: string; // YYYY-MM-DD; по умолчанию — 31 декабря года подписания
+  buyer_company_name: string;
+  buyer_director_name: string;
+  buyer_address: string;
+  buyer_bin: string;
+  buyer_iik: string;
+  buyer_bik: string;
+  buyer_kbe?: string;
+  specification_number?: string;
+  delivery_term_days?: number;
+  // "pickup" — самовывоз покупателем со склада (можно указать pickup_address).
+  // "delivery" — доставка силами Поставщика; текст в договоре генерируется
+  // без адреса, ничего вводить не нужно.
+  shipment_method?: "pickup" | "delivery";
+  pickup_address?: string;
+}
+ 
+export const generateContract = async (
+  payload: ContractGenerateRequest,
+): Promise<void> => {
+  let response;
+ 
+  try {
+    response = await api.post("/contracts/generate", payload, {
+      responseType: "blob",
+    });
+  } catch (error) {
+    // responseType: "blob" means axios also stuffs JSON error bodies (400,
+    // 422, 500 from FastAPI) into a Blob instead of parsed JSON — have to
+    // read it back out manually to surface the real "detail" message
+    // (e.g. "У проекта нет позиций...") instead of a generic axios error.
+    if (axios.isAxiosError(error) && error.response?.data instanceof Blob) {
+      const errorBlob = error.response.data;
+      try {
+        const text = await errorBlob.text();
+        const parsed = JSON.parse(text);
+        if (parsed?.detail) throw new Error(parsed.detail);
+      } catch {
+        // wasn't JSON / no detail field — fall through to rethrow below
+      }
+    }
+    throw error instanceof Error ? error : new Error("Не удалось сгенерировать договор");
+  }
+ 
+  const blob = new Blob([response.data], {
+    type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  });
+ 
+  let filename = `Договор_${payload.contract_number}.docx`;
+  const disposition = response.headers["content-disposition"];
+  if (disposition && disposition.includes("filename*=UTF-8''")) {
+    filename = decodeURIComponent(disposition.split("filename*=UTF-8''")[1]);
+  }
+ 
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+};
+ 
+// Бухгалтер загрузил финальный файл договора на странице "Документы" —
+// переводит проект из "Ожидание подписания" в "Активный закуп".
+// См. project_status_router.py: POST /projects/{project_id}/contract-uploaded
+export const markContractUploaded = async (
+  projectId: string | number,
+): Promise<void> => {
+  await api.post(`/projects/${projectId}/contract-uploaded`);
+};
+ 
