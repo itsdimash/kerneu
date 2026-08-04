@@ -160,6 +160,7 @@ const directorApproveInvoice = (documentId: number) => postInvoiceAction(documen
 const directorRejectInvoice = (documentId: number, reason: string) =>
   postInvoiceAction(documentId, "director-reject", { reason });
 
+const sendInvoiceToIncomeApi = (documentId: number, warehouseId: number, items: Array<{ product_id: number; quantity: number; purchase_price: number }>) =>
 type SendToIncomeItem = {
   product_id: number;
   quantity: number;
