@@ -6,7 +6,7 @@ import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
 import { fmt } from "../lib/format";
 import { INVOICES_INIT } from "../data/invoices";
 import { STOCK_INIT } from "../data/stock";
-import { AlertTriangle, Calculator, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText } from "lucide-react";
+import { AlertTriangle, Calculator, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText, ChevronDown, Plus } from "lucide-react";
 import {
   fetchProjectDetails,
   fetchProjectItems,
@@ -36,6 +36,7 @@ import type {
 
 type MlStatus =
   | "Нет в системе"
+  | "Нет в системе (похожие варианты)"
   | "Есть в системе (недостаточно)"
   | "На складе";
 
@@ -50,6 +51,10 @@ const ML_STATUS_STYLES: Record<
     badge: "bg-red-100 text-red-800 border border-red-300",
     row: "bg-red-50 hover:bg-red-100/60",
   },
+  "Нет в системе (похожие варианты)": {
+    badge: "bg-orange-100 text-orange-800 border border-orange-300",
+    row: "bg-orange-50 hover:bg-orange-100/60",
+  },
   "Есть в системе (недостаточно)": {
     badge: "bg-yellow-100 text-yellow-800 border border-yellow-300",
     row: "bg-yellow-50 hover:bg-yellow-100/60",
@@ -60,12 +65,44 @@ const ML_STATUS_STYLES: Record<
   },
 };
 
-const normalizeMlStatus = (status: string | null | undefined): MlStatus => {
+const normalizeMlStatus = (
+  status: string | null | undefined,
+): MlStatus | null => {
   const normalized = status?.trim();
+
+  if (normalized === "Нет в системе") return "Нет в системе";
+  if (normalized === "Нет в системе (похожие варианты)") {
+    return "Нет в системе (похожие варианты)";
+  }
   if (normalized === "На складе") return "На складе";
-  if (normalized === "Есть в системе (недостаточно)") return "Есть в системе (недостаточно)";
-  return "Нет в системе";
+  if (normalized === "Есть в системе (недостаточно)") {
+    return "Есть в системе (недостаточно)";
+  }
+
+  return null;
 };
+
+const UNKNOWN_ML_STATUS_STYLE = {
+  badge: "bg-slate-100 text-slate-700 border border-slate-300",
+  row: "bg-white hover:bg-slate-50",
+};
+
+// Достаёт читаемые текстовые подсказки из similar_variants — ML отдаёт
+// их из внешнего Excel-файла в произвольном виде (иногда структурированные
+// объекты, иногда просто нераспарсенный текст в raw_value), без id из
+// нашей таблицы products. Эти строки используются только как текст для
+// сопоставления с реальным каталогом, а не как источник id напрямую.
+const getSimilarVariantLabels = (item: MlImportItemResponse): string[] =>
+  item.similar_variants
+    .map((variant) => {
+      const label =
+        variant.product_name ??
+        variant.name ??
+        variant.raw_value ??
+        variant.value;
+      return typeof label === "string" ? label.trim() : null;
+    })
+    .filter((label): label is string => Boolean(label));
 
 type EstimateRow = {
   id: number;
@@ -201,6 +238,18 @@ export function ProjectPagePM({
   const [savingProduct, setSavingProduct] = useState(false);
   const [showEstimate, setShowEstimate] = useState(false);
 
+  // Каталог товаров нужен для строк ML-импорта со статусом «Нет в
+  // системе (похожие варианты)»: ML-варианты в similar_variants приходят
+  // из внешнего Excel-файла и НЕ содержат id из нашей таблицы products
+  // (иногда там вообще нет структурированных данных, только текст) —
+  // поэтому PM должен искать и выбирать реальный товар из каталога, а не
+  // из similar_variants напрямую.
+  const [productCatalog, setProductCatalog] = useState<
+    { id: number; name: string; unit?: string | null; price?: number | string | null }[]
+  >([]);
+  const [productCatalogLoading, setProductCatalogLoading] = useState(false);
+  const [openVariantPickerId, setOpenVariantPickerId] = useState<number | null>(null);
+
   const resolvedProjectId = projectId; // Let it be a string or a number!
   const hasValidProjectId = Boolean(resolvedProjectId); // Just check that it's not empty
   useEffect(() => {
@@ -259,7 +308,33 @@ export function ProjectPagePM({
     return () => { cancelled = true; };
   }, [resolvedProjectId, hasValidProjectId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setProductCatalogLoading(true);
+    fetch("http://localhost:8000/api/v1/products/", { credentials: "include" })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Ошибка загрузки каталога товаров: ${res.status}`);
+        return res.json();
+      })
+      .then((data) => { if (!cancelled) setProductCatalog(data); })
+      .catch((error) => { console.error("Не удалось загрузить каталог товаров:", error); })
+      .finally(() => { if (!cancelled) setProductCatalogLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
   const currentStatus = project?.status?.status_name || "Новый";
+
+  useEffect(() => {
+    if (openVariantPickerId === null) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest(`[data-variant-picker="${openVariantPickerId}"]`)) {
+        setOpenVariantPickerId(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [openVariantPickerId]);
 
   const refreshProject = async (): Promise<ProjectResponse> => {
     const updatedProject = await fetchProjectDetails(resolvedProjectId);
@@ -354,7 +429,20 @@ export function ProjectPagePM({
     }
   };
 
+  const RESOLVABLE_ML_STATUSES = new Set([
+    "Нет в системе",
+    "Нет в системе (похожие варианты)",
+  ]);
+
   const openProductModal = (item: MlImportItemResponse) => {
+    const trimmedStatus = item.ml_status?.trim() ?? "";
+    if (!RESOLVABLE_ML_STATUSES.has(trimmedStatus)) {
+      setMlImportError(
+        `Товар можно добавить только для строк со статусом «Нет в системе» или «Нет в системе (похожие варианты)». Текущий статус: «${trimmedStatus || "не указан"}».`,
+      );
+      return;
+    }
+
     setProductModalItem(item);
     setProductModalForm({
       product_name: item.input_product,
@@ -505,7 +593,6 @@ export function ProjectPagePM({
     try {
       await approveProjectClient(project.id);
       await refreshProject();
-      alert("КП одобрено клиентом и сохранено на странице «Документы».");
       onNavigate("documents");
     } catch (error) {
       console.error("Не удалось зафиксировать одобрение клиента:", error);
@@ -554,9 +641,28 @@ export function ProjectPagePM({
     const price = Number(item.price ?? 0);
     const priceCost = Number(item.price_cost ?? 0);
     const margin = Number(item.margin ?? 0);
-    const noSystemItemReady =
-      normalizeMlStatus(item.ml_status) !== "Нет в системе" ||
-      (item.is_confirmed && item.selected_product_id !== null);
+    const normalizedStatus = normalizeMlStatus(item.ml_status);
+
+    // Готовность строки к подтверждению зависит от статуса:
+    // - "Нет в системе" — ML вообще не нашёл кандидатов, товар нужно
+    //   создать вручную через модалку (is_confirmed + selected_product_id).
+    // - "Нет в системе (похожие варианты)" — ML нашёл кандидатов, но
+    //   не уверен; PM должен либо выбрать один из similar_variants
+    //   (тогда selected_product_id проставляется через PATCH, без
+    //   is_confirmed), либо тоже создать новый товар вручную. В обоих
+    //   случаях требуем selected_product_id !== null — просто заполненной
+    //   цены/поставщика недостаточно, это и было причиной бага, когда
+    //   ML предлагал в качестве похожего варианта совершенно не
+    //   подходящий товар, а строка всё равно считалась готовой.
+    // - "Есть в системе (недостаточно)" / "На складе" — ML совпадение
+    //   уверенное, отдельного выбора со стороны PM не требуется.
+    const mlStatusReady =
+      normalizedStatus !== null &&
+      (normalizedStatus === "Нет в системе"
+        ? item.is_confirmed && item.selected_product_id !== null
+        : normalizedStatus === "Нет в системе (похожие варианты)"
+        ? item.selected_product_id !== null
+        : true);
 
     return (
       quantity > 0 &&
@@ -564,7 +670,7 @@ export function ProjectPagePM({
       priceCost >= 0 &&
       margin >= 0 &&
       Boolean(item.supplier_name?.trim()) &&
-      noSystemItemReady
+      mlStatusReady
     );
   });
   const handleExportExcel = async () => {
@@ -777,12 +883,7 @@ export function ProjectPagePM({
         )}
 
         <div className="mt-2">
-            <div className="flex items-center justify-between gap-4 mb-3">
-                <div>
-                    <h3 className="text-sm font-semibold text-slate-900">Результаты ML-импорта</h3>
-                    {mlImport && <p className="text-xs text-slate-400 mt-1">Файл: {mlImport.source_file_name}</p>}
-                </div>
-
+            <div className="flex items-center justify-end gap-4 mb-3">
                 <div className="flex items-center gap-3">
                   {/* Бейдж "Подтверждено" нужен только пока КП ещё не решён Комдиром —
                       после одобрения/отклонения это уже видно по статусу проекта
@@ -885,7 +986,21 @@ export function ProjectPagePM({
                           const margin = Number(item.margin ?? 0);
                           const marginPercent = margin * 100;
                           const normalizedStatus = normalizeMlStatus(item.ml_status);
-                          const statusStyle = ML_STATUS_STYLES[normalizedStatus];
+                          const trimmedItemStatus = item.ml_status?.trim() ?? "";
+                          const isNotInSystem = trimmedItemStatus === "Нет в системе";
+                          const isSimilarVariants =
+                            normalizedStatus === "Нет в системе (похожие варианты)";
+                          const needsProductResolution =
+                            !item.is_confirmed &&
+                            (isNotInSystem ||
+                              (isSimilarVariants && item.selected_product_id === null));
+                          const displayedStatus =
+                            normalizedStatus ??
+                            item.ml_status?.trim() ??
+                            "Статус не указан";
+                          const statusStyle = normalizedStatus
+                            ? ML_STATUS_STYLES[normalizedStatus]
+                            : UNKNOWN_ML_STATUS_STYLE;
 
                           return (
                               <tr key={item.id} className={`transition-colors ${statusStyle.row}`}>
@@ -895,13 +1010,94 @@ export function ProjectPagePM({
                                 <td className="px-4 py-3">
                                   <span
                                       className={`inline-flex px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap ${statusStyle.badge}`}>
-                                    {normalizedStatus}
+                                    {displayedStatus}
                                   </span>
                                 </td>
                                 <td className="px-4 py-3">
-                                  <p className="text-sm text-slate-700">{item.matched_product ?? "—"}</p>
-                                  {item.matched_external_id &&
-                                      <p className="text-xs text-slate-400 mt-1">ML ID: {item.matched_external_id}</p>}
+                                  {isSimilarVariants && !item.is_confirmed ? (() => {
+                                      const similarLabels = getSimilarVariantLabels(item);
+                                      const matchedCatalogOptions = productCatalog.filter((p) => {
+                                        const catalogName = p.name.trim().toLowerCase();
+                                        return similarLabels.some((label) => {
+                                          const labelLower = label.toLowerCase();
+                                          return catalogName.includes(labelLower) || labelLower.includes(catalogName);
+                                        });
+                                      });
+                                      const isPickerOpen = openVariantPickerId === item.id;
+                                      const selectedProductName =
+                                        item.selected_product_id != null
+                                          ? productCatalog.find((p) => p.id === item.selected_product_id)?.name
+                                            ?? item.matched_product
+                                            ?? "Товар выбран"
+                                          : null;
+
+                                      return (
+                                        <div className="relative" data-variant-picker={item.id}>
+                                          <button
+                                              type="button"
+                                              disabled={mlImport.status !== "draft" || isUpdating}
+                                              onClick={() =>
+                                                setOpenVariantPickerId((current) => (current === item.id ? null : item.id))
+                                              }
+                                              className={`w-56 flex items-center justify-between gap-2 px-2 py-1.5 text-sm border rounded-md bg-white text-left disabled:bg-slate-100 disabled:cursor-not-allowed ${
+                                                item.selected_product_id != null ? "border-[#E2E8F0]" : "border-orange-300"
+                                              }`}
+                                          >
+                                            <span className={`truncate ${selectedProductName ? "text-slate-800" : "text-slate-400"}`}>
+                                              {selectedProductName ?? (productCatalogLoading ? "Загрузка каталога…" : "Выберите товар")}
+                                            </span>
+                                            <ChevronDown
+                                                size={14}
+                                                className={`flex-shrink-0 text-slate-400 transition-transform ${isPickerOpen ? "rotate-180" : ""}`}
+                                            />
+                                          </button>
+
+                                          {isPickerOpen && (
+                                            <div className="absolute z-20 mt-1 w-64 max-h-64 overflow-y-auto bg-white border border-[#E2E8F0] rounded-lg shadow-lg py-1">
+                                              {matchedCatalogOptions.length === 0 ? (
+                                                <p className="px-3 py-2 text-xs text-slate-400">Похожих товаров в каталоге не найдено</p>
+                                              ) : (
+                                                matchedCatalogOptions.map((product) => (
+                                                  <button
+                                                      key={product.id}
+                                                      type="button"
+                                                      onClick={() => {
+                                                        handleMlItemUpdate(item.id, { selected_product_id: product.id });
+                                                        setOpenVariantPickerId(null);
+                                                      }}
+                                                      className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 transition-colors ${
+                                                        item.selected_product_id === product.id
+                                                          ? "bg-blue-50 text-[#2563EB] font-medium"
+                                                          : "text-slate-700"
+                                                      }`}
+                                                  >
+                                                    {product.name}
+                                                  </button>
+                                                ))
+                                              )}
+                                              <div className="border-t border-[#E2E8F0] mt-1 pt-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      setOpenVariantPickerId(null);
+                                                      openProductModal(item);
+                                                    }}
+                                                    className="w-full flex items-center gap-1.5 text-left px-3 py-2 text-sm font-medium text-[#2563EB] hover:bg-blue-50 transition-colors"
+                                                >
+                                                  <Plus size={14} /> Это новый товар
+                                                </button>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })() : (
+                                    <>
+                                      <p className="text-sm text-slate-700">{item.matched_product ?? "—"}</p>
+                                      {item.matched_external_id &&
+                                          <p className="text-xs text-slate-400 mt-1">ML ID: {item.matched_external_id}</p>}
+                                    </>
+                                  )}
                                 </td>
                                 <td className="px-4 py-3">
                                   <input
@@ -993,7 +1189,7 @@ export function ProjectPagePM({
       <CheckCircle2 size={14}/>
       Добавлен
     </span>
-                                  ) : normalizedStatus === "Нет в системе" ? (
+                                  ) : needsProductResolution ? (
                                       <button
                                           type="button"
                                           onClick={() => openProductModal(item)}
@@ -1036,14 +1232,17 @@ export function ProjectPagePM({
 
                 <div className="flex items-center justify-between gap-4 mt-4">
                   <p className="text-xs text-slate-400">
-                    Для строк «Нет в системе» сначала создайте товар через кнопку в строке.
-                    У остальных строк должны быть указаны поставщик, цена и количество.
+                    Для строк «Нет в системе» создайте товар через кнопку в строке.
+                    Для строк «Нет в системе (похожие варианты)» выберите товар из
+                    предложенного списка либо нажмите «Это новый товар», если
+                    подходящего нет. У остальных строк должны быть указаны поставщик,
+                    цена и количество.
                   </p>
                   <button
                       type="button"
                       onClick={handleConfirmMlImport}
                       disabled={!canConfirmMlImport || confirmingImport}
-                      className="flex items-center gap-2 px-5 py-2.5 bg-[#2563EB] text-white text-sm font-semibold rounded-lg hover:bg-[#1D4ED8] transition-colors disabled:bg-[#2563EB] disabled:text-white disabled:hover:bg-[#2563EB] disabled:cursor-not-allowed"
+                      className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-colors disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed enabled:bg-[#2563EB] enabled:text-white enabled:hover:bg-[#1D4ED8] enabled:cursor-pointer"
                   >
                     {confirmingImport ? (
                         <>
@@ -1084,7 +1283,7 @@ export function ProjectPagePM({
                     Добавить товар в систему
                   </h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    Строка останется со статусом «Нет в системе», но будет готова к подтверждению.
+                    Статус ML-строки не изменится, но после создания товара строка будет готова к подтверждению.
                   </p>
                 </div>
                 <button

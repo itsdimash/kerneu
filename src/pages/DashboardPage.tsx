@@ -830,7 +830,6 @@ const handleSave = async () => {
           label="Выручка (план)"
           value={stats ? fmt(stats.planned_revenue) : "—"}
           sub="Текущий месяц"
-          delta={stats ? `+${stats.revenue_growth}%` : undefined}
           icon={TrendingUp}
           iconColor="text-green-500"
           iconBg="bg-green-50"
