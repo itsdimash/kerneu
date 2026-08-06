@@ -12,6 +12,7 @@ import {
   XCircle,
   Camera,
   Clock,
+  Inbox,
 } from "lucide-react";
 import type { ProjectState, Role } from "../types";
 import {
@@ -256,7 +257,7 @@ function AddStockModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+      <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-semibold text-slate-800">Добавить товар на склад</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
@@ -273,11 +274,11 @@ function AddStockModal({
 
         <div className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Склад *</label>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Склад *</label>
             <select
               value={warehouseId}
               onChange={(e) => setWarehouseId(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2563EB] bg-white text-slate-700 font-medium"
+              className="w-full px-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:border-primary bg-card text-slate-700 font-medium"
             >
               {warehouses.map((wh) => (
                 <option key={wh.id} value={wh.id}>
@@ -288,41 +289,41 @@ function AddStockModal({
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">ID товара *</label>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">ID товара *</label>
             <input
               value={productId}
               onChange={(e) => setProductId(e.target.value)}
               type="number"
               placeholder="Например, 12"
-              className="w-full px-3 py-2 text-sm border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2563EB]"
+              className="w-full px-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:border-primary"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Количество *</label>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Количество *</label>
             <input
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
               type="number"
               placeholder="Например, 500"
-              className="w-full px-3 py-2 text-sm border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2563EB]"
+              className="w-full px-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:border-primary"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">ID поставщика *</label>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">ID поставщика *</label>
             <input
               value={supplierId}
               onChange={(e) => setSupplierId(e.target.value)}
               type="number"
               placeholder="Например, 3"
-              className="w-full px-3 py-2 text-sm border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2563EB]"
+              className="w-full px-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:border-primary"
             />
           </div>
         </div>
 
         <div className="flex items-center justify-end gap-2 mt-5">
-          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 rounded-lg">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-background rounded-lg">
             Отмена
           </button>
           <button
@@ -404,7 +405,7 @@ function ConfirmReceiptModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+      <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-semibold text-slate-800">
             Подтвердить приход {receipt.receiptNumber}
@@ -414,7 +415,7 @@ function ConfirmReceiptModal({
           </button>
         </div>
 
-        <p className="text-xs text-slate-500 mb-3">
+        <p className="text-xs text-muted-foreground mb-3">
           {receipt.item} · план {receipt.qty} {receipt.unit} · {receipt.supplier} ({receipt.warehouseName})
         </p>
 
@@ -427,20 +428,20 @@ function ConfirmReceiptModal({
 
         <div className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">
+            <label className="block text-xs font-medium text-muted-foreground mb-1">
               Сколько пришло на самом деле *
             </label>
             <input
               value={actualQuantity}
               onChange={(e) => setActualQuantity(e.target.value)}
               type="number"
-              className="w-full px-3 py-2 text-sm border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2563EB]"
+              className="w-full px-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:border-primary"
             />
           </div>
 
           {/* НОВОЕ ПОЛЕ: КОЛИЧЕСТВО БРАКА */}
           <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">
+            <label className="block text-xs font-medium text-muted-foreground mb-1">
               Количество брака
             </label>
             <input
@@ -448,24 +449,24 @@ function ConfirmReceiptModal({
               onChange={(e) => setDefectiveQuantity(e.target.value)}
               type="number"
               min="0"
-              className="w-full px-3 py-2 text-sm border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2563EB]"
+              className="w-full px-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:border-primary"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Комментарий кладовщика</label>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Комментарий кладовщика</label>
             <textarea
               value={comment}
               onChange={(e) => setComment(e.target.value)}
               rows={2}
               placeholder="Например: 2 шт с повреждённой упаковкой"
-              className="w-full px-3 py-2 text-sm border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2563EB] resize-none"
+              className="w-full px-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:border-primary resize-none"
             />
           </div>
 
           <div>
-            <label className="flex items-center gap-2 px-3 py-2 text-sm border border-dashed border-[#E2E8F0] rounded-lg cursor-pointer hover:bg-slate-50 text-slate-600">
-              <Camera size={15} className="text-[#2563EB]" />
+            <label className="flex items-center gap-2 px-3 py-2 text-sm border border-dashed border-border rounded-lg cursor-pointer hover:bg-background text-slate-600">
+              <Camera size={15} className="text-primary" />
               {photo ? photo.name : "Прикрепить фото товара"}
               <input
                 type="file"
@@ -478,7 +479,7 @@ function ConfirmReceiptModal({
         </div>
 
         <div className="flex items-center justify-end gap-2 mt-5">
-          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 rounded-lg">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-background rounded-lg">
             Отмена
           </button>
           <button
@@ -539,7 +540,7 @@ function ReceiptDetailsModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+      <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-semibold text-slate-800">
             Приход {receipt.receiptNumber}
@@ -557,23 +558,23 @@ function ReceiptDetailsModal({
         )}
 
         <div className="space-y-2 text-sm mb-4">
-          <div className="flex justify-between"><span className="text-slate-500">Товар</span><span className="font-medium text-slate-800 text-right">{receipt.item}</span></div>
-          <div className="flex justify-between"><span className="text-slate-500">Поставщик</span><span className="font-medium text-slate-800">{receipt.supplier}</span></div>
-          <div className="flex justify-between"><span className="text-slate-500">Склад</span><span className="font-medium text-slate-800">{receipt.warehouseName}</span></div>
-          <div className="flex justify-between"><span className="text-slate-500">План / Факт</span><span className="font-mono font-medium text-slate-800">{receipt.qty} / {receipt.actualQuantity ?? "—"} {receipt.unit}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Товар</span><span className="font-medium text-slate-800 text-right">{receipt.item}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Поставщик</span><span className="font-medium text-slate-800">{receipt.supplier}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Склад</span><span className="font-medium text-slate-800">{receipt.warehouseName}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">План / Факт</span><span className="font-mono font-medium text-slate-800">{receipt.qty} / {receipt.actualQuantity ?? "—"} {receipt.unit}</span></div>
           {receipt.confirmedAt && (
-            <div className="flex justify-between"><span className="text-slate-500">Подтверждено</span><span className="font-medium text-slate-800">{new Date(receipt.confirmedAt).toLocaleString("ru-RU")}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Подтверждено</span><span className="font-medium text-slate-800">{new Date(receipt.confirmedAt).toLocaleString("ru-RU")}</span></div>
           )}
         </div>
 
         {photoUrl && !editing && (
-          <img src={photoUrl} alt="Фото товара" className="w-full rounded-lg border border-[#E2E8F0] mb-4 max-h-64 object-contain bg-slate-50" />
+          <img src={photoUrl} alt="Фото товара" className="w-full rounded-lg border border-border mb-4 max-h-64 object-contain bg-background" />
         )}
 
         {!editing ? (
           <>
             <div className="mb-4">
-              <p className="text-xs font-medium text-slate-500 mb-1">Комментарий кладовщика</p>
+              <p className="text-xs font-medium text-muted-foreground mb-1">Комментарий кладовщика</p>
               <p className="text-sm text-slate-700 italic">
                 {receipt.warehouseComment ? `"${receipt.warehouseComment}"` : "Без комментария"}
               </p>
@@ -582,7 +583,7 @@ function ReceiptDetailsModal({
             {canEdit && (
               <button
                 onClick={() => setEditing(true)}
-                className="w-full flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg border border-[#E2E8F0] text-slate-700 hover:bg-slate-50"
+                className="w-full flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg border border-border text-slate-700 hover:bg-background"
               >
                 <Camera size={14} /> Изменить фото / комментарий
               </button>
@@ -591,18 +592,18 @@ function ReceiptDetailsModal({
         ) : (
           <div className="space-y-3">
             <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">Комментарий кладовщика</label>
+              <label className="block text-xs font-medium text-muted-foreground mb-1">Комментарий кладовщика</label>
               <textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
                 rows={2}
-                className="w-full px-3 py-2 text-sm border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2563EB] resize-none"
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:border-primary resize-none"
               />
             </div>
 
             <div>
-              <label className="flex items-center gap-2 px-3 py-2 text-sm border border-dashed border-[#E2E8F0] rounded-lg cursor-pointer hover:bg-slate-50 text-slate-600">
-                <Camera size={15} className="text-[#2563EB]" />
+              <label className="flex items-center gap-2 px-3 py-2 text-sm border border-dashed border-border rounded-lg cursor-pointer hover:bg-background text-slate-600">
+                <Camera size={15} className="text-primary" />
                 {photo ? photo.name : "Заменить фото товара"}
                 <input
                   type="file"
@@ -620,14 +621,14 @@ function ReceiptDetailsModal({
                   setComment(receipt.warehouseComment || "");
                   setPhoto(null);
                 }}
-                className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 rounded-lg"
+                className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-background rounded-lg"
               >
                 Отмена
               </button>
               <button
                 onClick={handleSave}
                 disabled={submitting}
-                className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-[#2563EB] text-white hover:bg-[#1d4ed8] disabled:opacity-60"
+                className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-primary text-white hover:bg-primary/90 disabled:opacity-60"
               >
                 {submitting && <Loader2 size={14} className="animate-spin" />}
                 Сохранить
@@ -936,12 +937,12 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   )}
 
 
-      <div className="flex items-center gap-1 mb-6 border-b border-[#E2E8F0]">
+      <div className="flex items-center gap-1 mb-6 border-b border-border">
         {[{ key: "stock" as const, label: "Остатки" }, { key: "arrivals" as const, label: "Приход" }, { key: "shipments" as const, label: "Отгрузка" }].map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${tab === t.key ? "border-[#2563EB] text-[#2563EB]" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${tab === t.key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-slate-700"}`}
           >
             {t.label}
           </button>
@@ -957,14 +958,14 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                 value={stockSearch}
                 onChange={(e) => setStockSearch(e.target.value)}
                 placeholder="Поиск по наименованию…"
-                className="w-full pl-9 pr-3 py-2 text-sm border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#2563EB] bg-white"
+                className="w-full pl-9 pr-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:border-primary bg-card"
               />
             </div>
 
-            <div className="flex items-center gap-1 border border-[#E2E8F0] rounded-lg overflow-hidden bg-white p-0.5">
+            <div className="flex items-center gap-1 border border-border rounded-lg overflow-hidden bg-card p-0.5">
               <button
                 onClick={() => setSelectedWarehouseId("all")}
-                className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${selectedWarehouseId === "all" ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+                className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${selectedWarehouseId === "all" ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-muted"}`}
               >
                 <Building2 size={12} /> Все склады
               </button>
@@ -972,7 +973,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                 <button
                   key={wh.id}
                   onClick={() => setSelectedWarehouseId(wh.id)}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${selectedWarehouseId === wh.id ? "bg-[#2563EB] text-white" : "text-slate-600 hover:bg-slate-100"}`}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${selectedWarehouseId === wh.id ? "bg-primary text-white" : "text-slate-600 hover:bg-muted"}`}
                 >
                   {wh.code || wh.name}
                 </button>
@@ -980,43 +981,43 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
             </div>
           </div>
 
-          <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
+          <div className="bg-card rounded-lg border border-border overflow-hidden">
             {stockLoading ? (
               <div className="flex flex-col items-center justify-center py-12">
-                <Loader2 size={24} className="animate-spin text-[#2563EB] mb-2" />
-                <p className="text-sm text-slate-500">Загрузка остатков…</p>
+                <Loader2 size={24} className="animate-spin text-primary mb-2" />
+                <p className="text-sm text-muted-foreground">Загрузка остатков…</p>
               </div>
             ) : filteredStock.length === 0 ? (
-              <div className="py-12 text-center text-sm text-slate-400">Нет данных об остатках</div>
+              <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Нет данных об остатках</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse">
                   <thead>
-                    <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-                      <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left whitespace-nowrap">Артикул</th>
-                      <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">Наименование</th>
-                      <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left whitespace-nowrap">Ед. изм.</th>
+                    <tr className="border-b border-border bg-background/60">
+                      <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">Артикул</th>
+                      <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Наименование</th>
+                      <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">Ед. изм.</th>
                       {warehouses.map((wh) => (
-                        <th key={wh.id} className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-right whitespace-nowrap">{wh.code || wh.name}</th>
+                        <th key={wh.id} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right whitespace-nowrap">{wh.code || wh.name}</th>
                       ))}
-                      <th className="px-4 py-2.5 text-xs font-semibold text-slate-800 uppercase tracking-wide text-right bg-slate-100/70 whitespace-nowrap">Всего</th>
-                      <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-right whitespace-nowrap">В резерве</th>
-                      <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-right whitespace-nowrap">Брак</th>
-                      <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-right whitespace-nowrap">Доступно</th>
+                      <th className="px-4 py-2.5 text-xs font-semibold text-slate-800 uppercase tracking-wide text-right bg-muted/70 whitespace-nowrap">Всего</th>
+                      <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right whitespace-nowrap">В резерве</th>
+                      <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right whitespace-nowrap">Брак</th>
+                      <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right whitespace-nowrap">Доступно</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[#E2E8F0]">
+                  <tbody className="divide-y divide-border">
                     {filteredStock.map((item) => (
-                      <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="px-4 py-3 text-xs font-mono text-slate-500 whitespace-nowrap">{item.sku}</td>
+                      <tr key={item.id} className="hover:bg-background/50 transition-colors">
+                        <td className="px-4 py-3 text-xs font-mono text-muted-foreground whitespace-nowrap">{item.sku}</td>
                         <td className="px-4 py-3 text-sm font-medium text-slate-800">{item.name}</td>
-                        <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{item.unit}</td>
+                        <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{item.unit}</td>
                         {warehouses.map((wh) => (
                           <td key={wh.id} className="px-4 py-3 text-sm font-mono text-slate-700 text-right whitespace-nowrap">
                             {(item.perWarehouse[wh.id] || 0).toLocaleString("ru-RU")}
                           </td>
                         ))}
-                        <td className="px-4 py-3 text-sm font-mono text-slate-900 text-right font-bold bg-slate-50 whitespace-nowrap">
+                        <td className="px-4 py-3 text-sm font-mono text-foreground text-right font-bold bg-background whitespace-nowrap">
                           {item.total.toLocaleString("ru-RU")}
                         </td>
                         <td className="px-4 py-3 text-sm font-mono text-violet-600 text-right whitespace-nowrap">
@@ -1043,7 +1044,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
       )}
 
       {tab === "arrivals" && (
-        <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
+        <div className="bg-card rounded-lg border border-border overflow-hidden">
           {arrivalsError && (
             <div className="flex items-start gap-3 p-4 bg-red-50 border-b border-red-200">
               <AlertTriangle size={15} className="text-red-500 mt-0.5 shrink-0" />
@@ -1053,35 +1054,35 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
 
           {arrivalsLoading ? (
             <div className="flex flex-col items-center justify-center py-12">
-              <Loader2 size={24} className="animate-spin text-[#2563EB] mb-2" />
-              <p className="text-sm text-slate-500">Загрузка приходов…</p>
+              <Loader2 size={24} className="animate-spin text-primary mb-2" />
+              <p className="text-sm text-muted-foreground">Загрузка приходов…</p>
             </div>
           ) : arrivals.length === 0 ? (
-            <div className="py-12 text-center text-sm text-slate-400">Нет данных о приходах</div>
+            <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Нет данных о приходах</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full border-collapse">
                 <thead>
-                  <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-                    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">Название проекта</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">№ Прихода</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">Когда придет товар</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">Склад</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">Поставщик</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">Название товара</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-center">Количество</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">Ед. изм.</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-center">Статус приема</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-center">Действия кладовщика</th>
+                  <tr className="border-b border-border bg-background/60">
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Название проекта</th>
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">№ Прихода</th>
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Когда придет товар</th>
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Склад</th>
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Поставщик</th>
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Название товара</th>
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Количество</th>
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Ед. изм.</th>
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Статус приема</th>
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Действия кладовщика</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#E2E8F0]">
+                <tbody className="divide-y divide-border">
                   {arrivals.map((a) => {
                     const isCancelled = a.status === "cancelled";
                     const isArrived = a.status === "arrived";
 
                     return (
-                      <tr key={a.id} className={`hover:bg-slate-50/50 transition-colors ${isCancelled ? "opacity-50 bg-slate-50" : ""}`}>
+                      <tr key={a.id} className={`hover:bg-background/50 transition-colors ${isCancelled ? "opacity-50 bg-background" : ""}`}>
                         {/* 1. Название проекта */}
                         <td className="px-4 py-3.5 text-sm font-bold text-blue-700 bg-blue-50/30">
                           {a.project}
@@ -1099,7 +1100,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
 
                         {/* 4. На какой склад (1-ый или 2-ой) */}
                         <td className="px-4 py-3.5 text-sm font-medium text-slate-800">
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-100 text-slate-700 text-xs font-semibold">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted text-slate-700 text-xs font-semibold">
                             <Building2 size={12} className="text-blue-600" />
                             {a.warehouseName}
                           </span>
@@ -1116,7 +1117,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                         </td>
 
                         {/* 7. Количество */}
-                        <td className="px-4 py-3.5 text-sm font-mono font-bold text-slate-900 text-center">
+                        <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">
                           {a.qty.toLocaleString("ru-RU")}
                           {a.actualQuantity !== null && a.actualQuantity !== a.qty && (
                             <span className="block text-xs font-normal text-amber-600">факт: {a.actualQuantity}</span>
@@ -1124,7 +1125,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                         </td>
 
                         {/* 8. Ед. изм. */}
-                        <td className="px-4 py-3.5 text-xs text-slate-500">
+                        <td className="px-4 py-3.5 text-xs text-muted-foreground">
                           {a.unit}
                         </td>
 
@@ -1171,7 +1172,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                                 <PackageCheck size={14} /> Зачислено
                               </span>
                               {a.warehouseComment && (
-                                <span className="text-[11px] text-slate-500 italic max-w-[150px] truncate" title={a.warehouseComment}>
+                                <span className="text-[11px] text-muted-foreground italic max-w-[150px] truncate" title={a.warehouseComment}>
                                   "{a.warehouseComment}"
                                 </span>
                               )}
@@ -1222,12 +1223,12 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
           )}
 
           {pendingLoading ? (
-            <div className="flex flex-col items-center justify-center py-10 bg-white rounded-lg border border-[#E2E8F0] mb-6">
-              <Loader2 size={22} className="animate-spin text-[#2563EB] mb-2" />
-              <p className="text-sm text-slate-500">Загрузка проектов на отгрузку…</p>
+            <div className="flex flex-col items-center justify-center py-10 bg-card rounded-lg border border-border mb-6">
+              <Loader2 size={22} className="animate-spin text-primary mb-2" />
+              <p className="text-sm text-muted-foreground">Загрузка проектов на отгрузку…</p>
             </div>
           ) : pendingShipments.length === 0 ? (
-            <div className="py-8 text-center text-sm text-slate-400 bg-white rounded-lg border border-dashed border-[#E2E8F0] mb-6">
+            <div className="py-8 text-center text-sm text-slate-400 bg-card rounded-lg border border-dashed border-border mb-6">
               Нет проектов, готовых к отгрузке
             </div>
           ) : (
@@ -1237,11 +1238,11 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                 const canSubmit = allChecked && !proj.submitting;
 
                 return (
-                  <div key={proj.projectId} className="bg-white rounded-lg border border-[#E2E8F0] shadow-sm overflow-hidden">
-                    <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 bg-slate-50 border-b border-[#E2E8F0]">
+                  <div key={proj.projectId} className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
+                    <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 bg-background border-b border-border">
                       <div>
-                        <h3 className="text-sm font-bold text-slate-900">{proj.projectName}</h3>
-                        <p className="text-xs text-slate-500">{proj.items.length} позиций к сборке</p>
+                        <h3 className="text-sm font-bold text-foreground">{proj.projectName}</h3>
+                        <p className="text-xs text-muted-foreground">{proj.items.length} позиций к сборке</p>
                       </div>
                       <span className="px-2.5 py-1 text-xs font-semibold bg-amber-50 text-amber-700 rounded-full flex items-center gap-1">
                         <PackageCheck size={12} /> Зарезервировано
@@ -1258,17 +1259,17 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                     <div className="overflow-x-auto">
                       <table className="w-full border-collapse">
                         <thead>
-                          <tr className="border-b border-[#E2E8F0] bg-slate-50/40">
-                            <th className="px-5 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left w-10"></th>
-                            <th className="px-5 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">Товар</th>
-                            <th className="px-5 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-center">Кол.</th>
-                            <th className="px-5 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">Ед.</th>
-                            <th className="px-5 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">Склад</th>
+                          <tr className="border-b border-border bg-background/40">
+                            <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left w-10"></th>
+                            <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Товар</th>
+                            <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Кол.</th>
+                            <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Ед.</th>
+                            <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Склад</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-[#E2E8F0]">
+                        <tbody className="divide-y divide-border">
                           {proj.items.map((it) => (
-                            <tr key={it.id} className="hover:bg-slate-50/40 transition-colors">
+                            <tr key={it.id} className="hover:bg-background/40 transition-colors">
                               <td className="px-5 py-3 text-center">
                               {isWarehouseUser && (
                               <input
@@ -1276,13 +1277,13 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                                 checked={it.checked}
                                 disabled={proj.submitting || !it.warehouseId}
                                 onChange={() => toggleShipmentItemChecked(proj.projectId, it.id)}
-                                className="w-4 h-4 accent-[#2563EB] cursor-pointer disabled:cursor-not-allowed"
+                                className="w-4 h-4 accent-primary cursor-pointer disabled:cursor-not-allowed"
                               />
                               )}
                               </td>
                               <td className="px-5 py-3 text-sm font-medium text-slate-800">{it.productName}</td>
                               <td className="px-5 py-3 text-sm font-mono text-slate-700 text-center">{it.quantity}</td>
-                              <td className="px-5 py-3 text-xs text-slate-500">{it.unit}</td>
+                              <td className="px-5 py-3 text-xs text-muted-foreground">{it.unit}</td>
                               <td className="px-5 py-3">
                                 {it.availableWarehouses.length === 0 ? (
                                   <span className="text-xs text-red-500 italic">Нет резерва ни на одном складе</span>
@@ -1293,7 +1294,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                                       value={it.warehouseId ?? ""}
                                       onChange={(e) => setShipmentItemWarehouse(proj.projectId, it.id, Number(e.target.value))}
                                       disabled={proj.submitting}
-                                      className="text-sm border border-[#E2E8F0] rounded-lg px-2 py-1 focus:outline-none focus:border-[#2563EB] bg-white"
+                                      className="text-sm border border-border rounded-lg px-2 py-1 focus:outline-none focus:border-primary bg-card"
                                     >
                                       {it.availableWarehouses.map((wh) => (
                                         <option key={wh.warehouseId} value={wh.warehouseId}>
@@ -1311,13 +1312,13 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                     </div>
 
                     {isWarehouseUser && (
-                      <div className="flex items-center justify-end px-5 py-3.5 border-t border-[#E2E8F0] bg-slate-50/40">
+                      <div className="flex items-center justify-end px-5 py-3.5 border-t border-border bg-background/40">
                         <button
                           onClick={() => handleSendToShipment(proj.projectId)}
                           disabled={!canSubmit}
                           className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg shadow-sm transition-colors ${
                             canSubmit
-                              ? "bg-green-600 hover:bg-green-700 text-white cursor-pointer"
+                              ? "bg-green-600 hover:bg-success/90 text-white cursor-pointer"
                               : "bg-slate-200 text-slate-400 cursor-not-allowed"
                           }`}
                         >
@@ -1333,7 +1334,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
           )}
 
           {/* --- История уже отгруженного --- */}
-          <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
+          <div className="bg-card rounded-lg border border-border overflow-hidden">
           {shipmentsError && (
             <div className="flex items-start gap-3 p-4 bg-red-50 border-b border-red-200">
               <AlertTriangle size={15} className="text-red-500 mt-0.5 shrink-0" />
@@ -1343,30 +1344,30 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
 
           {shipmentsLoading ? (
             <div className="flex flex-col items-center justify-center py-12">
-              <Loader2 size={24} className="animate-spin text-[#2563EB] mb-2" />
-              <p className="text-sm text-slate-500">Загрузка отгрузок…</p>
+              <Loader2 size={24} className="animate-spin text-primary mb-2" />
+              <p className="text-sm text-muted-foreground">Загрузка отгрузок…</p>
             </div>
           ) : shipments.length === 0 ? (
-            <div className="py-12 text-center text-sm text-slate-400">Нет данных об отгрузках</div>
+            <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Нет данных об отгрузках</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full border-collapse">
                 <thead>
-                  <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-                    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">№ Накладной</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">Проект</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left">Дата</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-center">Количество позиций</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide text-center">Статус</th>
+                  <tr className="border-b border-border bg-background/60">
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">№ Накладной</th>
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Проект</th>
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Дата</th>
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Количество позиций</th>
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Статус</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#E2E8F0]">
+                <tbody className="divide-y divide-border">
                   {shipments.map((s) => (
-                    <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
+                    <tr key={s.id} className="hover:bg-background/50 transition-colors">
                       <td className="px-4 py-3.5 text-xs font-mono font-medium text-slate-700">№{s.id}</td>
                       <td className="px-4 py-3.5 text-sm font-bold text-slate-800">{s.project}</td>
                       <td className="px-4 py-3.5 text-sm text-slate-600">{s.date}</td>
-                      <td className="px-4 py-3.5 text-sm font-mono font-bold text-slate-900 text-center">{s.items}</td>
+                      <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">{s.items}</td>
                       <td className="px-4 py-3.5 text-center">
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">
                           <CheckCircle2 size={14} /> {s.status || "Отгружено"}

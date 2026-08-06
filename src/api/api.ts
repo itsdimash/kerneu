@@ -71,6 +71,7 @@ export interface ProjectResponse {
   planned_margin?: number;
   deadline?: string;
   contract_number?: string;
+  created_at?: string;
 }
 
 const API_BASE = "http://localhost:8000/api/v1"; // подставь свой базовый URL, если отличается

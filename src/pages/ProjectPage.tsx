@@ -83,8 +83,8 @@ const normalizeMlStatus = (
 };
 
 const UNKNOWN_ML_STATUS_STYLE = {
-  badge: "bg-slate-100 text-slate-700 border border-slate-300",
-  row: "bg-white hover:bg-slate-50",
+  badge: "bg-muted text-slate-700 border border-slate-300",
+  row: "bg-card hover:bg-background",
 };
 
 // Достаёт читаемые текстовые подсказки из similar_variants — ML отдаёт
@@ -125,11 +125,11 @@ function EstimateTable({ rows }: { rows: EstimateRow[] }) {
   );
 
   return (
-    <div className="mb-6 overflow-hidden rounded-lg border border-[#E2E8F0] bg-white">
-      <div className="flex items-start justify-between gap-4 border-b border-[#E2E8F0] bg-slate-50/60 px-5 py-4">
+    <div className="mb-6 overflow-hidden rounded-lg border border-border bg-card">
+      <div className="flex items-start justify-between gap-4 border-b border-border bg-background/60 px-5 py-4">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Смета проекта</h3>
-          <p className="mt-1 text-xs text-slate-500">
+          <h3 className="text-sm font-semibold text-foreground">Смета проекта</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
             Справочные цены КазНИИСА. Они не участвуют в расчёте себестоимости и маржи.
           </p>
         </div>
@@ -141,18 +141,18 @@ function EstimateTable({ rows }: { rows: EstimateRow[] }) {
       <div className="overflow-x-auto">
         <table className="w-full min-w-[820px] border-collapse">
           <thead>
-            <tr className="border-b border-[#E2E8F0] bg-white">
+            <tr className="border-b border-border bg-card">
               {["Товар", "Код", "Количество", "Сметная цена", "Сметная сумма"].map((heading) => (
                 <th
                   key={heading}
-                  className="px-4 py-2.5 text-left text-xs font-medium uppercase tracking-wide text-slate-500"
+                  className="px-4 py-2.5 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground"
                 >
                   {heading}
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#E2E8F0]">
+          <tbody className="divide-y divide-border">
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={5} className="px-4 py-10 text-center text-sm text-slate-400">
@@ -164,7 +164,7 @@ function EstimateTable({ rows }: { rows: EstimateRow[] }) {
                 const rowTotal = (row.estimatedPrice ?? 0) * row.quantity;
 
                 return (
-                  <tr key={row.id} className="hover:bg-slate-50/50">
+                  <tr key={row.id} className="hover:bg-background/50">
                     <td className="px-4 py-3 text-sm text-slate-700">{row.name}</td>
                     <td className="px-4 py-3 font-mono text-xs text-slate-600">{row.code ?? "—"}</td>
                     <td className="px-4 py-3 font-mono text-sm text-slate-700">
@@ -182,11 +182,11 @@ function EstimateTable({ rows }: { rows: EstimateRow[] }) {
             )}
           </tbody>
           <tfoot>
-            <tr className="border-t-2 border-[#E2E8F0] bg-slate-50/80">
+            <tr className="border-t-2 border-border bg-background/80">
               <td colSpan={4} className="px-4 py-3 text-right text-sm font-semibold text-slate-700">
                 Итого по смете
               </td>
-              <td className="px-4 py-3 font-mono text-base font-bold text-[#2563EB]">
+              <td className="px-4 py-3 font-mono text-base font-bold text-primary">
                 {formatEstimateMoney(estimatedTotal)}
               </td>
             </tr>
@@ -400,16 +400,14 @@ export function ProjectPagePM({
 
   const sidebarDetails: [string, string][] = project
       ? [
-          ["Бюджет", fmt(Number(project.invoice?.amount ?? 0))],
-          ["Маржа", project.planned_margin != null ? `${project.planned_margin}%` : "—"],
+          ["Создан", project.created_at ? new Date(project.created_at).toLocaleDateString("ru-RU") : "—"],
           ["Дедлайн", project.deadline ? new Date(project.deadline).toLocaleDateString("ru-RU") : "—"],
           ["Менеджер", project.pm?.name ?? "—"],
           ["Клиент", project.client?.client_name ?? "—"],
-          ["Договор", project.contract_number ?? "—"],
         ]
       : [
-          ["Бюджет", "12 500 000 ₸"], ["Маржа", "24.5%"], ["Дедлайн", "15.08.2024"],
-          ["Менеджер", "А. Петров"], ["Клиент", "ООО «СтройТех»"], ["Договор", "ДГ-2024-0041"],
+          ["Создан", "01.06.2024"], ["Дедлайн", "15.08.2024"],
+          ["Менеджер", "А. Петров"], ["Клиент", "ООО «СтройТех»"],
         ];
 
   const handleMlItemUpdate = async (itemId: number, payload: MlImportItemUpdate) => {
@@ -659,7 +657,7 @@ export function ProjectPagePM({
     const mlStatusReady =
       normalizedStatus !== null &&
       (normalizedStatus === "Нет в системе"
-        ? item.is_confirmed && item.selected_product_id !== null
+        ? item.selected_product_id !== null
         : normalizedStatus === "Нет в системе (похожие варианты)"
         ? item.selected_product_id !== null
         : true);
@@ -753,8 +751,8 @@ export function ProjectPagePM({
               aria-expanded={showEstimate}
               className={`flex items-center gap-1.5 rounded border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                 showEstimate
-                  ? "border-[#2563EB] bg-blue-50 text-[#2563EB]"
-                  : "border-[#E2E8F0] bg-white text-slate-600 hover:bg-slate-50"
+                  ? "border-primary bg-blue-50 text-primary"
+                  : "border-border bg-card text-slate-600 hover:bg-background"
               }`}
             >
               <Calculator size={14}/>
@@ -764,7 +762,7 @@ export function ProjectPagePM({
               <button
                 onClick={handleExportExcel}
                 disabled={isExporting || !project || !mlImport || mlImport.status !== "confirmed"}
-                className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-card border border-border text-slate-600 text-xs font-medium rounded hover:bg-background transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />}
                 {isExporting ? "Скачивание..." : "Скачать Excel"}
@@ -774,32 +772,32 @@ export function ProjectPagePM({
         }
     >
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-          <div className="lg:col-span-2 bg-white rounded-lg border border-[#E2E8F0] p-5 overflow-x-auto flex items-center">
+          <div className="lg:col-span-2 bg-card rounded-lg border border-border p-5 overflow-x-auto flex items-center">
             <div className="flex items-start min-w-max">
               {STAGES.map((step, i) => (
                   <div key={step.label} className="flex items-center">
                     <div className="flex flex-col items-center">
                       <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold border-2 transition-colors ${
-                          step.done ? "bg-[#2563EB] border-[#2563EB] text-white" : 
-                          step.active ? "bg-white border-[#2563EB] text-[#2563EB]" : 
-                          "bg-white border-[#E2E8F0] text-slate-400"
+                          step.done ? "bg-primary border-primary text-white" : 
+                          step.active ? "bg-card border-primary text-primary" : 
+                          "bg-card border-border text-slate-400"
                       }`}>
                         {step.done ? <Check size={12}/> : i + 1}
                       </div>
-                      <span className={`text-xs mt-1.5 transition-colors ${step.done || step.active ? "text-[#2563EB]" : "text-slate-400"}`}>
+                      <span className={`text-xs mt-1.5 transition-colors ${step.done || step.active ? "text-primary" : "text-slate-400"}`}>
                         {step.label}
                       </span>
                     </div>
                     {i < STAGES.length - 1 && (
-                      <div className={`h-0.5 w-8 mx-2 mb-4 transition-colors ${step.done ? "bg-[#2563EB]" : "bg-[#E2E8F0]"}`}/>
+                      <div className={`h-0.5 w-8 mx-2 mb-4 transition-colors ${step.done ? "bg-primary" : "bg-border"}`}/>
                     )}
                   </div>
               ))}
             </div>
           </div>
 
-          <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
-            <h3 className="text-sm font-semibold text-slate-900 mb-3">Детали проекта</h3>
+          <div className="bg-card rounded-lg border border-border p-5">
+            <h3 className="text-sm font-semibold text-foreground mb-3">Детали проекта</h3>
             {projectError ? (
               <div className="flex items-start gap-2.5 text-red-600">
                 <AlertTriangle size={15} className="mt-0.5 flex-shrink-0"/>
@@ -824,8 +822,8 @@ export function ProjectPagePM({
         {showEstimate && <EstimateTable rows={estimateRows}/>} 
 
         {sent && !isApproved && (
-            <div className="mb-6 rounded-lg border p-5 bg-slate-50 border-[#E2E8F0]">
-                <div className="flex items-center gap-2 text-sm text-slate-500">
+            <div className="mb-6 rounded-lg border p-5 bg-background border-border">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 size={14} className="animate-spin text-slate-400"/>
                   Ожидаем подтверждения Комдира…
                 </div>
@@ -849,8 +847,8 @@ export function ProjectPagePM({
                     <FileText size={18} className="text-blue-600"/>
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-slate-900">Ожидание решения клиента</h3>
-                    <p className="text-xs text-slate-500 mt-0.5">
+                    <h3 className="text-sm font-bold text-foreground">Ожидание решения клиента</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
                       КП отправлено клиенту на подпись. Отметьте результат, когда получите ответ.
                     </p>
                   </div>
@@ -861,7 +859,7 @@ export function ProjectPagePM({
                     <button
                         onClick={handleClientReject}
                         disabled={approvingClient || rejecting || !kpGenerated}
-                        className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-red-300 text-red-600 text-sm font-semibold rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                        className="flex items-center justify-center gap-2 px-4 py-2.5 bg-card border border-red-300 text-red-600 text-sm font-semibold rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                     >
                       {rejecting ? <Loader2 size={14} className="animate-spin"/> : <XCircle size={14}/>}
                       Клиент просит правки
@@ -871,7 +869,7 @@ export function ProjectPagePM({
                     <button
                         onClick={handleClientApprove}
                         disabled={approvingClient || rejecting || !kpGenerated}
-                        className="flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                        className="flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-success/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                     >
                       {approvingClient ? <Loader2 size={14} className="animate-spin"/> : <CheckCircle2 size={14}/>}
                       Одобрено клиентом
@@ -907,8 +905,8 @@ export function ProjectPagePM({
                         disabled={!mlImport || mlImport.status !== "confirmed" || !isApproved || isGeneratingKP}
                         className={`flex items-center gap-2 px-5 py-2.5 border text-sm font-semibold rounded-lg transition-colors whitespace-nowrap ${
                           mlImport?.status === "confirmed" && isApproved
-                            ? "bg-white border-[#E2E8F0] text-slate-700 hover:bg-slate-50 cursor-pointer"
-                            : "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
+                            ? "bg-card border-border text-slate-700 hover:bg-background cursor-pointer"
+                            : "bg-background border-border text-slate-400 cursor-not-allowed"
                         }`}
                       >
                         {isGeneratingKP ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
@@ -926,12 +924,12 @@ export function ProjectPagePM({
                       onClick={handleSendToDirector}
                       disabled={!mlImport || mlImport.status !== "confirmed" || sending || sent || isApproved}
                       className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${
-                          sent ? "bg-green-600 text-white cursor-default" :
-                          isApproved ? "bg-green-700 text-white cursor-default" :
-                          mlImport?.status !== "confirmed" ? "bg-slate-200 text-slate-400 cursor-not-allowed" :
-                          isRejected ? "bg-red-600 hover:bg-red-700 text-white" :
-                          !sending ? "bg-[#2563EB] hover:bg-[#1d4ed8] text-white" :
-                          "bg-slate-200 text-slate-400 cursor-not-allowed"
+                          sent ? "bg-success text-success-foreground cursor-default" :
+                          isApproved ? "bg-success/90 text-success-foreground cursor-default" :
+                          mlImport?.status !== "confirmed" ? "bg-muted text-muted-foreground cursor-not-allowed" :
+                          isRejected ? "bg-destructive hover:bg-destructive/90 text-white" :
+                          !sending ? "bg-primary hover:bg-primary/90 text-white" :
+                          "bg-muted text-muted-foreground cursor-not-allowed"
                       }`}>
                       {sending ? <><Loader2 size={14} className="animate-spin"/>Отправка…</> :
                           sent ? <><CheckCircle2 size={14}/>КП на согласовании</> :
@@ -955,26 +953,26 @@ export function ProjectPagePM({
             )}
 
             {mlImportLoading ? (
-              <div className="bg-white rounded-lg border border-[#E2E8F0] p-10 flex flex-col items-center">
-                <Loader2 size={26} className="animate-spin text-[#2563EB] mb-3" />
+              <div className="bg-card rounded-lg border border-border p-10 flex flex-col items-center">
+                <Loader2 size={26} className="animate-spin text-primary mb-3" />
                 <p className="text-sm text-slate-600">Загружаем результаты ML…</p>
               </div>
             ) : !mlImport ? (
-              <div className="bg-white rounded-lg border border-[#E2E8F0] px-4 py-10 text-center">
+              <div className="bg-card rounded-lg border border-border px-4 py-10 text-center">
                 <p className="text-sm text-slate-400">Для этого проекта ML-импорт пока не найден</p>
               </div>
             ) : (
               <>
-                <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-x-auto">
+                <div className="bg-card rounded-lg border border-border overflow-x-auto">
                   <table className="w-full min-w-[1900px] border-collapse">
                     <thead>
-                      <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
+                      <tr className="border-b border-border bg-background/60">
                         {["Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Поставщик", "Себестоимость", "Цена", "Сумма", "Маржа", "Доступно", "Комментарий", "Статус"].map((heading) => (
-                          <th key={heading} className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left whitespace-nowrap">{heading}</th>
+                          <th key={heading} className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{heading}</th>
                         ))}
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#E2E8F0]">
+                    <tbody className="divide-y divide-border">
                       {mlImport.items.length === 0 ? (
                         <tr><td colSpan={12} className="px-4 py-10 text-center text-sm text-slate-400">В ML-импорте нет товаров</td></tr>
                       ) : (
@@ -992,8 +990,8 @@ export function ProjectPagePM({
                             normalizedStatus === "Нет в системе (похожие варианты)";
                           const needsProductResolution =
                             !item.is_confirmed &&
-                            (isNotInSystem ||
-                              (isSimilarVariants && item.selected_product_id === null));
+                            item.selected_product_id === null &&
+                            (isNotInSystem || isSimilarVariants);
                           const displayedStatus =
                             normalizedStatus ??
                             item.ml_status?.trim() ??
@@ -1039,8 +1037,8 @@ export function ProjectPagePM({
                                               onClick={() =>
                                                 setOpenVariantPickerId((current) => (current === item.id ? null : item.id))
                                               }
-                                              className={`w-56 flex items-center justify-between gap-2 px-2 py-1.5 text-sm border rounded-md bg-white text-left disabled:bg-slate-100 disabled:cursor-not-allowed ${
-                                                item.selected_product_id != null ? "border-[#E2E8F0]" : "border-orange-300"
+                                              className={`w-56 flex items-center justify-between gap-2 px-2 py-1.5 text-sm border rounded-md bg-card text-left disabled:bg-muted disabled:cursor-not-allowed ${
+                                                item.selected_product_id != null ? "border-border" : "border-orange-300"
                                               }`}
                                           >
                                             <span className={`truncate ${selectedProductName ? "text-slate-800" : "text-slate-400"}`}>
@@ -1053,7 +1051,7 @@ export function ProjectPagePM({
                                           </button>
 
                                           {isPickerOpen && (
-                                            <div className="absolute z-20 mt-1 w-64 max-h-64 overflow-y-auto bg-white border border-[#E2E8F0] rounded-lg shadow-lg py-1">
+                                            <div className="absolute z-20 mt-1 w-64 max-h-64 overflow-y-auto bg-card border border-border rounded-lg shadow-lg py-1">
                                               {matchedCatalogOptions.length === 0 ? (
                                                 <p className="px-3 py-2 text-xs text-slate-400">Похожих товаров в каталоге не найдено</p>
                                               ) : (
@@ -1065,9 +1063,9 @@ export function ProjectPagePM({
                                                         handleMlItemUpdate(item.id, { selected_product_id: product.id });
                                                         setOpenVariantPickerId(null);
                                                       }}
-                                                      className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 transition-colors ${
+                                                      className={`w-full text-left px-3 py-2 text-sm hover:bg-background transition-colors ${
                                                         item.selected_product_id === product.id
-                                                          ? "bg-blue-50 text-[#2563EB] font-medium"
+                                                          ? "bg-blue-50 text-primary font-medium"
                                                           : "text-slate-700"
                                                       }`}
                                                   >
@@ -1075,14 +1073,14 @@ export function ProjectPagePM({
                                                   </button>
                                                 ))
                                               )}
-                                              <div className="border-t border-[#E2E8F0] mt-1 pt-1">
+                                              <div className="border-t border-border mt-1 pt-1">
                                                 <button
                                                     type="button"
                                                     onClick={() => {
                                                       setOpenVariantPickerId(null);
                                                       openProductModal(item);
                                                     }}
-                                                    className="w-full flex items-center gap-1.5 text-left px-3 py-2 text-sm font-medium text-[#2563EB] hover:bg-blue-50 transition-colors"
+                                                    className="w-full flex items-center gap-1.5 text-left px-3 py-2 text-sm font-medium text-primary hover:bg-blue-50 transition-colors"
                                                 >
                                                   <Plus size={14} /> Это новый товар
                                                 </button>
@@ -1113,9 +1111,9 @@ export function ProjectPagePM({
                                           handleMlItemUpdate(item.id, {supplier_name: supplierName});
                                         }
                                       }}
-                                      className={`w-44 px-2 py-1.5 text-sm border rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100 ${
+                                      className={`w-44 px-2 py-1.5 text-sm border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted ${
                                         item.supplier_name?.trim()
-                                          ? "border-[#E2E8F0]"
+                                          ? "border-border"
                                           : "border-red-300"
                                       }`}
                                   />
@@ -1133,7 +1131,7 @@ export function ProjectPagePM({
                                         }
                                         if (newPriceCost !== priceCost) handleMlItemUpdate(item.id, {price_cost: newPriceCost});
                                       }}
-                                      className="w-32 px-2 py-1.5 text-sm font-mono border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
+                                      className="w-32 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
                                   />
                                 </td>
                                 <td className="px-4 py-3">
@@ -1150,7 +1148,7 @@ export function ProjectPagePM({
                                         }
                                         if (newPrice !== price) handleMlItemUpdate(item.id, {price: newPrice});
                                       }}
-                                      className="w-32 px-2 py-1.5 text-sm font-mono border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
+                                      className="w-32 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
                                   />
                                 </td>
                                 <td className="px-4 py-3 whitespace-nowrap"><span
@@ -1158,7 +1156,7 @@ export function ProjectPagePM({
                                 </td>
                                 <td className="px-4 py-3">
                                 <span
-                                    className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${marginPercent >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : marginPercent > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : marginPercent < 0 ? "bg-red-50 text-red-700 ring-1 ring-red-200" : "bg-slate-100 text-slate-600 ring-1 ring-slate-200"}`}>
+                                    className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${marginPercent >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : marginPercent > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : marginPercent < 0 ? "bg-red-50 text-red-700 ring-1 ring-red-200" : "bg-muted text-slate-600 ring-1 ring-slate-200"}`}>
                                   {marginPercent.toFixed(1)}%
                                 </span>
                                 </td>
@@ -1174,14 +1172,14 @@ export function ProjectPagePM({
                                           handleMlItemUpdate(item.id, {user_comment: comment});
                                         }
                                       }}
-                                      className="w-44 px-2 py-1.5 text-sm border border-[#E2E8F0] rounded-md bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 disabled:bg-slate-100"
+                                      className="w-44 px-2 py-1.5 text-sm border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
                                   />
                                 </td>
                                 <td className="px-4 py-3">
                                   {isUpdating ? (
                                       <Loader2
                                           size={16}
-                                          className="animate-spin text-[#2563EB]"
+                                          className="animate-spin text-primary"
                                       />
                                   ) : item.is_confirmed ? (
                                       <span
@@ -1242,7 +1240,7 @@ export function ProjectPagePM({
                       type="button"
                       onClick={handleConfirmMlImport}
                       disabled={!canConfirmMlImport || confirmingImport}
-                      className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-colors disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed enabled:bg-[#2563EB] enabled:text-white enabled:hover:bg-[#1D4ED8] enabled:cursor-pointer"
+                      className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-colors disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed enabled:bg-primary enabled:text-white enabled:hover:bg-primary/90 enabled:cursor-pointer"
                   >
                     {confirmingImport ? (
                         <>
@@ -1276,13 +1274,13 @@ export function ProjectPagePM({
                 if (event.target === event.currentTarget) closeProductModal();
               }}
           >
-            <div className="w-full max-w-lg rounded-xl bg-white shadow-2xl">
-              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-4">
+            <div className="w-full max-w-lg rounded-xl bg-card shadow-xl">
+              <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
                 <div>
-                  <h2 id="create-product-title" className="text-lg font-semibold text-slate-900">
+                  <h2 id="create-product-title" className="text-lg font-semibold text-foreground">
                     Добавить товар в систему
                   </h2>
-                  <p className="mt-1 text-sm text-slate-500">
+                  <p className="mt-1 text-sm text-muted-foreground">
                     Статус ML-строки не изменится, но после создания товара строка будет готова к подтверждению.
                   </p>
                 </div>
@@ -1290,7 +1288,7 @@ export function ProjectPagePM({
                     type="button"
                     onClick={closeProductModal}
                     disabled={savingProduct}
-                    className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed"
+                    className="rounded-md p-1 text-slate-400 hover:bg-muted hover:text-slate-600 disabled:cursor-not-allowed"
                     aria-label="Закрыть"
                 >
                   <XCircle size={20}/>
@@ -1311,7 +1309,7 @@ export function ProjectPagePM({
                         ...current,
                         product_name: event.target.value,
                       }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
                   />
                 </label>
 
@@ -1329,7 +1327,7 @@ export function ProjectPagePM({
                         supplier_name: event.target.value,
                       }))}
                       placeholder="Введите имя поставщика"
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
                   />
                 </label>
 
@@ -1348,7 +1346,7 @@ export function ProjectPagePM({
                         unit: event.target.value,
                       }))}
                       placeholder="Выберите или введите"
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
                   />
                   <datalist id="ml-product-unit-options">
                     {["шт", "компл.", "упак.", "кг", "м", "л"].map((unit) => (
@@ -1372,7 +1370,7 @@ export function ProjectPagePM({
                           ...current,
                           price_cost: event.target.value,
                         }))}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
                     />
                   </label>
 
@@ -1390,7 +1388,7 @@ export function ProjectPagePM({
                           ...current,
                           price: event.target.value,
                         }))}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/15"
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
                     />
                   </label>
                 </div>
@@ -1401,19 +1399,19 @@ export function ProjectPagePM({
                   </div>
                 )}
 
-                <div className="flex justify-end gap-3 border-t border-slate-200 pt-4">
+                <div className="flex justify-end gap-3 border-t border-border pt-4">
                   <button
                       type="button"
                       onClick={closeProductModal}
                       disabled={savingProduct}
-                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-background disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     Отмена
                   </button>
                   <button
                       type="submit"
                       disabled={savingProduct}
-                      className="inline-flex items-center gap-2 rounded-lg bg-[#2563EB] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1D4ED8] disabled:cursor-not-allowed disabled:bg-slate-300"
+                      className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-slate-300"
                   >
                     {savingProduct && <Loader2 size={15} className="animate-spin"/>}
                     {savingProduct ? "Сохранение…" : "Создать товар"}
@@ -1581,24 +1579,10 @@ const [projectItemsError, setProjectItemsError] =
       : "ООО «СтройТех» · Проверка КП";
   const sidebarDetails: [string, string][] = [
   [
-    "Сумма КП",
-    project?.invoice?.amount != null
-      ? fmt(Number(project.invoice.amount))
+    "Создан",
+    project?.created_at
+      ? new Date(project.created_at).toLocaleDateString("ru-RU")
       : "—",
-  ],
-  [
-    "Маржа",
-    project?.planned_margin != null
-      ? `${project.planned_margin}%`
-      : "—",
-  ],
-  [
-    "Клиент",
-    project?.client?.client_name ?? "—",
-  ],
-  [
-    "PM",
-    project?.pm?.name ?? "—",
   ],
   [
     "Дедлайн",
@@ -1607,8 +1591,12 @@ const [projectItemsError, setProjectItemsError] =
       : "—",
   ],
   [
-    "Договор",
-    project?.contract_number ?? "—",
+    "Менеджер",
+    project?.pm?.name ?? "—",
+  ],
+  [
+    "Клиент",
+    project?.client?.client_name ?? "—",
   ],
 ];
 
@@ -1627,8 +1615,8 @@ const [projectItemsError, setProjectItemsError] =
             aria-expanded={showEstimate}
             className={`flex items-center gap-1.5 rounded border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
               showEstimate
-                ? "border-[#2563EB] bg-blue-50 text-[#2563EB]"
-                : "border-[#E2E8F0] bg-white text-slate-600 hover:bg-slate-50"
+                ? "border-primary bg-blue-50 text-primary"
+                : "border-border bg-card text-slate-600 hover:bg-background"
             }`}
           >
             <Calculator size={14}/>
@@ -1637,7 +1625,7 @@ const [projectItemsError, setProjectItemsError] =
           <button
             onClick={handleExportExcel}
             disabled={isExporting || !project}
-            className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors whitespace-nowrap disabled:opacity-50"
+            className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-card border border-border text-slate-600 text-xs font-medium rounded hover:bg-background transition-colors whitespace-nowrap disabled:opacity-50"
           >
             {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />}
             {isExporting ? "Скачивание..." : "Скачать Excel"}
@@ -1655,23 +1643,23 @@ const [projectItemsError, setProjectItemsError] =
         </div>
       )}
       {showEstimate && <EstimateTable rows={estimateRows}/>} 
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="col-span-2 space-y-5">
-          <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
+          <div className="bg-card rounded-lg border border-border overflow-hidden">
             <table className="w-full border-collapse">
               <thead>
-              <tr className="border-b border-[#E2E8F0] bg-slate-50/60">
+              <tr className="border-b border-border bg-background/60">
                 {["Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа"].map(h => (
                     <th key={h}
-                        className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
+                        className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
                 ))}
               </tr>
               </thead>
-              <tbody className="divide-y divide-[#E2E8F0]">
+              <tbody className="divide-y divide-border">
                 {projectItemsLoading ? (
                   <tr>
                     <td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400">
-                      <Loader2 size={16} className="inline-block animate-spin text-[#2563EB] mr-2" />
+                      <Loader2 size={16} className="inline-block animate-spin text-primary mr-2" />
                       Загружаем позиции проекта…
                     </td>
                   </tr>
@@ -1696,13 +1684,13 @@ const [projectItemsError, setProjectItemsError] =
                     const margin = price > 0 ? ((price - priceCost) / price) * 100 : 0;
 
                     return (
-                        <tr key={item.id} className="hover:bg-slate-50/50">
+                        <tr key={item.id} className="hover:bg-background/50">
                           <td className="px-4 py-3 text-sm text-slate-700">{item.product?.name ?? "—"}</td>
                           <td className="px-4 py-3 text-sm text-slate-700">
                             {item.supplier_raw_name ?? item.supplier?.supplier_name ?? "—"}
                           </td>
                           <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
-                          <td className="px-4 py-3 text-xs text-slate-500">{item.product?.unit ?? "шт"}</td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground">{item.product?.unit ?? "шт"}</td>
                           <td className="px-4 py-3 text-sm font-mono">{priceCost.toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2,})}</td>
                           <td className="px-4 py-3 text-sm font-mono">{price.toLocaleString("ru-RU")}</td>
                           <td className="px-4 py-3 text-sm font-mono font-semibold">{total.toLocaleString("ru-RU")}</td>
@@ -1720,11 +1708,11 @@ const [projectItemsError, setProjectItemsError] =
             </table>
           </div>
 
-          <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
-            <h3 className="text-sm font-semibold text-slate-900 mb-4">Решение по КП</h3>
+          <div className="bg-card rounded-lg border border-border p-5">
+            <h3 className="text-sm font-semibold text-foreground mb-4">Решение по КП</h3>
             {deciding ? (
-                <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={15}
-                                                                                         className="animate-spin text-[#2563EB]"/>Сохранение
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 size={15}
+                                                                                         className="animate-spin text-primary"/>Сохранение
                   решения…</div>
             ) : decision === null ? (
                 showRejectForm ? (
@@ -1734,7 +1722,7 @@ const [projectItemsError, setProjectItemsError] =
                       onChange={(e) => setRejectReason(e.target.value)}
                       placeholder="Причина отклонения (необязательно)"
                       rows={3}
-                      className="w-full rounded-lg border border-[#E2E8F0] px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-200"
+                      className="w-full rounded-lg border border-border px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-200"
                     />
                     <div className="flex items-center gap-3">
                       <button
@@ -1745,7 +1733,7 @@ const [projectItemsError, setProjectItemsError] =
                       </button>
                       <button
                         onClick={() => { setShowRejectForm(false); setRejectReason(""); }}
-                        className="px-5 py-2.5 bg-white text-slate-600 text-sm font-medium rounded-lg border border-[#E2E8F0] hover:bg-slate-50 transition-colors whitespace-nowrap"
+                        className="px-5 py-2.5 bg-card text-slate-600 text-sm font-medium rounded-lg border border-border hover:bg-background transition-colors whitespace-nowrap"
                       >
                         Отмена
                       </button>
@@ -1754,11 +1742,11 @@ const [projectItemsError, setProjectItemsError] =
                 ) : (
                   <div className="flex items-center gap-3">
                     <button onClick={() => decide(true)} disabled={!project}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-[#16A34A] text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+                            className="flex items-center gap-2 px-5 py-2.5 bg-success text-success-foreground text-sm font-medium rounded-lg hover:bg-success/90 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                       <CheckCircle2 size={15}/> Подтверждаю
                     </button>
                     <button onClick={() => decide(false)} disabled={!project}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-white text-red-600 text-sm font-medium rounded-lg border border-[#E2E8F0] hover:bg-red-50 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+                            className="flex items-center gap-2 px-5 py-2.5 bg-card text-red-600 text-sm font-medium rounded-lg border border-border hover:bg-red-50 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                       <XCircle size={15}/> Отклонить КП
                     </button>
                   </div>
@@ -1776,8 +1764,8 @@ const [projectItemsError, setProjectItemsError] =
         </div>
 
         <div className="space-y-4">
-          <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
-            <h3 className="text-sm font-semibold text-slate-900 mb-3">Детали</h3>
+          <div className="bg-card rounded-lg border border-border p-5">
+            <h3 className="text-sm font-semibold text-foreground mb-3">Детали</h3>
             {projectError ? (
                 <div className="flex items-start gap-2.5 text-red-600">
                   <AlertTriangle
@@ -1843,7 +1831,7 @@ export function ProjectPageAccountant({projectId}: { projectId: number }) {
           <button
             onClick={handleExportExcel}
             disabled={isExporting}
-            className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-white border border-[#E2E8F0] text-slate-600 text-xs font-medium rounded hover:bg-slate-50 transition-colors whitespace-nowrap disabled:opacity-50"
+            className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-card border border-border text-slate-600 text-xs font-medium rounded hover:bg-background transition-colors whitespace-nowrap disabled:opacity-50"
           >
             {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />}
             {isExporting ? "Скачивание..." : "Скачать Excel"}
@@ -1851,19 +1839,19 @@ export function ProjectPageAccountant({projectId}: { projectId: number }) {
         </div>
       }
     >
-      <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
+      <div className="bg-card rounded-lg border border-border overflow-hidden">
         <table className="w-full border-collapse">
-          <thead><tr className="border-b border-[#E2E8F0] bg-slate-50/60">
-            {["Счёт","Поставщик","Сумма","Статус",""].map(h => <th key={h} className="px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wide text-left">{h}</th>)}
+          <thead><tr className="border-b border-border bg-background/60">
+            {["Счёт","Поставщик","Сумма","Статус",""].map(h => <th key={h} className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left">{h}</th>)}
           </tr></thead>
-          <tbody className="divide-y divide-[#E2E8F0]">
+          <tbody className="divide-y divide-border">
             {INVOICES_INIT.slice(0,3).map(inv => (
-              <tr key={inv.id} className="hover:bg-slate-50/50">
+              <tr key={inv.id} className="hover:bg-background/50">
                 <td className="px-4 py-3 text-xs font-mono text-slate-600">{inv.id}</td>
                 <td className="px-4 py-3 text-sm text-slate-700">{inv.supplier}</td>
-                <td className="px-4 py-3 text-sm font-mono text-slate-900">{fmt(inv.amount)}</td>
+                <td className="px-4 py-3 text-sm font-mono text-foreground">{fmt(inv.amount)}</td>
                 <td className="px-4 py-3"><Chip status={inv.status} /></td>
-                <td className="px-4 py-3">{inv.status === "approved" && <button className="text-xs px-2.5 py-1 bg-[#16A34A] text-white rounded font-medium hover:bg-green-700 transition-colors whitespace-nowrap">Оплатить</button>}</td>
+                <td className="px-4 py-3">{inv.status === "approved" && <button className="text-xs px-2.5 py-1 bg-success text-success-foreground rounded font-medium hover:bg-success/90 transition-colors whitespace-nowrap">Оплатить</button>}</td>
               </tr>
             ))}
           </tbody>
@@ -1876,11 +1864,11 @@ export function ProjectPageAccountant({projectId}: { projectId: number }) {
 export function ProjectPageWarehouse() {
   return (
     <PageWrap title="Офисный комплекс «Башня»" subtitle="ООО «СтройТех» · Резерв и отгрузка">
-      <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
-        <h3 className="text-sm font-semibold text-slate-900 mb-4">Резерв под проект</h3>
+      <div className="bg-card rounded-lg border border-border p-5">
+        <h3 className="text-sm font-semibold text-foreground mb-4">Резерв под проект</h3>
         <div className="space-y-2">
           {STOCK_INIT.slice(0,4).map(item => (
-            <div key={item.id} className="flex items-center justify-between py-2 border-b border-[#E2E8F0] last:border-0">
+            <div key={item.id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
               <span className="text-sm text-slate-700">{item.name}</span>
               <div className="flex items-center gap-3">
                 <span className="text-xs text-violet-600 font-medium">{item.reserved} {item.unit} зарезервировано</span>
@@ -1889,7 +1877,7 @@ export function ProjectPageWarehouse() {
             </div>
           ))}
         </div>
-        <button className="mt-4 flex items-center gap-2 px-4 py-2 bg-[#2563EB] text-white text-sm font-medium rounded-lg hover:bg-[#1d4ed8] transition-colors whitespace-nowrap"><Truck size={14} /> Оформить отгрузку</button>
+        <button className="mt-4 flex items-center gap-2 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors whitespace-nowrap"><Truck size={14} /> Оформить отгрузку</button>
       </div>
     </PageWrap>
   );

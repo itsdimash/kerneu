@@ -158,7 +158,7 @@ export function SupplierHistoryPage() {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Поставщик или товар"
-              className="w-full rounded-md border border-slate-300 py-2 pl-9 pr-3 text-sm outline-none focus:border-[#2563EB] focus:ring-2 focus:ring-[#2563EB]/30"
+              className="w-full rounded-md border border-slate-300 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
             />
           </div>
 
@@ -166,7 +166,7 @@ export function SupplierHistoryPage() {
             {loadingList ? (
               <p className="px-3 py-4 text-sm text-slate-400">Загрузка…</p>
             ) : suppliers.length === 0 ? (
-              <p className="rounded-md border bg-slate-50 px-3 py-5 text-center text-sm text-slate-400">
+              <p className="rounded-md border bg-background px-3 py-5 text-center text-sm text-slate-400">
                 Поставщики не найдены
               </p>
             ) : (
@@ -176,14 +176,14 @@ export function SupplierHistoryPage() {
                   onClick={() => setSelectedKey(item.supplier_key)}
                   className={`rounded-md border px-3 py-2.5 text-left transition-colors ${
                     item.supplier_key === selectedKey
-                      ? "border-[#2563EB]/30 bg-[#EFF6FF]"
-                      : "border-transparent hover:bg-slate-50"
+                      ? "border-primary/30 bg-accent"
+                      : "border-transparent hover:bg-background"
                   }`}
                 >
                   <div className="flex items-center gap-2">
                     <span
                       className={`text-sm font-medium ${
-                        item.supplier_key === selectedKey ? "text-[#2563EB]" : "text-slate-900"
+                        item.supplier_key === selectedKey ? "text-primary" : "text-foreground"
                       }`}
                     >
                       {item.name}
@@ -194,7 +194,7 @@ export function SupplierHistoryPage() {
                       </span>
                     )}
                   </div>
-                  <div className="mt-0.5 text-xs text-slate-500">
+                  <div className="mt-0.5 text-xs text-muted-foreground">
                     {item.products_count} товаров · {item.purchases_count} закупок
                   </div>
                   <div className="text-xs text-slate-400">
@@ -206,7 +206,7 @@ export function SupplierHistoryPage() {
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1 rounded-lg border border-[#E2E8F0] bg-white p-5">
+        <main className="min-w-0 flex-1 rounded-lg border border-border bg-card p-5">
           {error && <p className="mb-3 rounded bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
           {loadingDetail ? (
             <p className="py-8 text-center text-sm text-slate-400">Загрузка…</p>
@@ -215,16 +215,16 @@ export function SupplierHistoryPage() {
           ) : (
             <>
               <div className="mb-4">
-                <h3 className="text-sm font-semibold text-slate-900">{supplier.name}</h3>
+                <h3 className="text-sm font-semibold text-foreground">{supplier.name}</h3>
                 {supplier.contact_phone && (
-                  <p className="mt-0.5 text-xs text-slate-500">{supplier.contact_phone}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{supplier.contact_phone}</p>
                 )}
               </div>
 
-              <div className="overflow-x-auto rounded-md border border-[#E2E8F0]">
+              <div className="overflow-x-auto rounded-md border border-border">
                 <table className="w-full border-collapse text-sm">
                   <thead>
-                    <tr className="border-b bg-slate-50 text-xs text-slate-500">
+                    <tr className="border-b bg-background text-xs text-muted-foreground">
                       <th className="px-4 py-2.5 text-left font-medium">ТОВАР</th>
                       <th className="px-4 py-2.5 text-left font-medium">ПОСЛЕДНЯЯ ЗАКУПКА</th>
                       <th className="px-4 py-2.5 text-right font-medium">КОЛ-ВО</th>
@@ -244,22 +244,22 @@ export function SupplierHistoryPage() {
                         <tr
                           key={product.product_id}
                           onClick={() => openProduct(product.product_id)}
-                          className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
+                          className="cursor-pointer border-b border-slate-100 hover:bg-background"
                         >
-                          <td className="px-4 py-3 font-medium text-[#2563EB]">
+                          <td className="px-4 py-3 font-medium text-primary">
                             {product.product_name}{" "}
                             <span className="font-normal text-slate-400">({product.unit})</span>
                           </td>
-                          <td className="px-4 py-3 text-slate-500">
+                          <td className="px-4 py-3 text-muted-foreground">
                             {formatDate(product.last_purchase_at)}
                           </td>
-                          <td className="px-4 py-3 text-right text-slate-500">
+                          <td className="px-4 py-3 text-right text-muted-foreground">
                             {product.total_quantity || "—"}
                           </td>
-                          <td className="px-4 py-3 text-right text-slate-900">
+                          <td className="px-4 py-3 text-right text-foreground">
                             {fmt(Number(product.latest_cost_price))}
                           </td>
-                          <td className="px-4 py-3 text-right text-slate-900">
+                          <td className="px-4 py-3 text-right text-foreground">
                             {product.current_sale_price
                               ? fmt(Number(product.current_sale_price))
                               : "—"}
@@ -274,13 +274,13 @@ export function SupplierHistoryPage() {
           )}
 
           {priceHistory && (
-            <section className="mt-6 overflow-hidden rounded-md border border-[#E2E8F0]">
-              <div className="flex items-start justify-between bg-slate-50 px-4 py-3">
+            <section className="mt-6 overflow-hidden rounded-md border border-border">
+              <div className="flex items-start justify-between bg-background px-4 py-3">
                 <div>
-                  <h4 className="text-sm font-semibold text-slate-900">
+                  <h4 className="text-sm font-semibold text-foreground">
                     История цен: {priceHistory.product_name}
                   </h4>
-                  <p className="mt-0.5 text-xs text-slate-500">
+                  <p className="mt-0.5 text-xs text-muted-foreground">
                     Себестоимость: {fmt(Number(priceHistory.latest_cost_price))} · Продажа:{" "}
                     {priceHistory.current_sale_price
                       ? fmt(Number(priceHistory.current_sale_price))
@@ -289,14 +289,14 @@ export function SupplierHistoryPage() {
                 </div>
                 <button
                   onClick={() => setPriceHistory(null)}
-                  className="text-xs text-slate-500 hover:text-slate-900"
+                  className="text-xs text-muted-foreground hover:text-foreground"
                 >
                   Закрыть
                 </button>
               </div>
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-y text-xs text-slate-500">
+                  <tr className="border-y text-xs text-muted-foreground">
                     <th className="px-4 py-2 text-left font-medium">ДАТА</th>
                     <th className="px-4 py-2 text-left font-medium">ПРИХОД</th>
                     <th className="px-4 py-2 text-right font-medium">КОЛ-ВО</th>
@@ -306,10 +306,10 @@ export function SupplierHistoryPage() {
                 <tbody>
                   {priceHistory.history.map((item) => (
                     <tr key={item.id} className="border-b border-slate-100 last:border-0">
-                      <td className="px-4 py-2.5 text-slate-500">{formatDate(item.purchased_at)}</td>
-                      <td className="px-4 py-2.5 text-slate-500">{item.receipt_number ?? "—"}</td>
-                      <td className="px-4 py-2.5 text-right text-slate-500">{item.quantity ?? "—"}</td>
-                      <td className="px-4 py-2.5 text-right font-medium text-slate-900">
+                      <td className="px-4 py-2.5 text-muted-foreground">{formatDate(item.purchased_at)}</td>
+                      <td className="px-4 py-2.5 text-muted-foreground">{item.receipt_number ?? "—"}</td>
+                      <td className="px-4 py-2.5 text-right text-muted-foreground">{item.quantity ?? "—"}</td>
+                      <td className="px-4 py-2.5 text-right font-medium text-foreground">
                         {fmt(Number(item.cost_price))}
                       </td>
                     </tr>

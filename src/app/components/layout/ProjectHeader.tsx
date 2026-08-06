@@ -1,7 +1,7 @@
 import { ACTIVE_PROJECT } from "../../../data/projects";
 export function ProjectHeader() {
   return (
-    <div className="bg-white border-b border-[#E2E8F0] px-8 py-3 flex items-center flex-wrap gap-y-2">
+    <div className="bg-card border-b border-border px-8 py-3 flex items-center flex-wrap gap-y-2">
       {[
         { label: "Проект",  value: ACTIVE_PROJECT.name,     bold: true },
         { label: "Клиент",  value: ACTIVE_PROJECT.client,   bold: false },
@@ -9,10 +9,10 @@ export function ProjectHeader() {
         { label: "Дедлайн", value: ACTIVE_PROJECT.deadline, bold: false },
       ].map((item, i) => (
         <div key={item.label} className="flex items-center">
-          {i > 0 && <div className="w-px h-7 bg-[#E2E8F0] mx-6" />}
+          {i > 0 && <div className="w-px h-7 bg-border mx-6" />}
           <div>
-            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide leading-none mb-0.5">{item.label}</p>
-            <p className={`text-sm ${item.bold ? "font-semibold text-slate-900" : "text-slate-700"} leading-tight`}>{item.value}</p>
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide leading-none mb-0.5">{item.label}</p>
+            <p className={`text-sm ${item.bold ? "font-semibold text-foreground" : "text-slate-700"} leading-tight`}>{item.value}</p>
           </div>
         </div>
       ))}

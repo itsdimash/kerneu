@@ -163,7 +163,7 @@ export function AppShell({
 
   return (
     <div
-      className="flex h-screen bg-[#F8FAFC] overflow-hidden"
+      className="flex h-screen bg-background overflow-hidden"
       style={{
         fontFamily: "'Inter', sans-serif",
       }}
@@ -188,20 +188,20 @@ export function AppShell({
 
         <main className="flex-1 overflow-y-auto">
           {projectLoadError && (
-            <div className="mx-6 mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
-              <p className="text-sm font-medium text-red-700">
+            <div className="mx-6 mt-4 rounded-lg border border-destructive/20 bg-destructive-muted px-4 py-3">
+              <p className="text-sm font-medium text-destructive">
                 Ошибка загрузки проекта
               </p>
 
-              <p className="mt-1 text-xs text-red-600">
+              <p className="mt-1 text-xs text-destructive/80">
                 {projectLoadError}
               </p>
             </div>
           )}
 
           {projectLoading && (
-            <div className="mx-6 mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
-              <p className="text-sm text-blue-700">
+            <div className="mx-6 mt-4 rounded-lg border border-info/20 bg-info-muted px-4 py-3">
+              <p className="text-sm text-info">
                 Загружаем проект…
               </p>
             </div>
@@ -244,12 +244,12 @@ export function AppShell({
           {page === "project" &&
             selectedProjectId === null &&
             !projectLoading && (
-              <div className="m-6 rounded-lg border border-amber-200 bg-amber-50 p-5">
-                <p className="text-sm font-semibold text-amber-800">
+              <div className="m-6 rounded-lg border border-warning/20 bg-warning-muted p-5">
+                <p className="text-sm font-semibold text-warning">
                   Проект не выбран
                 </p>
 
-                <p className="mt-1 text-sm text-amber-700">
+                <p className="mt-1 text-sm text-warning/90">
                   Вернитесь на главную страницу и
                   откройте нужный проект.
                 </p>

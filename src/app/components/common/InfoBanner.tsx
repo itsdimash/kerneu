@@ -2,14 +2,14 @@ import { AlertCircle, CheckCircle2 } from "lucide-react";
 export type BannerVariant = "neutral" | "warning" | "info" | "success";
 export function InfoBanner({ variant, text }: { variant: BannerVariant; text: string }) {
   const styles: Record<BannerVariant, string> = {
-    neutral: "bg-slate-50 border-slate-200 text-slate-700",
-    warning: "bg-amber-50 border-amber-200 text-amber-800",
-    info:    "bg-blue-50 border-blue-200 text-blue-800",
-    success: "bg-green-50 border-green-200 text-green-800",
+    neutral: "bg-muted border-border text-foreground/80",
+    warning: "bg-warning-muted border-warning/20 text-warning",
+    info:    "bg-info-muted border-info/20 text-info",
+    success: "bg-success-muted border-success/20 text-success",
   };
   const Icon = variant === "success" ? CheckCircle2 : AlertCircle;
   const iconCls: Record<BannerVariant, string> = {
-    neutral: "text-slate-400", warning: "text-amber-500", info: "text-blue-500", success: "text-green-600",
+    neutral: "text-muted-foreground", warning: "text-warning", info: "text-info", success: "text-success",
   };
   return (
     <div className={`flex items-start gap-2.5 px-4 py-3 rounded-lg border text-sm mb-5 ${styles[variant]}`}>

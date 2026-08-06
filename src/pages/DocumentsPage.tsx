@@ -634,14 +634,14 @@ export function DocumentsPage({
     <div className="relative mb-4 max-w-sm">
       <button
         onClick={() => setSelectorOpen(o => !o)}
-        className="w-full flex items-center justify-between gap-2 px-4 py-2.5 bg-white border border-[#E2E8F0] rounded-lg text-sm text-slate-700 hover:border-[#2563EB]/40 transition-colors"
+        className="w-full flex items-center justify-between gap-2 px-4 py-2.5 bg-card border border-border rounded-lg text-sm text-slate-700 hover:border-primary/40 transition-colors"
       >
         <span className="font-medium truncate">{selectedProjectName}</span>
         <ChevronDown size={15} className={`text-slate-400 flex-shrink-0 transition-transform ${selectorOpen ? "rotate-180" : ""}`} />
       </button>
       {selectorOpen && (
-        <div className="absolute z-10 mt-1 w-full bg-white border border-[#E2E8F0] rounded-lg shadow-lg overflow-hidden">
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-[#E2E8F0]">
+        <div className="absolute z-10 mt-1 w-full bg-card border border-border rounded-lg shadow-lg overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
             <Search size={13} className="text-slate-400" />
             <input
               autoFocus
@@ -653,13 +653,13 @@ export function DocumentsPage({
           </div>
           
           {/* НОВЫЙ БЛОК С ЧЕКБОКСОМ */}
-          <div className="px-3 py-2 border-b border-[#E2E8F0] bg-slate-50">
+          <div className="px-3 py-2 border-b border-border bg-background">
             <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={showAllProjects}
                 onChange={(e) => setShowAllProjects(e.target.checked)}
-                className="rounded border-slate-300 text-[#2563EB] focus:ring-[#2563EB] cursor-pointer"
+                className="rounded border-slate-300 text-primary focus:ring-primary cursor-pointer"
               />
               Показывать завершенные проекты
             </label>
@@ -670,13 +670,13 @@ export function DocumentsPage({
               <button
                 key={p.id}
                 onClick={() => { setSelectedProjectId(p.id); setSelectorOpen(false); setProjectQuery(""); }}
-                className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50/50 transition-colors ${p.id === selectedProjectId ? "bg-blue-50 text-[#2563EB] font-medium" : "text-slate-700"}`}
+                className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50/50 transition-colors ${p.id === selectedProjectId ? "bg-blue-50 text-primary font-medium" : "text-slate-700"}`}
               >
                 {p.name}
               </button>
             ))}
             {filteredProjects.length === 0 && (
-              <p className="px-4 py-3 text-xs text-slate-400">Ничего не найдено</p>
+              <p className="px-4 py-3 text-xs text-muted-foreground">Ничего не найдено</p>
             )}
           </div>
         </div>
@@ -685,9 +685,9 @@ export function DocumentsPage({
   );
 
   const renderSharedDocumentList = () => (
-    <div className="bg-white rounded-lg border border-[#E2E8F0] overflow-hidden">
-      <div className="px-5 py-4 border-b border-[#E2E8F0]">
-        <h2 className="text-sm font-semibold text-slate-900">Все документы проекта</h2>
+    <div className="bg-card rounded-lg border border-border overflow-hidden">
+      <div className="px-5 py-4 border-b border-border">
+        <h2 className="text-sm font-semibold text-foreground">Все документы проекта</h2>
         <p className="text-xs text-slate-400 mt-0.5">
           КП, договор, доверенность, счета и накладные — в одном месте, доступны для скачивания на любом этапе
         </p>
@@ -695,7 +695,7 @@ export function DocumentsPage({
       {displayDocs.length === 0 ? (
         <p className="px-5 py-6 text-sm text-slate-400 text-center">Документов пока нет</p>
       ) : (
-        <div className="divide-y divide-[#E2E8F0]">
+        <div className="divide-y divide-border">
           {displayDocs.map(doc => (
             <div key={doc.id} className="flex items-center justify-between px-5 py-3">
               <div className="flex items-center gap-3 min-w-0">
@@ -711,7 +711,7 @@ export function DocumentsPage({
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => handleDownload(doc)}
-                      className="flex items-center gap-1 text-xs text-slate-400 hover:text-[#2563EB] px-2 py-1 rounded hover:bg-blue-50 transition-colors"
+                      className="flex items-center gap-1 text-xs text-slate-400 hover:text-primary px-2 py-1 rounded hover:bg-blue-50 transition-colors"
                     >
                       <Download size={12} />Скачать
                     </button>
@@ -748,10 +748,10 @@ export function DocumentsPage({
       <PageWrap title="Документы" subtitle={selectedProjectName}>
         {projectSelector}
         {waitingOnMe && (
-          <div className="bg-white rounded-lg border border-[#2563EB]/30 p-5 mb-4">
+          <div className="bg-card rounded-lg border border-primary/30 p-5 mb-4">
             <div className="flex items-center gap-2 mb-1">
-              <Clock size={15} className="text-[#2563EB]" />
-              <h3 className="text-sm font-semibold text-slate-900">
+              <Clock size={15} className="text-primary" />
+              <h3 className="text-sm font-semibold text-foreground">
                 {role === "accountant"
                   ? "Менеджер запросил проверку файлов"
                   : "Бухгалтер подтвердил файлы — требуется ваше решение"}
@@ -766,7 +766,7 @@ export function DocumentsPage({
                   onChange={e => setRejectDraft(e.target.value)}
                   placeholder="Комментарий для менеджера (необязательно)…"
                   rows={2}
-                  className="w-full text-sm border border-[#E2E8F0] rounded-lg px-3 py-2 outline-none focus:border-[#2563EB]/50"
+                  className="w-full text-sm border border-border rounded-lg px-3 py-2 outline-none focus:border-primary/50"
                 />
                 <div className="flex gap-2">
                   <button
@@ -778,7 +778,7 @@ export function DocumentsPage({
                   </button>
                   <button
                     onClick={() => { setShowRejectBox(false); setRejectDraft(""); }}
-                    className="px-3 py-2 text-sm text-slate-500 hover:text-slate-700"
+                    className="px-3 py-2 text-sm text-muted-foreground hover:text-slate-700"
                   >
                     Отмена
                   </button>
@@ -789,7 +789,7 @@ export function DocumentsPage({
                 <button
                   onClick={handleAccept}
                   disabled={decidingReview}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg bg-[#16A34A] text-white hover:bg-green-700 transition-colors disabled:opacity-60"
+                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg bg-success text-success-foreground hover:bg-success/90 transition-colors disabled:opacity-60"
                 >
                   {decidingReview ? <Loader2 size={13} className="animate-spin" /> : <Check size={14} />}Принять
                 </button>
@@ -805,9 +805,9 @@ export function DocumentsPage({
           </div>
         )}
         {!waitingOnMe && reviewStage === "pending_accountant" && role === "commercial_director" && (
-          <div className="flex items-center gap-2 px-4 py-3 bg-slate-50 rounded-lg border border-slate-200 mb-4">
+          <div className="flex items-center gap-2 px-4 py-3 bg-background rounded-lg border border-border mb-4">
             <Clock size={16} className="text-slate-400 flex-shrink-0" />
-            <p className="text-sm text-slate-500">Ожидается проверка бухгалтера, затем запрос поступит вам.</p>
+            <p className="text-sm text-muted-foreground">Ожидается проверка бухгалтера, затем запрос поступит вам.</p>
           </div>
         )}
         {!waitingOnMe && reviewStage === "pending_director" && role === "accountant" && (
@@ -833,9 +833,9 @@ export function DocumentsPage({
           </div>
         )}
         {reviewStage === "none" && (
-          <div className="flex items-center gap-2 px-4 py-3 bg-slate-50 rounded-lg border border-slate-200 mb-4">
+          <div className="flex items-center gap-2 px-4 py-3 bg-background rounded-lg border border-border mb-4">
             <Clock size={16} className="text-slate-400 flex-shrink-0" />
-            <p className="text-sm text-slate-500">Менеджер ещё не отправил документы на проверку.</p>
+            <p className="text-sm text-muted-foreground">Менеджер ещё не отправил документы на проверку.</p>
           </div>
         )}
 
@@ -843,12 +843,12 @@ export function DocumentsPage({
             генерируется на странице "Договор"; сюда попадает уже
             проверенный/исправленный файл. */}
         {role === "accountant" && (
-          <div className="bg-white rounded-lg border border-[#E2E8F0] p-5 mb-4">
+          <div className="bg-card rounded-lg border border-border p-5 mb-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-2 min-w-0">
                 <Handshake size={16} className="text-emerald-500 flex-shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-slate-900">Договор</p>
+                  <p className="text-sm font-semibold text-foreground">Договор</p>
                   <p className="text-xs text-slate-400">
                     {contractUploaded
                       ? `Загружен · ${contractDoc?.date || "—"}`
@@ -868,8 +868,8 @@ export function DocumentsPage({
                   disabled={uploadingContract}
                   className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex-shrink-0 ${
                     uploadingContract
-                      ? "bg-slate-100 text-slate-400 cursor-wait"
-                      : "bg-[#2563EB] hover:bg-[#1d4ed8] text-white cursor-pointer"
+                      ? "bg-muted text-slate-400 cursor-wait"
+                      : "bg-primary hover:bg-primary/90 text-white cursor-pointer"
                   }`}
                 >
                   {uploadingContract ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
@@ -909,14 +909,14 @@ export function DocumentsPage({
       {projectSelector}
       {reviewStage === "pending_accountant" && (
         <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 rounded-lg border border-blue-100 mb-4">
-          <Clock size={16} className="text-[#2563EB] flex-shrink-0" />
-          <p className="text-sm font-medium text-[#2563EB]">Ожидается проверка бухгалтера</p>
+          <Clock size={16} className="text-primary flex-shrink-0" />
+          <p className="text-sm font-medium text-primary">Ожидается проверка бухгалтера</p>
         </div>
       )}
       {reviewStage === "pending_director" && (
         <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 rounded-lg border border-blue-100 mb-4">
-          <Clock size={16} className="text-[#2563EB] flex-shrink-0" />
-          <p className="text-sm font-medium text-[#2563EB]">Бухгалтер подтвердил — ожидается решение коммерческого директора</p>
+          <Clock size={16} className="text-primary flex-shrink-0" />
+          <p className="text-sm font-medium text-primary">Бухгалтер подтвердил — ожидается решение коммерческого директора</p>
         </div>
       )}
       {reviewStage === "rejected" && (
@@ -933,20 +933,20 @@ export function DocumentsPage({
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-6 mt-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-4">
         <div className="col-span-2 space-y-5">
           {renderSharedDocumentList()}
 
-          <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
+          <div className="bg-card rounded-lg border border-border p-5">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-slate-900">Прогресс загрузки документов</h2>
+              <h2 className="text-sm font-semibold text-foreground">Прогресс загрузки документов</h2>
               <span className={`text-sm font-semibold ${allUploaded ? "text-green-600" : "text-slate-600"}`}>
                 {doneDocCount}/{requiredDocCount}
               </span>
             </div>
-            <div className="w-full bg-slate-100 rounded-full h-2 mb-2">
+            <div className="w-full bg-muted rounded-full h-2 mb-2">
               <div
-                className={`h-2 rounded-full transition-all duration-500 ${allUploaded ? "bg-green-500" : "bg-[#2563EB]"}`}
+                className={`h-2 rounded-full transition-all duration-500 ${allUploaded ? "bg-green-500" : "bg-primary"}`}
                 style={{ width: `${(doneDocCount / requiredDocCount) * 100}%` }}
               />
             </div>
@@ -962,8 +962,8 @@ export function DocumentsPage({
           {!reviewInFlight && reviewStage !== "approved" && !completed && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Доверенность: Dropzone */}
-            <div className="bg-white rounded-lg border border-[#E2E8F0] p-4">
-              <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
+            <div className="bg-card rounded-lg border border-border p-4">
+              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                 <Lock size={14} className="text-red-500" />Доверенности
               </h3>
               <div className="relative w-full group">
@@ -973,8 +973,8 @@ export function DocumentsPage({
                 onClick={() => !docsLocked && poaFileRef.current?.click()}
                 className={`flex flex-col items-center justify-center gap-1.5 min-h-[112px] w-full px-4 rounded-lg border-2 border-dashed text-center transition-all ${
                   docsLocked || uploadingPoa
-                    ? "border-slate-200 bg-slate-50 cursor-not-allowed"
-                    : "border-[#E2E8F0] hover:border-[#2563EB]/40 hover:bg-blue-50/20 cursor-pointer"
+                    ? "border-border bg-background cursor-not-allowed"
+                    : "border-border hover:border-primary/40 hover:bg-blue-50/20 cursor-pointer"
                 }`}
               >
                 <input ref={poaFileRef} type="file" className="hidden" onChange={handlePoaInput} />
@@ -983,15 +983,15 @@ export function DocumentsPage({
                   : <Upload size={18} className="text-slate-400" />}
                 {docsLocked ? (
                   <p className="text-xs text-slate-400">
-                    <span className="font-medium text-slate-500">Недоступно</span>
+                    <span className="font-medium text-muted-foreground">Недоступно</span>
                     <br />
                     {uploadsLocked ? "до подписания договора" : "проверка документов"}
                   </p>
                 ) : uploadingPoa ? (
-                  <p className="text-xs text-slate-500">Загрузка...</p>
+                  <p className="text-xs text-muted-foreground">Загрузка...</p>
                 ) : (
-                  <p className="text-xs text-slate-500">
-                    <span className="text-[#2563EB]">Выберите файл</span>
+                  <p className="text-xs text-muted-foreground">
+                    <span className="text-primary">Выберите файл</span>
                     <br />
                     или перетащите — можно несколько
                   </p>
@@ -1006,8 +1006,8 @@ export function DocumentsPage({
             </div>
 
             {/* Накладные: Dropzone */}
-            <div className="bg-white rounded-lg border border-[#E2E8F0] p-4">
-              <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
+            <div className="bg-card rounded-lg border border-border p-4">
+              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                 <ReceiptIcon size={14} className="text-purple-500" />Накладные
               </h3>
               <div className="relative w-full group">
@@ -1017,8 +1017,8 @@ export function DocumentsPage({
                 onClick={() => !docsLocked && waybillFileRef.current?.click()}
                 className={`flex flex-col items-center justify-center gap-1.5 min-h-[112px] w-full px-4 rounded-lg border-2 border-dashed text-center transition-all ${
                   docsLocked || uploadingWaybill
-                    ? "border-slate-200 bg-slate-50 cursor-not-allowed"
-                    : "border-[#E2E8F0] hover:border-[#2563EB]/40 hover:bg-blue-50/20 cursor-pointer"
+                    ? "border-border bg-background cursor-not-allowed"
+                    : "border-border hover:border-primary/40 hover:bg-blue-50/20 cursor-pointer"
                 }`}
               >
                 <input ref={waybillFileRef} type="file" className="hidden" onChange={handleWaybillInput} />
@@ -1027,15 +1027,15 @@ export function DocumentsPage({
                   : <Upload size={18} className="text-slate-400" />}
                 {docsLocked ? (
                   <p className="text-xs text-slate-400">
-                    <span className="font-medium text-slate-500">Недоступно</span>
+                    <span className="font-medium text-muted-foreground">Недоступно</span>
                     <br />
                     {uploadsLocked ? "до подписания договора" : "проверка документов"}
                   </p>
                 ) : uploadingWaybill ? (
-                  <p className="text-xs text-slate-500">Загрузка...</p>
+                  <p className="text-xs text-muted-foreground">Загрузка...</p>
                 ) : (
-                  <p className="text-xs text-slate-500">
-                    <span className="text-[#2563EB]">Выберите файл</span>
+                  <p className="text-xs text-muted-foreground">
+                    <span className="text-primary">Выберите файл</span>
                     <br />
                     или перетащите — можно несколько
                   </p>
@@ -1055,8 +1055,8 @@ export function DocumentsPage({
 
         {/* Right sidebar */}
         <div className="space-y-4">
-          <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
-            <h3 className="text-sm font-semibold text-slate-900 mb-3">Согласование</h3>
+          <div className="bg-card rounded-lg border border-border p-5">
+            <h3 className="text-sm font-semibold text-foreground mb-3">Согласование</h3>
             {reviewStage === "approved" && (
               <div className="flex items-center gap-2 px-4 py-3 bg-green-50 rounded-lg border border-green-200">
                 <CheckCircle2 size={16} className="text-green-600 flex-shrink-0" />
@@ -1068,12 +1068,12 @@ export function DocumentsPage({
             )}
             {(reviewStage === "pending_accountant" || reviewStage === "pending_director") && (
               <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 rounded-lg border border-blue-100">
-                <Clock size={16} className="text-[#2563EB] flex-shrink-0" />
+                <Clock size={16} className="text-primary flex-shrink-0" />
                 <div>
-                  <p className="text-sm font-medium text-[#2563EB]">
+                  <p className="text-sm font-medium text-primary">
                     {reviewStage === "pending_accountant" ? "На проверке у бухгалтера" : "На проверке у директора"}
                   </p>
-                  <p className="text-xs text-slate-500 mt-0.5">Ожидаем решение</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Ожидаем решение</p>
                 </div>
               </div>
             )}
@@ -1092,8 +1092,8 @@ export function DocumentsPage({
                     disabled={!allUploaded || submittingReview}
                     className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
                       allUploaded
-                        ? "bg-[#2563EB] text-white hover:bg-[#1d4ed8]"
-                        : "bg-slate-100 text-slate-400 cursor-not-allowed"
+                        ? "bg-primary text-white hover:bg-primary/90"
+                        : "bg-muted text-slate-400 cursor-not-allowed"
                     }`}
                   >
                     {submittingReview
@@ -1105,8 +1105,8 @@ export function DocumentsPage({
             )}
           </div>
 
-          <div className="bg-white rounded-lg border border-[#E2E8F0] p-5">
-            <h3 className="text-sm font-semibold text-slate-900 mb-3">Статус</h3>
+          <div className="bg-card rounded-lg border border-border p-5">
+            <h3 className="text-sm font-semibold text-foreground mb-3">Статус</h3>
             <div className="space-y-2">
               {[
                 { label: "Документы загружены",  done: allUploaded },
@@ -1131,7 +1131,7 @@ export function DocumentsPage({
               </div>
               <button
                 onClick={() => onNavigate("dashboard")}
-                className="w-full py-2 text-xs text-slate-500 hover:text-[#2563EB] transition-colors"
+                className="w-full py-2 text-xs text-muted-foreground hover:text-primary transition-colors"
               >
                 Вернуться к дашборду
               </button>
@@ -1144,8 +1144,8 @@ export function DocumentsPage({
                   disabled={!canComplete || completing}
                   className={`w-full py-3 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
                     canComplete
-                      ? "bg-[#16A34A] text-white hover:bg-green-700"
-                      : "bg-slate-100 text-slate-400 cursor-not-allowed"
+                      ? "bg-success text-success-foreground hover:bg-success/90"
+                      : "bg-muted text-slate-400 cursor-not-allowed"
                   }`}
                 >
                   {completing
@@ -1169,7 +1169,7 @@ export function DocumentsPage({
         onClick={() => !deletingDoc && setDocToDelete(null)}
       >
         <div
-          className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl"
+          className="w-full max-w-sm rounded-xl bg-card p-6 shadow-xl"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-start gap-3">
@@ -1177,10 +1177,10 @@ export function DocumentsPage({
               <Trash2 size={18} className="text-red-500" />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-slate-900">
+              <h3 className="text-base font-semibold text-foreground">
                 Удалить документ?
               </h3>
-              <p className="mt-1 text-sm text-slate-500">
+              <p className="mt-1 text-sm text-muted-foreground">
                 Вы точно уверены, что хотите удалить «{docToDelete.name}»?
                 Это действие нельзя отменить.
               </p>
@@ -1192,7 +1192,7 @@ export function DocumentsPage({
               type="button"
               disabled={deletingDoc}
               onClick={() => setDocToDelete(null)}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+              className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-muted disabled:opacity-50"
             >
               Отмена
             </button>

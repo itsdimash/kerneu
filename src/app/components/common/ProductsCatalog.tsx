@@ -56,12 +56,12 @@ function PriceTrendChart({
     new Date(iso).toLocaleDateString("ru-RU", { month: "short" }).replace(".", "");
 
   return (
-    <div className="bg-slate-50/70 rounded-xl border border-slate-100 p-4 mb-4">
+    <div className="bg-muted/50 rounded-lg border border-border p-4 mb-4">
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto overflow-visible">
         <defs>
           <linearGradient id="priceTrendFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#2563EB" stopOpacity="0.18" />
-            <stop offset="100%" stopColor="#2563EB" stopOpacity="0" />
+            <stop offset="0%" stopColor="var(--primary)" stopOpacity="0.18" />
+            <stop offset="100%" stopColor="var(--primary)" stopOpacity="0" />
           </linearGradient>
         </defs>
 
@@ -69,17 +69,17 @@ function PriceTrendChart({
         <path d={areaPath} fill="url(#priceTrendFill)" />
 
         {/* Линия тренда */}
-        <path d={linePath} fill="none" stroke="#2563EB" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        <path d={linePath} fill="none" stroke="var(--primary)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
 
         {/* Точки: мин — зелёная, макс — красная, остальные — синие */}
         {coords.map((c, i) => {
           const isMin = c.price === min;
           const isMax = c.price === max;
-          const color = isMin ? "#16a34a" : isMax ? "#dc2626" : "#2563EB";
+          const color = isMin ? "var(--success)" : isMax ? "var(--destructive)" : "var(--primary)";
           return (
             <g key={i}>
-              <circle cx={c.x} cy={c.y} r={isMin || isMax ? 5 : 3.5} fill="white" stroke={color} strokeWidth={2} />
-              <text x={c.x} y={height - 4} textAnchor="middle" className="fill-slate-400" style={{ fontSize: 9 }}>
+              <circle cx={c.x} cy={c.y} r={isMin || isMax ? 5 : 3.5} fill="var(--card)" stroke={color} strokeWidth={2} />
+              <text x={c.x} y={height - 4} textAnchor="middle" className="fill-muted-foreground" style={{ fontSize: 9 }}>
                 {monthShort(c.date)}
               </text>
             </g>
@@ -123,12 +123,12 @@ export default function ProductsCatalog() {
     typeof price === "string" ? parseFloat(price) : price;
 
   const formatDelta = (diff: number, percent: number) => {
-    if (diff === 0) return { text: "0", cls: "text-slate-400" };
+    if (diff === 0) return { text: "0", cls: "text-muted-foreground" };
     const sign = diff > 0 ? "+" : "";
     const arrow = diff > 0 ? "🔺" : "🔻";
     return {
       text: `${arrow} ${sign}${diff.toLocaleString("ru-RU")} (${sign}${percent.toFixed(1)}%)`,
-      cls: diff > 0 ? "text-red-600" : "text-green-600",
+      cls: diff > 0 ? "text-destructive" : "text-success",
     };
   };
 
@@ -238,7 +238,7 @@ export default function ProductsCatalog() {
       <div className="fixed bottom-6 left-6 z-40">
         <button
           onClick={openCatalog}
-          className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg shadow-md transition-colors"
+          className="flex items-center gap-2 px-4 py-2.5 bg-foreground hover:bg-foreground/90 text-background text-sm font-medium rounded-lg shadow-md transition-colors"
         >
           <Package size={18} />
           Каталог товаров
@@ -247,15 +247,15 @@ export default function ProductsCatalog() {
 
       {/* --- Список товаров --- */}
       {isMainModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-xl max-h-[75vh] flex flex-col border border-slate-200">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-              <h2 className="text-base font-semibold text-slate-800">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4">
+          <div className="bg-card rounded-xl shadow-xl w-full max-w-xl max-h-[75vh] flex flex-col border border-border">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <h2 className="text-base font-semibold text-foreground">
                 Товары
               </h2>
               <button
                 onClick={() => setIsMainModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 transition-colors"
+                className="text-muted-foreground hover:text-foreground transition-colors"
               >
                 <X size={18} />
               </button>
@@ -267,28 +267,28 @@ export default function ProductsCatalog() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Поиск по названию..."
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-1 focus:ring-slate-400"
+                className="w-full px-3 py-2 text-sm border border-input bg-input-background rounded-md focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
               />
             </div>
 
             <div className="overflow-y-auto p-5">
               {productsLoading && (
-                <div className="flex items-center justify-center gap-2 py-10 text-slate-500 text-sm">
+                <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground text-sm">
                   <Loader2 size={16} className="animate-spin" />
                   Загрузка товаров...
                 </div>
               )}
 
               {productsError && (
-                <div className="text-sm text-red-600 py-4 text-center">
+                <div className="text-sm text-destructive py-4 text-center">
                   {productsError}
                 </div>
               )}
 
               {!productsLoading && !productsError && (
-                <div className="flex flex-col divide-y divide-slate-100">
+                <div className="flex flex-col divide-y divide-border">
                   {filteredProducts.length === 0 && (
-                    <div className="text-sm text-slate-400 text-center py-8">
+                    <div className="text-sm text-muted-foreground text-center py-8">
                       Ничего не найдено
                     </div>
                   )}
@@ -297,17 +297,17 @@ export default function ProductsCatalog() {
                     <button
                       key={product.id}
                       onClick={() => openProductDetails(product)}
-                      className="flex items-center justify-between w-full text-left py-3 px-1 hover:bg-slate-50 transition-colors rounded-md"
+                      className="flex items-center justify-between w-full text-left py-3 px-1 hover:bg-muted transition-colors rounded-md"
                     >
                       <div>
-                        <div className="text-sm font-medium text-slate-800">
+                        <div className="text-sm font-medium text-foreground">
                           {product.name}
                         </div>
-                        <div className="text-xs text-slate-400">
+                        <div className="text-xs text-muted-foreground">
                           ID: {product.id}
                         </div>
                       </div>
-                      <span className="text-xs text-slate-400">Подробнее →</span>
+                      <span className="text-xs text-muted-foreground">Подробнее →</span>
                     </button>
                   ))}
                 </div>
@@ -319,20 +319,20 @@ export default function ProductsCatalog() {
 
       {/* --- Детали товара + история цен --- */}
       {selectedProduct && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col border border-slate-200">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-foreground/40 p-4">
+          <div className="bg-card rounded-xl shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col border border-border">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <div>
-                <div className="text-xs text-slate-400 mb-0.5">
+                <div className="text-xs text-muted-foreground mb-0.5">
                   ID: {selectedProduct.id}
                 </div>
-                <h3 className="text-base font-semibold text-slate-800">
+                <h3 className="text-base font-semibold text-foreground">
                   {selectedProduct.name}
                 </h3>
               </div>
               <button
                 onClick={() => setSelectedProduct(null)}
-                className="text-slate-400 hover:text-slate-600 transition-colors"
+                className="text-muted-foreground hover:text-foreground transition-colors"
               >
                 <X size={18} />
               </button>
@@ -340,79 +340,79 @@ export default function ProductsCatalog() {
 
             <div className="overflow-y-auto p-5 space-y-5">
               {selectedProduct.description && (
-                <p className="text-sm text-slate-600 leading-relaxed">
+                <p className="text-sm text-foreground/80 leading-relaxed">
                   {selectedProduct.description}
                 </p>
               )}
 
               <div>
-                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
                   История цен
                 </h4>
 
                 {historyLoading && (
-                  <div className="flex items-center justify-center gap-2 py-8 text-slate-500 text-sm">
+                  <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground text-sm">
                     <Loader2 size={16} className="animate-spin" />
                     Загрузка истории...
                   </div>
                 )}
 
                 {historyError && (
-                  <div className="text-sm text-red-600 py-4 text-center">
+                  <div className="text-sm text-destructive py-4 text-center">
                     {historyError}
                   </div>
                 )}
 
                 {!historyLoading && !historyError && history.length > 0 && (
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
-                    <div className="bg-white border border-slate-200 rounded-xl p-2.5 flex items-start gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                    <div className="bg-card border border-border rounded-lg p-2.5 flex items-start gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-info-muted text-info flex items-center justify-center shrink-0">
                         <Wallet size={13} />
                       </div>
                       <div>
-                        <div className="text-[9px] text-slate-400 uppercase tracking-normal mb-0.5 leading-tight">Текущая</div>
-                        <div className="text-xs font-bold text-slate-800">{formatPrice(currentPrice as number)} ₸</div>
+                        <div className="text-[9px] text-muted-foreground uppercase tracking-normal mb-0.5 leading-tight">Текущая</div>
+                        <div className="text-xs font-bold text-foreground">{formatPrice(currentPrice as number)} ₸</div>
                       </div>
                     </div>
 
-                    <div className="bg-white border border-slate-200 rounded-xl p-2.5 flex items-start gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-green-50 text-green-600 flex items-center justify-center shrink-0">
+                    <div className="bg-card border border-border rounded-lg p-2.5 flex items-start gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-success-muted text-success flex items-center justify-center shrink-0">
                         <ArrowDownCircle size={13} />
                       </div>
                       <div>
-                        <div className="text-[9px] text-slate-400 uppercase tracking-normal mb-0.5 leading-tight">Минимальная</div>
-                        <div className="text-xs font-bold text-green-600">{formatPrice(minPrice as number)} ₸</div>
+                        <div className="text-[9px] text-muted-foreground uppercase tracking-normal mb-0.5 leading-tight">Минимальная</div>
+                        <div className="text-xs font-bold text-success">{formatPrice(minPrice as number)} ₸</div>
                       </div>
                     </div>
 
-                    <div className="bg-white border border-slate-200 rounded-xl p-2.5 flex items-start gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-red-50 text-red-600 flex items-center justify-center shrink-0">
+                    <div className="bg-card border border-border rounded-lg p-2.5 flex items-start gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-destructive-muted text-destructive flex items-center justify-center shrink-0">
                         <ArrowUpCircle size={13} />
                       </div>
                       <div>
-                        <div className="text-[9px] text-slate-400 uppercase tracking-normal mb-0.5 leading-tight">Максимальная</div>
-                        <div className="text-xs font-bold text-red-600">{formatPrice(maxPrice as number)} ₸</div>
+                        <div className="text-[9px] text-muted-foreground uppercase tracking-normal mb-0.5 leading-tight">Максимальная</div>
+                        <div className="text-xs font-bold text-destructive">{formatPrice(maxPrice as number)} ₸</div>
                       </div>
                     </div>
 
-                    <div className="bg-white border border-slate-200 rounded-xl p-2.5 flex items-start gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center shrink-0">
+                    <div className="bg-card border border-border rounded-lg p-2.5 flex items-start gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-muted text-muted-foreground flex items-center justify-center shrink-0">
                         <Minus size={13} />
                       </div>
                       <div>
-                        <div className="text-[9px] text-slate-400 uppercase tracking-normal mb-0.5 leading-tight">Средняя</div>
-                        <div className="text-xs font-bold text-slate-800">{formatPrice(Math.round(avgPrice as number))} ₸</div>
+                        <div className="text-[9px] text-muted-foreground uppercase tracking-normal mb-0.5 leading-tight">Средняя</div>
+                        <div className="text-xs font-bold text-foreground">{formatPrice(Math.round(avgPrice as number))} ₸</div>
                       </div>
                     </div>
 
-                    <div className="bg-white border border-slate-200 rounded-xl p-2.5 flex items-start gap-2 col-span-2 sm:col-span-1">
+                    <div className="bg-card border border-border rounded-lg p-2.5 flex items-start gap-2 col-span-2 sm:col-span-1">
                       <div
                         className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
                           overallChangePercent !== null && overallChangePercent > 0
-                            ? "bg-red-50 text-red-600"
+                            ? "bg-destructive-muted text-destructive"
                             : overallChangePercent !== null && overallChangePercent < 0
-                            ? "bg-green-50 text-green-600"
-                            : "bg-slate-100 text-slate-500"
+                            ? "bg-success-muted text-success"
+                            : "bg-muted text-muted-foreground"
                         }`}
                       >
                         {overallChangePercent !== null && overallChangePercent > 0 ? (
@@ -424,14 +424,14 @@ export default function ProductsCatalog() {
                         )}
                       </div>
                       <div>
-                        <div className="text-[9px] text-slate-400 uppercase tracking-normal mb-0.5 leading-tight">Изменение</div>
+                        <div className="text-[9px] text-muted-foreground uppercase tracking-normal mb-0.5 leading-tight">Изменение</div>
                         <div
                           className={`text-xs font-bold ${
                             overallChangePercent !== null && overallChangePercent > 0
-                              ? "text-red-600"
+                              ? "text-destructive"
                               : overallChangePercent !== null && overallChangePercent < 0
-                              ? "text-green-600"
-                              : "text-slate-800"
+                              ? "text-success"
+                              : "text-foreground"
                           }`}
                         >
                           {overallChangePercent === null
@@ -450,9 +450,9 @@ export default function ProductsCatalog() {
                 )}
 
                 {!historyLoading && !historyError && (
-                  <div className="border border-slate-200 rounded-lg overflow-hidden">
+                  <div className="border border-border rounded-lg overflow-hidden">
                     <table className="w-full text-left border-collapse text-sm">
-                      <thead className="bg-slate-50 text-xs text-slate-400 uppercase">
+                      <thead className="bg-muted text-xs text-muted-foreground uppercase">
                         <tr>
                           <th className="p-2.5 font-medium">Дата</th>
                           <th className="p-2.5 font-medium">Цена</th>
@@ -461,7 +461,7 @@ export default function ProductsCatalog() {
                           <th className="p-2.5 font-medium text-center">Ссылка</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
+                      <tbody className="divide-y divide-border">
                         {historyDesc.length > 0 ? (
                           historyDesc.map((item) => {
                             const priceNum = toNum(item.purchase_price);
@@ -471,25 +471,25 @@ export default function ProductsCatalog() {
                             const deltaView = delta ? formatDelta(delta.diff, delta.percent) : null;
 
                             return (
-                              <tr key={item.id}>
-                                <td className="p-2.5 text-slate-600 whitespace-nowrap">
+                              <tr key={item.id} className="hover:bg-muted/50 transition-colors">
+                                <td className="p-2.5 text-foreground/80 whitespace-nowrap">
                                   {formatDate(item.price_date)}
                                 </td>
                                 <td
                                   className={`p-2.5 font-medium whitespace-nowrap ${
-                                    isMin ? "text-green-600" : isMax ? "text-red-600" : "text-slate-800"
+                                    isMin ? "text-success" : isMax ? "text-destructive" : "text-foreground"
                                   }`}
                                 >
                                   {formatPrice(item.purchase_price)} ₸
                                   {isMin && " 🟢"}
                                   {isMax && " 🔴"}
                                 </td>
-                                <td className={`p-2.5 whitespace-nowrap text-xs ${deltaView?.cls || "text-slate-300"}`}>
+                                <td className={`p-2.5 whitespace-nowrap text-xs ${deltaView?.cls || "text-muted-foreground/60"}`}>
                                   {deltaView ? deltaView.text : "—"}
                                 </td>
-                                <td className="p-2.5 text-slate-600">
+                                <td className="p-2.5 text-foreground/80">
                                   {item.supplier_raw_name || (
-                                    <span className="text-slate-300 italic">
+                                    <span className="text-muted-foreground/60 italic">
                                       Не указан
                                     </span>
                                   )}
@@ -500,12 +500,12 @@ export default function ProductsCatalog() {
                                       href={item.offer_url}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="inline-flex text-slate-500 hover:text-slate-800 transition-colors"
+                                      className="inline-flex text-muted-foreground hover:text-foreground transition-colors"
                                     >
                                       <ExternalLink size={14} />
                                     </a>
                                   ) : (
-                                    <span className="text-slate-300">—</span>
+                                    <span className="text-muted-foreground/60">—</span>
                                   )}
                                 </td>
                               </tr>
@@ -513,7 +513,7 @@ export default function ProductsCatalog() {
                           })
                         ) : (
                           <tr>
-                            <td colSpan={5} className="p-6 text-center text-slate-400">
+                            <td colSpan={5} className="p-6 text-center text-muted-foreground">
                               История пуста
                             </td>
                           </tr>
@@ -525,10 +525,10 @@ export default function ProductsCatalog() {
               </div>
             </div>
 
-            <div className="px-5 py-3 border-t border-slate-100 flex justify-end">
+            <div className="px-5 py-3 border-t border-border flex justify-end">
               <button
                 onClick={() => setSelectedProduct(null)}
-                className="px-4 py-1.5 text-sm text-slate-600 hover:text-slate-900 transition-colors"
+                className="px-4 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
               >
                 Закрыть
               </button>
