@@ -14,8 +14,6 @@ import { UploadCenter } from "./components/screens/UploadCenter";
 
 
 import type { Role, Page, ContractStatus, KPItemStatus, ProjectState, KPItem } from "../types";
-import designImg from "../assets/design-illustration.jpg";
-import kLogoImg from "../../../assets/k-logo.png";
 import { ROLES, ROLE_EMAILS } from "../data/roles";
 import { ACTIVE_PROJECT, PROJECTS } from "../data/projects";
 import type { ProjectRow } from "../data/projects";

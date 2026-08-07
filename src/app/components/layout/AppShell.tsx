@@ -66,6 +66,8 @@ export function AppShell({
   receipts,
   setReceipts,
 }: AppShellProps) {
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
   const [projectItems, setProjectItems] =
     useState<ProjectItem[]>([]);
 
@@ -161,19 +163,23 @@ export function AppShell({
     }
   };
 
+  // На узких экранах сайдбар — это off-canvas drawer, а не всегда видимая
+  // колонка, так что переключение страницы из него должно само его закрывать.
+  const handlePageFromNav = (p: Page) => {
+    onPage(p);
+    setMobileNavOpen(false);
+  };
+
   return (
-    <div
-      className="flex h-screen bg-background overflow-hidden"
-      style={{
-        fontFamily: "'Inter', sans-serif",
-      }}
-    >
+    <div className="flex h-screen bg-background overflow-hidden">
       <Sidebar
         page={page}
-        onPage={onPage}
+        onPage={handlePageFromNav}
         role={role}
         projectState={projectState}
         onFindProject={handleFindProject}
+        mobileOpen={mobileNavOpen}
+        onCloseMobile={() => setMobileNavOpen(false)}
       />
 
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -184,6 +190,7 @@ export function AppShell({
           onLogout={onLogout}
           onOpenProject={handleFindProject}
           onSelectProject={resolveAndSelectProject}
+          onOpenMobileNav={() => setMobileNavOpen(true)}
         />
 
         <main className="flex-1 overflow-y-auto">

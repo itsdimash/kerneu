@@ -147,8 +147,8 @@ function ErrorOverlay({ message, onDismiss }: { message: string; onDismiss: () =
         className="w-full max-w-sm rounded-xl bg-card shadow-xl px-6 py-6 text-center"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-red-50">
-          <AlertCircle size={24} className="text-red-500" />
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-red-50 dark:bg-red-400/15">
+          <AlertCircle size={24} className="text-destructive" />
         </div>
         <p className="text-sm font-medium leading-snug text-foreground">{message}</p>
         <button
@@ -236,7 +236,7 @@ function GenerateContractModal({
 
   const inputCls =
     "w-full text-sm border border-border rounded-lg px-3 py-2 outline-none focus:border-primary/50";
-  const labelCls = "text-xs font-medium text-slate-600 mb-1 block";
+  const labelCls = "text-xs font-medium text-muted-foreground mb-1 block";
 
   return (
     <>
@@ -253,12 +253,12 @@ function GenerateContractModal({
           <div className="flex items-center justify-between px-6 py-4 border-b border-border">
             <div>
               <h3 className="text-base font-semibold text-foreground">Сгенерировать договор</h3>
-              <p className="text-xs text-slate-400 mt-0.5">{project.name} · {project.client}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{project.name} · {project.client}</p>
             </div>
             <button
               type="button"
               onClick={() => !submitting && onClose()}
-              className="text-slate-400 hover:text-slate-600 p-1"
+              className="text-muted-foreground hover:text-muted-foreground p-1"
             >
               <X size={18} />
             </button>
@@ -408,7 +408,7 @@ function GenerateContractModal({
                     className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg border transition-colors ${
                       form.shipment_method === "pickup"
                         ? "bg-primary border-primary text-white"
-                        : "bg-card border-border text-slate-600 hover:border-primary/40"
+                        : "bg-card border-border text-muted-foreground hover:border-primary/40"
                     }`}
                   >
                     Самовывоз
@@ -419,7 +419,7 @@ function GenerateContractModal({
                     className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg border transition-colors ${
                       form.shipment_method === "delivery"
                         ? "bg-primary border-primary text-white"
-                        : "bg-card border-border text-slate-600 hover:border-primary/40"
+                        : "bg-card border-border text-muted-foreground hover:border-primary/40"
                     }`}
                   >
                     Доставка Поставщиком
@@ -434,7 +434,7 @@ function GenerateContractModal({
                     className={inputCls}
                   />
                 ) : (
-                  <p className="text-xs text-slate-400 px-1">
+                  <p className="text-xs text-muted-foreground px-1">
                     Ничего вводить не нужно — в договоре укажется стандартная формулировка без адреса.
                   </p>
                 )}
@@ -444,7 +444,7 @@ function GenerateContractModal({
         </form>
 
         <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-border">
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-muted-foreground">
             Спецификация подтянется автоматически из позиций проекта.
           </p>
           <div className="flex gap-2 flex-shrink-0">
@@ -452,7 +452,7 @@ function GenerateContractModal({
               type="button"
               onClick={() => !submitting && onClose()}
               disabled={submitting}
-              className="px-4 py-2 text-sm text-slate-600 hover:bg-muted rounded-lg disabled:opacity-50"
+              className="px-4 py-2 text-sm text-muted-foreground hover:bg-muted rounded-lg disabled:opacity-50"
             >
               Отмена
             </button>
@@ -554,14 +554,14 @@ export function ContractPage({
   return (
     <PageWrap title="Договор" subtitle="Все проекты">
       {loading && (
-        <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+        <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 dark:bg-blue-400/15 border border-blue-200 dark:border-blue-400/25 rounded-lg text-sm text-blue-700 dark:text-blue-300">
           <Loader2 size={14} className="animate-spin" />
           Загружаем проекты…
         </div>
       )}
 
       {!loading && loadError && (
-        <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+        <div className="px-4 py-3 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg text-sm text-red-700 dark:text-red-300">
           {loadError}
         </div>
       )}
@@ -588,20 +588,20 @@ export function ContractPage({
                 className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-background/60 transition-colors"
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${project.contractUploaded ? "bg-green-50" : "bg-blue-50"}`}>
-                    <Building2 size={16} className={project.contractUploaded ? "text-green-600" : "text-primary"} />
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${project.contractUploaded ? "bg-green-50 dark:bg-green-400/15" : "bg-blue-50 dark:bg-blue-400/15"}`}>
+                    <Building2 size={16} className={project.contractUploaded ? "text-green-600 dark:text-green-400" : "text-primary"} />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-slate-800 truncate">{project.name}</p>
-                    <p className="text-xs text-slate-400 truncate">{project.client}</p>
+                    <p className="text-sm font-medium text-foreground truncate">{project.name}</p>
+                    <p className="text-xs text-muted-foreground truncate">{project.client}</p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-3 flex-shrink-0">
                   {project.contractUploaded ? (
-                    <span className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 rounded-full">
-                      <CheckCircle2 size={13} className="text-green-600" />
-                      <span className="text-xs font-medium text-green-700">Договор загружен</span>
+                    <span className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 dark:bg-green-400/20 rounded-full">
+                      <CheckCircle2 size={13} className="text-green-600 dark:text-green-400" />
+                      <span className="text-xs font-medium text-green-700 dark:text-green-300">Договор загружен</span>
                     </span>
                   ) : isAccountant ? (
                     <span
@@ -626,24 +626,24 @@ export function ContractPage({
                         e.stopPropagation();
                         onNavigate("procurement");
                       }}
-                      className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg bg-card text-slate-700 border border-border hover:bg-background transition-colors"
+                      className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg bg-card text-foreground border border-border hover:bg-background transition-colors"
                     >
                       <ShoppingCart size={13} className="text-muted-foreground" />
                       Посмотреть закупки
                     </button>
                   )}
 
-                  <ChevronDown size={16} className={`text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                  <ChevronDown size={16} className={`text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`} />
                 </div>
               </button>
 
               {/* Uploaded-file strip */}
               {project.contractUploaded && (
-                <div className="flex items-center justify-between px-5 py-2 bg-green-50/60 border-t border-green-100">
+                <div className="flex items-center justify-between px-5 py-2 bg-success-muted border-t border-success/20">
                   <div className="flex items-center gap-2 min-w-0">
-                    <FileText size={13} className="text-green-600 flex-shrink-0" />
-                    <span className="text-xs text-green-700 truncate">{project.fileName}</span>
-                    <span className="text-xs text-green-500 flex-shrink-0">· {project.uploadDate}</span>
+                    <FileText size={13} className="text-success flex-shrink-0" />
+                    <span className="text-xs text-success truncate">{project.fileName}</span>
+                    <span className="text-xs text-success/70 flex-shrink-0">· {project.uploadDate}</span>
                   </div>
                 </div>
               )}
@@ -654,27 +654,27 @@ export function ContractPage({
                   <table className="w-full text-sm border-collapse">
                     <thead>
                       <tr className="bg-background">
-                        <th className="w-12 px-3 py-2.5 text-left font-semibold text-slate-600 border-b border-r border-border">№</th>
-                        <th className="px-3 py-2.5 text-left font-semibold text-slate-600 border-b border-r border-border">Наименование</th>
-                        <th className="w-24 px-3 py-2.5 text-right font-semibold text-slate-600 border-b border-r border-border">Кол-во</th>
-                        <th className="w-16 px-3 py-2.5 text-left font-semibold text-slate-600 border-b border-r border-border">Ед.</th>
-                        <th className="w-28 px-3 py-2.5 text-right font-semibold text-slate-600 border-b border-r border-border">Цена</th>
-                        <th className="w-32 px-3 py-2.5 text-right font-semibold text-slate-600 border-b border-border">Сумма</th>
+                        <th className="w-12 px-3 py-2.5 text-left font-semibold text-muted-foreground border-b border-r border-border">№</th>
+                        <th className="px-3 py-2.5 text-left font-semibold text-muted-foreground border-b border-r border-border">Наименование</th>
+                        <th className="w-24 px-3 py-2.5 text-right font-semibold text-muted-foreground border-b border-r border-border">Кол-во</th>
+                        <th className="w-16 px-3 py-2.5 text-left font-semibold text-muted-foreground border-b border-r border-border">Ед.</th>
+                        <th className="w-28 px-3 py-2.5 text-right font-semibold text-muted-foreground border-b border-r border-border">Цена</th>
+                        <th className="w-32 px-3 py-2.5 text-right font-semibold text-muted-foreground border-b border-border">Сумма</th>
                       </tr>
                     </thead>
                     <tbody>
                       {project.items.map((item) => (
                         <tr key={item.no} className="hover:bg-background/50">
                           <td className="px-3 py-2.5 text-muted-foreground border-b border-r border-border align-top">{item.no}</td>
-                          <td className="px-3 py-2.5 text-slate-700 border-b border-r border-border align-top">{item.name}</td>
-                          <td className="px-3 py-2.5 text-right text-slate-700 border-b border-r border-border align-top">{fmt(item.qty)}</td>
+                          <td className="px-3 py-2.5 text-foreground border-b border-r border-border align-top">{item.name}</td>
+                          <td className="px-3 py-2.5 text-right text-foreground border-b border-r border-border align-top">{fmt(item.qty)}</td>
                           <td className="px-3 py-2.5 text-muted-foreground border-b border-r border-border align-top">{item.unit}</td>
-                          <td className="px-3 py-2.5 text-right text-slate-700 border-b border-r border-border align-top">{fmt(item.price)}</td>
-                          <td className="px-3 py-2.5 text-right text-slate-700 border-b border-border align-top">{fmt(item.qty * item.price)}</td>
+                          <td className="px-3 py-2.5 text-right text-foreground border-b border-r border-border align-top">{fmt(item.price)}</td>
+                          <td className="px-3 py-2.5 text-right text-foreground border-b border-border align-top">{fmt(item.qty * item.price)}</td>
                         </tr>
                       ))}
                       <tr>
-                        <td colSpan={5} className="px-3 py-3 text-right font-semibold text-slate-800 border-t-2 border-border">Итого:</td>
+                        <td colSpan={5} className="px-3 py-3 text-right font-semibold text-foreground border-t-2 border-border">Итого:</td>
                         <td className="px-3 py-3 text-right font-semibold text-foreground border-t-2 border-border">{fmt(total)}</td>
                       </tr>
                     </tbody>

@@ -763,7 +763,7 @@ export function ProcurementPage({
       </div>
 
       {purchaseError && (
-        <div className="p-4 bg-red-50 text-red-700 border border-red-200 rounded-lg mb-6 text-sm">
+        <div className="p-4 bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-400/25 rounded-lg mb-6 text-sm">
           {purchaseError}
         </div>
       )}
@@ -778,14 +778,14 @@ export function ProcurementPage({
       {!selectedProject && !purchaseLoading && (
         <div className="flex flex-col items-center justify-center py-20 text-center bg-card rounded-lg border border-dashed border-border">
           <ShoppingCart size={32} className="text-slate-300 mb-3" />
-          <p className="text-base font-medium text-slate-700">Проект не выбран</p>
+          <p className="text-base font-medium text-foreground">Проект не выбран</p>
           <p className="text-sm text-muted-foreground mt-1">Выберите проект из списка выше, чтобы начать работу с закупками.</p>
         </div>
       )}
 
       {selectedProject && !purchaseLoading && supplierKeys.length === 0 && (
         <div className="py-16 text-center bg-card rounded-lg border border-border">
-          <p className="text-sm font-medium text-slate-600">В этом проекте нет товаров к закупке.</p>
+          <p className="text-sm font-medium text-muted-foreground">В этом проекте нет товаров к закупке.</p>
         </div>
       )}
 
@@ -802,7 +802,7 @@ export function ProcurementPage({
               onClick={() => toggleSupplier(supplier)}
             >
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
+                <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-400/20 flex items-center justify-center text-blue-600 dark:text-blue-400">
                   <ShoppingCart size={14} />
                 </div>
                 <div>
@@ -813,47 +813,47 @@ export function ProcurementPage({
 
               <div className="flex items-center gap-3">
                 {wfState.status === 'income' && (
-                  <span className="px-2.5 py-1 text-xs font-semibold bg-green-100 text-green-700 rounded-full flex items-center gap-1">
+                  <span className="px-2.5 py-1 text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 rounded-full flex items-center gap-1">
                     <PackageCheck size={12}/> Оприходовано
                   </span>
                 )}
                 {wfState.status === 'approved' && (
-                  <span className="px-2.5 py-1 text-xs font-semibold bg-blue-100 text-blue-700 rounded-full flex items-center gap-1">
+                  <span className="px-2.5 py-1 text-xs font-semibold bg-blue-100 dark:bg-blue-400/20 text-blue-700 dark:text-blue-300 rounded-full flex items-center gap-1">
                     <CheckCircle2 size={12}/> Готово к приходу
                   </span>
                 )}
 
                 {(wfState.status === 'rejected_by_accountant' || wfState.status === 'rejected_by_director') && (
-                  <span className="px-2.5 py-1 text-xs font-semibold bg-red-100 text-red-700 rounded-full flex items-center gap-1">
+                  <span className="px-2.5 py-1 text-xs font-semibold bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 rounded-full flex items-center gap-1">
                     <XCircle size={12}/> Отклонено {wfState.status === 'rejected_by_director' ? 'директором' : 'бухгалтером'}
                   </span>
                 )}
 
                 {(wfState.status === 'pending_accountant' || wfState.status === 'pending_director') && (
                   <div className="flex items-center gap-1.5">
-                    <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${wfState.accountantApproved ? "bg-green-100 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+                    <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${wfState.accountantApproved ? "bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300"}`}>
                       {wfState.accountantApproved ? "✓ Бухгалтер" : "⏳ Бухгалтер"}
                     </span>
                     <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
                       wfState.directorApproved
-                        ? "bg-green-100 text-green-700"
+                        ? "bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300"
                         : wfState.status === 'pending_director'
-                          ? "bg-amber-50 text-amber-700"
-                          : "bg-muted text-slate-400"
+                          ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300"
+                          : "bg-muted text-muted-foreground"
                     }`}>
                       {wfState.directorApproved ? "✓ Директор" : wfState.status === 'pending_director' ? "⏳ Директор" : "— Директор"}
                     </span>
                   </div>
                 )}
 
-                {isExpanded ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+                {isExpanded ? <ChevronUp size={16} className="text-muted-foreground" /> : <ChevronDown size={16} className="text-muted-foreground" />}
               </div>
             </div>
 
             {isExpanded && (
               <div className="flex flex-col">
                 {(wfState.status === 'rejected_by_accountant' || wfState.status === 'rejected_by_director') && (
-                  <div className="mx-5 mt-4 flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 px-3 py-2.5 rounded-lg text-sm">
+                  <div className="mx-5 mt-4 flex items-start gap-2 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 text-red-700 dark:text-red-300 px-3 py-2.5 rounded-lg text-sm">
                     <XCircle size={16} className="mt-0.5 shrink-0" />
                     <div>
                       <span className="font-semibold">
@@ -861,7 +861,7 @@ export function ProcurementPage({
                       </span>{" "}
                       {wfState.rejectionReason}
                       {isPm && (
-                        <span className="block mt-1 text-red-600/80">
+                        <span className="block mt-1 text-destructive/80">
                           Замените файл счёта и отправьте его на проверку заново.
                         </span>
                       )}
@@ -877,7 +877,7 @@ export function ProcurementPage({
                        </div>
                     ) : !hasFile ? (
                       isPm ? (
-                        <label className="flex items-center gap-2 px-4 py-2 bg-background border border-border text-slate-700 text-sm font-medium rounded-lg cursor-pointer hover:bg-muted transition-colors">
+                        <label className="flex items-center gap-2 px-4 py-2 bg-background border border-border text-foreground text-sm font-medium rounded-lg cursor-pointer hover:bg-muted transition-colors">
                           <UploadCloud size={16} className="text-primary" />
                           Загрузить Счет на оплату
                           <input 
@@ -893,20 +893,20 @@ export function ProcurementPage({
                         <p className="text-sm text-muted-foreground italic">Счёт на оплату не загружен</p>
                       )
                     ) : (
-                      <div className="flex items-center gap-3 bg-blue-50/50 border border-blue-100 px-3 py-2 rounded-lg">
-                        <FileText size={16} className="text-blue-600" />
-                        <span className="text-sm font-medium text-slate-700 max-w-[200px] truncate" title={wfState.fileName || wfState.file?.name}>
+                      <div className="flex items-center gap-3 bg-blue-50/50 dark:bg-blue-400/25 border border-blue-100 dark:border-blue-400/20 px-3 py-2 rounded-lg">
+                        <FileText size={16} className="text-blue-600 dark:text-blue-400" />
+                        <span className="text-sm font-medium text-foreground max-w-[200px] truncate" title={wfState.fileName || wfState.file?.name}>
                           {wfState.fileName || wfState.file?.name}
                         </span>
                         
                         <div className="h-4 w-px bg-blue-200 mx-1"></div>
                         
-                        <button onClick={() => downloadFile(wfState)} className="text-xs font-medium text-blue-600 hover:underline flex items-center gap-1">
+                        <button onClick={() => downloadFile(wfState)} className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1">
                           <Download size={13}/> Скачать
                         </button>
                         
                         {isPm && isAwaitingSend(wfState.status) && (
-                          <label className="text-xs font-medium text-muted-foreground hover:text-slate-800 cursor-pointer flex items-center gap-1 ml-2">
+                          <label className="text-xs font-medium text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1 ml-2">
                             Заменить
                             <input 
                               type="file" 
@@ -924,14 +924,14 @@ export function ProcurementPage({
                   <div className="flex items-center gap-3">
                     {isAccountant && wfState.status === 'pending_accountant' && (
                       wfState.rejectFormOpen ? (
-                        <div className="flex flex-col gap-2 bg-red-50 border border-red-200 rounded-lg p-3 w-full sm:w-80">
-                          <label className="text-xs font-medium text-red-700">Причина отклонения</label>
+                        <div className="flex flex-col gap-2 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg p-3 w-full sm:w-80">
+                          <label className="text-xs font-medium text-red-700 dark:text-red-300">Причина отклонения</label>
                           <textarea
                             value={wfState.rejectDraftReason || ""}
                             onChange={(e) => setRejectDraftReason(supplier, e.target.value)}
                             placeholder="Что нужно исправить в счёте?"
                             rows={2}
-                            className="text-sm border border-red-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-red-400 resize-none"
+                            className="text-sm border border-red-200 dark:border-red-400/25 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-red-400 resize-none"
                           />
                           <div className="flex items-center justify-end gap-2">
                             <button onClick={() => closeRejectForm(supplier)} className="text-xs text-muted-foreground hover:underline">
@@ -951,7 +951,7 @@ export function ProcurementPage({
                           <button
                             onClick={() => openRejectForm(supplier)}
                             disabled={wfState.actionLoading}
-                            className="flex items-center gap-2 px-4 py-2 bg-card border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+                            className="flex items-center gap-2 px-4 py-2 bg-card border border-red-200 dark:border-red-400/25 text-destructive text-sm font-medium rounded-lg hover:bg-red-50 dark:bg-red-400/15 transition-colors disabled:opacity-50"
                           >
                             <XCircle size={14}/> Отклонить
                           </button>
@@ -966,24 +966,24 @@ export function ProcurementPage({
                       )
                     )}
                     {isAccountant && (wfState.status === 'pending_director' || wfState.status === 'approved' || wfState.status === 'income') && (
-                      <span className="text-xs font-semibold text-green-700 bg-green-50 px-3 py-1.5 rounded-lg border border-green-200 flex items-center gap-1">
+                      <span className="text-xs font-semibold text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-400/15 px-3 py-1.5 rounded-lg border border-green-200 dark:border-green-400/25 flex items-center gap-1">
                         <CheckCircle2 size={13} /> Бухгалтер подтвердил
                       </span>
                     )}
                     {isAccountant && isAwaitingSend(wfState.status) && (
-                      <span className="text-xs text-slate-400 italic">Ожидает отправки от менеджера</span>
+                      <span className="text-xs text-muted-foreground italic">Ожидает отправки от менеджера</span>
                     )}
 
                     {isDirector && wfState.status === 'pending_director' && (
                       wfState.rejectFormOpen ? (
-                        <div className="flex flex-col gap-2 bg-red-50 border border-red-200 rounded-lg p-3 w-full sm:w-80">
-                          <label className="text-xs font-medium text-red-700">Причина отклонения</label>
+                        <div className="flex flex-col gap-2 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg p-3 w-full sm:w-80">
+                          <label className="text-xs font-medium text-red-700 dark:text-red-300">Причина отклонения</label>
                           <textarea
                             value={wfState.rejectDraftReason || ""}
                             onChange={(e) => setRejectDraftReason(supplier, e.target.value)}
                             placeholder="Что нужно исправить в счёте?"
                             rows={2}
-                            className="text-sm border border-red-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-red-400 resize-none"
+                            className="text-sm border border-red-200 dark:border-red-400/25 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-red-400 resize-none"
                           />
                           <div className="flex items-center justify-end gap-2">
                             <button onClick={() => closeRejectForm(supplier)} className="text-xs text-muted-foreground hover:underline">
@@ -1003,7 +1003,7 @@ export function ProcurementPage({
                           <button
                             onClick={() => openRejectForm(supplier)}
                             disabled={wfState.actionLoading}
-                            className="flex items-center gap-2 px-4 py-2 bg-card border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+                            className="flex items-center gap-2 px-4 py-2 bg-card border border-red-200 dark:border-red-400/25 text-destructive text-sm font-medium rounded-lg hover:bg-red-50 dark:bg-red-400/15 transition-colors disabled:opacity-50"
                           >
                             <XCircle size={14}/> Отклонить
                           </button>
@@ -1043,16 +1043,16 @@ export function ProcurementPage({
 
                         return (
                           <tr key={item.id} className="hover:bg-background/30 transition-colors">
-                            <td className="px-5 py-3.5 text-sm font-medium text-slate-800">
+                            <td className="px-5 py-3.5 text-sm font-medium text-foreground">
                               {getItemName(item)}
                             </td>
-                            <td className="px-5 py-3.5 text-sm font-mono text-slate-700">
+                            <td className="px-5 py-3.5 text-sm font-mono text-foreground">
                               {quantity}
                             </td>
                             <td className="px-5 py-3.5 text-sm text-muted-foreground">
                               {unit}
                             </td>
-                            <td className="px-5 py-3.5 text-sm font-mono text-slate-700">
+                            <td className="px-5 py-3.5 text-sm font-mono text-foreground">
                               {fmt(costPrice)}
                             </td>
                             <td className="px-5 py-3.5 text-sm font-mono font-semibold text-foreground">
@@ -1088,7 +1088,7 @@ export function ProcurementPage({
                 <div className="flex flex-col items-end gap-2">
                   {!allPendingSendFilesUploaded && (
                     <p className="text-xs text-muted-foreground flex items-center gap-1.5 bg-muted px-3 py-1.5 rounded-lg">
-                      <AlertCircle size={13} className="text-amber-500" />
+                      <AlertCircle size={13} className="text-amber-500 dark:text-amber-400" />
                       Загружено {pendingSendSuppliersWithFile.length} из {pendingSendSuppliers.length} счетов, ожидающих отправки.
                     </p>
                   )}
@@ -1112,7 +1112,7 @@ export function ProcurementPage({
                 <div className="flex flex-col items-end gap-2">
                   {!canGlobalSendToIncome && (
                     <p className="text-xs text-muted-foreground flex items-center gap-1.5 bg-muted px-3 py-1.5 rounded-lg">
-                      <AlertCircle size={13} className="text-amber-500" />
+                      <AlertCircle size={13} className="text-amber-500 dark:text-amber-400" />
                       Счета отправлены на проверку. Кнопка «Отправить на приход» станет активной после того, как Бухгалтер и Директор подтвердят всё.
                     </p>
                   )}
@@ -1142,10 +1142,10 @@ export function ProcurementPage({
           <div className="w-full max-w-md bg-card rounded-xl shadow-xl p-6 border border-border">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2 text-foreground font-bold">
-                <Building2 className="text-blue-600" size={20} />
+                <Building2 className="text-blue-600 dark:text-blue-400" size={20} />
                 <h3>Выбор склада для поступления</h3>
               </div>
-              <button onClick={() => setIsIncomeModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <button onClick={() => setIsIncomeModalOpen(false)} className="text-muted-foreground hover:text-muted-foreground">
                 <X size={18} />
               </button>
             </div>
@@ -1160,8 +1160,8 @@ export function ProcurementPage({
                   key={wh.id}
                   className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all ${
                     selectedWarehouseId === wh.id
-                      ? "border-blue-600 bg-blue-50/50 text-blue-900 font-medium"
-                      : "border-border hover:bg-background text-slate-700"
+                      ? "border-blue-600 bg-blue-50/50 dark:bg-blue-400/25 text-blue-900 dark:text-blue-200 font-medium"
+                      : "border-border hover:bg-background text-foreground"
                   }`}
                 >
                   <div className="flex items-center gap-2">
@@ -1170,11 +1170,11 @@ export function ProcurementPage({
                       name="warehouse_select"
                       checked={selectedWarehouseId === wh.id}
                       onChange={() => setSelectedWarehouseId(wh.id)}
-                      className="text-blue-600 focus:ring-blue-500"
+                      className="text-blue-600 dark:text-blue-400 focus:ring-primary"
                     />
                     <span className="text-sm">{wh.name}</span>
                   </div>
-                  {wh.code && <span className="text-xs text-slate-400 font-mono">[{wh.code}]</span>}
+                  {wh.code && <span className="text-xs text-muted-foreground font-mono">[{wh.code}]</span>}
                 </label>
               ))}
             </div>
@@ -1182,7 +1182,7 @@ export function ProcurementPage({
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setIsIncomeModalOpen(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-muted rounded-lg"
+                className="px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted rounded-lg"
               >
                 Отмена
               </button>

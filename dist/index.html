@@ -6,8 +6,17 @@
     <title>Kerneu Group</title>
     <meta name="robots" content="noindex, nofollow" />
     <style>html, body { height: 100%; margin: 0; } #root { height: 100%; }</style>
-    <script type="module" crossorigin src="/assets/index-BeWahRTR.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BgDhbvnC.css">
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("kerneu:theme");
+          var theme = stored === "light" || stored === "dark" ? stored : "dark";
+          if (theme === "dark") document.documentElement.classList.add("dark");
+        } catch (e) {}
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-IiXdpe-J.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Ceoi_cpD.css">
   </head>
   <body>
     <div id="root"></div>
