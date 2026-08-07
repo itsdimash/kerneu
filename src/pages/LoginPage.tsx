@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { KerneuLogo } from "../app/components/common/KerneuLogo";
-import { AlertCircle, AlertTriangle, ArrowRight, Eye, EyeOff, Loader2 } from "lucide-react";
-import designImg from "../assets/design-illustration.jpg";
+import { KerneuLogo, KerneuFullLogo } from "../app/components/common/KerneuLogo";
+import { AlertCircle, AlertTriangle, ArrowRight, Eye, EyeOff, Loader2, Cpu } from "lucide-react";
+import designImg from "../assets/robot-cutout.png";
 import { ROLES, ROLE_EMAILS } from "../data/roles";
 import type { Role } from "../types";
 import { useCallback, useEffect } from "react";
@@ -66,26 +66,63 @@ const handleSignIn = async (e?: React.FormEvent) => {
 
   return (
     <div className="min-h-screen bg-background flex">
-      <div className="hidden lg:flex flex-col w-[460px] bg-[#265B92] flex-shrink-0 relative overflow-hidden">
-        <img src={designImg} alt="Kerneu Group — Unitree humanoid robot" className="absolute inset-0 h-full w-full object-contain [object-position:center_10%]" />
-        <div className="relative z-10 mt-auto p-12">
-          <p className="text-blue-200/80 text-xs">© 2026 Kerneu Group</p>
-          <p className="text-blue-200/60 text-xs">Internal ERP System</p>
+      <div className="hidden lg:flex flex-col w-[560px] flex-shrink-0 relative overflow-hidden bg-[#F8FAFC] dark:bg-[#080A10] transition-colors duration-300">
+        {/* Ambient brand glow — soft ice-blue in light mode, vibrant electric
+            blue in dark mode — plus a technical grid texture. Pure CSS, no
+            new assets. */}
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_18%,rgba(147,197,253,0.45),transparent_55%),radial-gradient(circle_at_80%_85%,rgba(191,219,254,0.3),transparent_50%)] dark:bg-[radial-gradient(circle_at_28%_18%,rgba(37,99,235,0.4),transparent_55%),radial-gradient(circle_at_80%_85%,rgba(59,130,246,0.18),transparent_50%)]" />
+        <div className="absolute inset-0 opacity-[0.05] dark:opacity-[0.07] bg-[linear-gradient(rgba(15,23,42,0.5)_1px,transparent_1px),linear-gradient(90deg,rgba(15,23,42,0.5)_1px,transparent_1px)] dark:bg-[linear-gradient(rgba(255,255,255,0.6)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.6)_1px,transparent_1px)] bg-[size:36px_36px]" />
+
+        <div className="relative z-10 px-10 pt-10 animate-in fade-in slide-in-from-top-2 duration-700">
+          <KerneuFullLogo markSize={40} />
+        </div>
+
+        <div className="relative z-10 flex-1 min-h-0 flex items-center justify-center px-8 animate-in fade-in zoom-in-95 duration-1000">
+          {/* True alpha-transparent cutout — no card, no crop, no mask
+              trickery needed. object-contain shows the robot in full
+              (never cropped), and drop-shadow traces its real silhouette
+              for the glow, since filters respect the PNG's alpha channel. */}
+          <div className="relative w-full max-w-[300px] aspect-[409/1008] flex items-center justify-center">
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(147,197,253,0.45),transparent_60%)] dark:bg-[radial-gradient(ellipse_at_center,rgba(37,99,235,0.5),transparent_60%)] blur-3xl" />
+            <img
+              src={designImg}
+              alt="Kerneu Group — Unitree humanoid robot"
+              className="relative max-h-full max-w-full w-auto h-auto object-contain drop-shadow-[0_0_45px_rgba(147,197,253,0.55)] dark:drop-shadow-[0_0_65px_rgba(37,99,235,0.6)]"
+            />
+          </div>
+        </div>
+
+        <div className="relative z-10 px-10 pb-10 flex items-center justify-between">
+          <div>
+            <p className="text-foreground/70 text-xs font-medium">© 2026 Kerneu Group</p>
+            <p className="text-foreground/40 text-xs">Internal ERP System</p>
+          </div>
+          <div className="flex items-center gap-1.5 text-foreground/50 text-[11px] font-mono uppercase tracking-wider">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
+            </span>
+            Systems online
+          </div>
         </div>
       </div>
 
       <div className="flex-1 flex items-center justify-center p-8">
-        <div className="w-full max-w-[400px]">
+        <div className="w-full max-w-[400px] animate-in fade-in slide-in-from-bottom-2 duration-700">
           <div className="lg:hidden flex items-center gap-2.5 mb-8">
             <KerneuLogo size={32} />
             <div><p className="font-semibold text-foreground text-sm">Kerneu Group</p><p className="text-muted-foreground text-xs">ERP Platform</p></div>
           </div>
-          <h1 className="text-[22px] font-semibold text-foreground mb-1">Sign In</h1>
+          <div className="hidden lg:flex items-center gap-1.5 text-xs font-medium text-primary mb-4">
+            <Cpu size={13} />
+            <span className="uppercase tracking-wider">Robotics &amp; Automation Platform</span>
+          </div>
+          <h1 className="text-2xl font-semibold text-foreground mb-1 tracking-tight">Sign In</h1>
           <p className="text-sm text-muted-foreground mb-7">Access your Kerneu Group workspace</p>
 
 
           {authError && (
-            <div className="flex items-start gap-2.5 px-3.5 py-3 mb-5 bg-destructive-muted border border-destructive/20 rounded-lg" role="alert">
+            <div className="flex items-start gap-2.5 px-3.5 py-3 mb-5 bg-destructive-muted border border-destructive/20 rounded-lg animate-in fade-in slide-in-from-top-1 duration-300" role="alert">
               <AlertCircle size={15} className="text-destructive mt-0.5 flex-shrink-0" />
               <p className="text-sm text-destructive font-medium">Incorrect email or password.</p>
             </div>
@@ -115,7 +152,7 @@ const handleSignIn = async (e?: React.FormEvent) => {
                   </button>
                 </div>
                 {capsLock && (
-                  <p className="flex items-center gap-1.5 mt-1.5 text-xs text-amber-600" role="status">
+                  <p className="flex items-center gap-1.5 mt-1.5 text-xs text-amber-600 dark:text-amber-400" role="status">
                     <AlertTriangle size={11} /> Caps Lock is ON
                   </p>
                 )}
@@ -123,9 +160,9 @@ const handleSignIn = async (e?: React.FormEvent) => {
             </div>
 
             <button type="submit" disabled={loading}
-              className="w-full py-2.5 bg-[#265B92] hover:bg-[#1f4c7a] disabled:bg-[#265B92]/70 text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-[#265B92]/40 focus:ring-offset-2"
+              className="w-full py-2.5 bg-primary hover:bg-primary/90 disabled:opacity-70 text-primary-foreground text-sm font-semibold rounded-lg transition-all hover:shadow-[0_8px_24px_rgba(91,95,239,0.35)] flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-2 focus:ring-offset-background"
               aria-busy={loading}>
-              {loading ? (<><Loader2 size={15} className="animate-spin" />Signing in...</>) : (<>Sign In<ArrowRight size={15} /></>)}
+              {loading ? (<><Loader2 size={15} className="animate-spin" />Signing in...</>) : (<>Sign In<ArrowRight size={15} className="transition-transform group-hover:translate-x-0.5" /></>)}
             </button>
           </form>
 

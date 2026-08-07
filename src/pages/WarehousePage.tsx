@@ -259,16 +259,16 @@ function AddStockModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
       <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-base font-semibold text-slate-800">Добавить товар на склад</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+          <h3 className="text-base font-semibold text-foreground">Добавить товар на склад</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-muted-foreground">
             <X size={18} />
           </button>
         </div>
 
         {error && (
-          <div className="flex items-start gap-2 p-3 mb-3 bg-red-50 border border-red-200 rounded-lg">
-            <AlertTriangle size={14} className="text-red-500 mt-0.5 shrink-0" />
-            <p className="text-xs text-red-700">{error}</p>
+          <div className="flex items-start gap-2 p-3 mb-3 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg">
+            <AlertTriangle size={14} className="text-destructive mt-0.5 shrink-0" />
+            <p className="text-xs text-red-700 dark:text-red-300">{error}</p>
           </div>
         )}
 
@@ -278,7 +278,7 @@ function AddStockModal({
             <select
               value={warehouseId}
               onChange={(e) => setWarehouseId(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:border-primary bg-card text-slate-700 font-medium"
+              className="w-full px-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:border-primary bg-card text-foreground font-medium"
             >
               {warehouses.map((wh) => (
                 <option key={wh.id} value={wh.id}>
@@ -323,7 +323,7 @@ function AddStockModal({
         </div>
 
         <div className="flex items-center justify-end gap-2 mt-5">
-          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-background rounded-lg">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-background rounded-lg">
             Отмена
           </button>
           <button
@@ -407,10 +407,10 @@ function ConfirmReceiptModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
       <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-base font-semibold text-slate-800">
+          <h3 className="text-base font-semibold text-foreground">
             Подтвердить приход {receipt.receiptNumber}
           </h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+          <button onClick={onClose} className="text-muted-foreground hover:text-muted-foreground">
             <X size={18} />
           </button>
         </div>
@@ -420,9 +420,9 @@ function ConfirmReceiptModal({
         </p>
 
         {error && (
-          <div className="flex items-start gap-2 p-3 mb-3 bg-red-50 border border-red-200 rounded-lg">
-            <AlertTriangle size={14} className="text-red-500 mt-0.5 shrink-0" />
-            <p className="text-xs text-red-700">{error}</p>
+          <div className="flex items-start gap-2 p-3 mb-3 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg">
+            <AlertTriangle size={14} className="text-destructive mt-0.5 shrink-0" />
+            <p className="text-xs text-red-700 dark:text-red-300">{error}</p>
           </div>
         )}
 
@@ -465,7 +465,7 @@ function ConfirmReceiptModal({
           </div>
 
           <div>
-            <label className="flex items-center gap-2 px-3 py-2 text-sm border border-dashed border-border rounded-lg cursor-pointer hover:bg-background text-slate-600">
+            <label className="flex items-center gap-2 px-3 py-2 text-sm border border-dashed border-border rounded-lg cursor-pointer hover:bg-background text-muted-foreground">
               <Camera size={15} className="text-primary" />
               {photo ? photo.name : "Прикрепить фото товара"}
               <input
@@ -479,7 +479,7 @@ function ConfirmReceiptModal({
         </div>
 
         <div className="flex items-center justify-end gap-2 mt-5">
-          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-background rounded-lg">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-background rounded-lg">
             Отмена
           </button>
           <button
@@ -542,28 +542,28 @@ function ReceiptDetailsModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
       <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-base font-semibold text-slate-800">
+          <h3 className="text-base font-semibold text-foreground">
             Приход {receipt.receiptNumber}
           </h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+          <button onClick={onClose} className="text-muted-foreground hover:text-muted-foreground">
             <X size={18} />
           </button>
         </div>
 
         {error && (
-          <div className="flex items-start gap-2 p-3 mb-3 bg-red-50 border border-red-200 rounded-lg">
-            <AlertTriangle size={14} className="text-red-500 mt-0.5 shrink-0" />
-            <p className="text-xs text-red-700">{error}</p>
+          <div className="flex items-start gap-2 p-3 mb-3 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg">
+            <AlertTriangle size={14} className="text-destructive mt-0.5 shrink-0" />
+            <p className="text-xs text-red-700 dark:text-red-300">{error}</p>
           </div>
         )}
 
         <div className="space-y-2 text-sm mb-4">
-          <div className="flex justify-between"><span className="text-muted-foreground">Товар</span><span className="font-medium text-slate-800 text-right">{receipt.item}</span></div>
-          <div className="flex justify-between"><span className="text-muted-foreground">Поставщик</span><span className="font-medium text-slate-800">{receipt.supplier}</span></div>
-          <div className="flex justify-between"><span className="text-muted-foreground">Склад</span><span className="font-medium text-slate-800">{receipt.warehouseName}</span></div>
-          <div className="flex justify-between"><span className="text-muted-foreground">План / Факт</span><span className="font-mono font-medium text-slate-800">{receipt.qty} / {receipt.actualQuantity ?? "—"} {receipt.unit}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Товар</span><span className="font-medium text-foreground text-right">{receipt.item}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Поставщик</span><span className="font-medium text-foreground">{receipt.supplier}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Склад</span><span className="font-medium text-foreground">{receipt.warehouseName}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">План / Факт</span><span className="font-mono font-medium text-foreground">{receipt.qty} / {receipt.actualQuantity ?? "—"} {receipt.unit}</span></div>
           {receipt.confirmedAt && (
-            <div className="flex justify-between"><span className="text-muted-foreground">Подтверждено</span><span className="font-medium text-slate-800">{new Date(receipt.confirmedAt).toLocaleString("ru-RU")}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Подтверждено</span><span className="font-medium text-foreground">{new Date(receipt.confirmedAt).toLocaleString("ru-RU")}</span></div>
           )}
         </div>
 
@@ -575,7 +575,7 @@ function ReceiptDetailsModal({
           <>
             <div className="mb-4">
               <p className="text-xs font-medium text-muted-foreground mb-1">Комментарий кладовщика</p>
-              <p className="text-sm text-slate-700 italic">
+              <p className="text-sm text-foreground italic">
                 {receipt.warehouseComment ? `"${receipt.warehouseComment}"` : "Без комментария"}
               </p>
             </div>
@@ -583,7 +583,7 @@ function ReceiptDetailsModal({
             {canEdit && (
               <button
                 onClick={() => setEditing(true)}
-                className="w-full flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg border border-border text-slate-700 hover:bg-background"
+                className="w-full flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg border border-border text-foreground hover:bg-background"
               >
                 <Camera size={14} /> Изменить фото / комментарий
               </button>
@@ -602,7 +602,7 @@ function ReceiptDetailsModal({
             </div>
 
             <div>
-              <label className="flex items-center gap-2 px-3 py-2 text-sm border border-dashed border-border rounded-lg cursor-pointer hover:bg-background text-slate-600">
+              <label className="flex items-center gap-2 px-3 py-2 text-sm border border-dashed border-border rounded-lg cursor-pointer hover:bg-background text-muted-foreground">
                 <Camera size={15} className="text-primary" />
                 {photo ? photo.name : "Заменить фото товара"}
                 <input
@@ -621,7 +621,7 @@ function ReceiptDetailsModal({
                   setComment(receipt.warehouseComment || "");
                   setPhoto(null);
                 }}
-                className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-background rounded-lg"
+                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-background rounded-lg"
               >
                 Отмена
               </button>
@@ -942,7 +942,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${tab === t.key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-slate-700"}`}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${tab === t.key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           >
             {t.label}
           </button>
@@ -953,7 +953,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
         <>
           <div className="flex flex-wrap items-center gap-3 mb-4">
             <div className="relative flex-1 min-w-[200px] max-w-xs">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <input
                 value={stockSearch}
                 onChange={(e) => setStockSearch(e.target.value)}
@@ -965,7 +965,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
             <div className="flex items-center gap-1 border border-border rounded-lg overflow-hidden bg-card p-0.5">
               <button
                 onClick={() => setSelectedWarehouseId("all")}
-                className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${selectedWarehouseId === "all" ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-muted"}`}
+                className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${selectedWarehouseId === "all" ? "bg-slate-800 text-white" : "text-muted-foreground hover:bg-muted"}`}
               >
                 <Building2 size={12} /> Все склады
               </button>
@@ -973,7 +973,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                 <button
                   key={wh.id}
                   onClick={() => setSelectedWarehouseId(wh.id)}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${selectedWarehouseId === wh.id ? "bg-primary text-white" : "text-slate-600 hover:bg-muted"}`}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${selectedWarehouseId === wh.id ? "bg-primary text-white" : "text-muted-foreground hover:bg-muted"}`}
                 >
                   {wh.code || wh.name}
                 </button>
@@ -1000,7 +1000,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                       {warehouses.map((wh) => (
                         <th key={wh.id} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right whitespace-nowrap">{wh.code || wh.name}</th>
                       ))}
-                      <th className="px-4 py-2.5 text-xs font-semibold text-slate-800 uppercase tracking-wide text-right bg-muted/70 whitespace-nowrap">Всего</th>
+                      <th className="px-4 py-2.5 text-xs font-semibold text-foreground uppercase tracking-wide text-right bg-muted/70 whitespace-nowrap">Всего</th>
                       <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right whitespace-nowrap">В резерве</th>
                       <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right whitespace-nowrap">Брак</th>
                       <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right whitespace-nowrap">Доступно</th>
@@ -1010,27 +1010,27 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                     {filteredStock.map((item) => (
                       <tr key={item.id} className="hover:bg-background/50 transition-colors">
                         <td className="px-4 py-3 text-xs font-mono text-muted-foreground whitespace-nowrap">{item.sku}</td>
-                        <td className="px-4 py-3 text-sm font-medium text-slate-800">{item.name}</td>
+                        <td className="px-4 py-3 text-sm font-medium text-foreground">{item.name}</td>
                         <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{item.unit}</td>
                         {warehouses.map((wh) => (
-                          <td key={wh.id} className="px-4 py-3 text-sm font-mono text-slate-700 text-right whitespace-nowrap">
+                          <td key={wh.id} className="px-4 py-3 text-sm font-mono text-foreground text-right whitespace-nowrap">
                             {(item.perWarehouse[wh.id] || 0).toLocaleString("ru-RU")}
                           </td>
                         ))}
                         <td className="px-4 py-3 text-sm font-mono text-foreground text-right font-bold bg-background whitespace-nowrap">
                           {item.total.toLocaleString("ru-RU")}
                         </td>
-                        <td className="px-4 py-3 text-sm font-mono text-violet-600 text-right whitespace-nowrap">
+                        <td className="px-4 py-3 text-sm font-mono text-violet-600 dark:text-violet-400 text-right whitespace-nowrap">
                           {item.reserved.toLocaleString("ru-RU")}
                         </td>
                         <td className="px-4 py-3 text-sm font-mono text-right whitespace-nowrap">
                           {item.defective > 0 ? (
-                            <span className="text-red-600 font-semibold">{item.defective.toLocaleString("ru-RU")}</span>
+                            <span className="text-destructive font-semibold">{item.defective.toLocaleString("ru-RU")}</span>
                           ) : (
                             <span className="text-slate-300">0</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-right font-mono text-sm text-green-600 font-semibold whitespace-nowrap">
+                        <td className="px-4 py-3 text-right font-mono text-sm text-green-600 dark:text-green-400 font-semibold whitespace-nowrap">
                           {item.available.toLocaleString("ru-RU")}
                         </td>
                       </tr>
@@ -1046,9 +1046,9 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
       {tab === "arrivals" && (
         <div className="bg-card rounded-lg border border-border overflow-hidden">
           {arrivalsError && (
-            <div className="flex items-start gap-3 p-4 bg-red-50 border-b border-red-200">
-              <AlertTriangle size={15} className="text-red-500 mt-0.5 shrink-0" />
-              <p className="text-sm text-red-700">{arrivalsError}</p>
+            <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-400/15 border-b border-red-200 dark:border-red-400/25">
+              <AlertTriangle size={15} className="text-destructive mt-0.5 shrink-0" />
+              <p className="text-sm text-red-700 dark:text-red-300">{arrivalsError}</p>
             </div>
           )}
 
@@ -1084,35 +1084,35 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                     return (
                       <tr key={a.id} className={`hover:bg-background/50 transition-colors ${isCancelled ? "opacity-50 bg-background" : ""}`}>
                         {/* 1. Название проекта */}
-                        <td className="px-4 py-3.5 text-sm font-bold text-blue-700 bg-blue-50/30">
+                        <td className="px-4 py-3.5 text-sm font-bold text-blue-700 dark:text-blue-300 bg-blue-50/30 dark:bg-blue-400/15">
                           {a.project}
                         </td>
 
                         {/* 2. Номер прихода */}
-                        <td className="px-4 py-3.5 text-xs font-mono font-medium text-slate-700">
+                        <td className="px-4 py-3.5 text-xs font-mono font-medium text-foreground">
                           {a.receiptNumber}
                         </td>
 
                         {/* 3. Когда придет товар */}
-                        <td className="px-4 py-3.5 text-sm text-slate-600">
+                        <td className="px-4 py-3.5 text-sm text-muted-foreground">
                           {a.date}
                         </td>
 
                         {/* 4. На какой склад (1-ый или 2-ой) */}
-                        <td className="px-4 py-3.5 text-sm font-medium text-slate-800">
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted text-slate-700 text-xs font-semibold">
-                            <Building2 size={12} className="text-blue-600" />
+                        <td className="px-4 py-3.5 text-sm font-medium text-foreground">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted text-foreground text-xs font-semibold">
+                            <Building2 size={12} className="text-blue-600 dark:text-blue-400" />
                             {a.warehouseName}
                           </span>
                         </td>
 
                         {/* 5. Название поставщика */}
-                        <td className="px-4 py-3.5 text-sm font-medium text-slate-800">
+                        <td className="px-4 py-3.5 text-sm font-medium text-foreground">
                           {a.supplier}
                         </td>
 
                         {/* 6. Название товара */}
-                        <td className="px-4 py-3.5 text-sm text-slate-800 font-medium">
+                        <td className="px-4 py-3.5 text-sm text-foreground font-medium">
                           {a.item}
                         </td>
 
@@ -1120,7 +1120,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                         <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">
                           {a.qty.toLocaleString("ru-RU")}
                           {a.actualQuantity !== null && a.actualQuantity !== a.qty && (
-                            <span className="block text-xs font-normal text-amber-600">факт: {a.actualQuantity}</span>
+                            <span className="block text-xs font-normal text-amber-600 dark:text-amber-400">факт: {a.actualQuantity}</span>
                           )}
                         </td>
 
@@ -1132,15 +1132,15 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                         {/* 9. Икс или галочка в зависимости от того, принял ли склад */}
                         <td className="px-4 py-3.5 text-center">
                           {isCancelled ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700 whitespace-nowrap" title="Отменено">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 whitespace-nowrap" title="Отменено">
                               <XCircle size={14} /> Отклонено
                             </span>
                           ) : isArrived ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700 whitespace-nowrap" title="Принято кладовщиком">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 whitespace-nowrap" title="Принято кладовщиком">
                               <CheckCircle2 size={14} /> Принято
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 whitespace-nowrap" title="Ожидается доставка">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-400/20 text-amber-800 dark:text-amber-200 whitespace-nowrap" title="Ожидается доставка">
                               <Clock size={14} /> В пути
                             </span>
                           )}
@@ -1150,13 +1150,13 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                         <td className="px-4 py-3.5 text-center">
                           {isCancelled ? (
                             <div className="flex flex-col items-center gap-1">
-                              <span className="text-xs text-slate-400 italic">Приход отменен</span>
+                              <span className="text-xs text-muted-foreground italic">Приход отменен</span>
                               {isWarehouseUser && (
                                 <button
                                   onClick={() => handleToggleCancel(a)}
                                   disabled={cancellingReceiptId === a.id}
                                   title="Вернуть в работу"
-                                  className="text-xs font-medium text-blue-600 hover:underline disabled:opacity-50"
+                                  className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
                                 >
                                   {cancellingReceiptId === a.id ? "…" : "Вернуть"}
                                 </button>
@@ -1168,7 +1168,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                               className="flex flex-col items-center group cursor-pointer"
                               title="Посмотреть детали приёма"
                             >
-                              <span className="text-xs font-semibold text-green-700 flex items-center gap-1 group-hover:underline">
+                              <span className="text-xs font-semibold text-green-700 dark:text-green-300 flex items-center gap-1 group-hover:underline">
                                 <PackageCheck size={14} /> Зачислено
                               </span>
                               {a.warehouseComment && (
@@ -1182,7 +1182,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                               <button
                                 onClick={() => setConfirmTarget(a)}
                                 title="Принять приход"
-                                className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition-colors"
+                                className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 hover:bg-green-200 transition-colors"
                               >
                                 <CheckCircle2 size={16} />
                               </button>
@@ -1190,7 +1190,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                                 onClick={() => handleToggleCancel(a)}
                                 disabled={cancellingReceiptId === a.id}
                                 title="Отклонить приход"
-                                className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 transition-colors disabled:opacity-50"
+                                className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 hover:bg-red-200 transition-colors disabled:opacity-50"
                               >
                                 {cancellingReceiptId === a.id ? (
                                   <Loader2 size={16} className="animate-spin" />
@@ -1200,7 +1200,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                               </button>
                             </div>
                           ) : (
-                            <span className="text-xs text-slate-400 italic">Ожидает кладовщика</span>
+                            <span className="text-xs text-muted-foreground italic">Ожидает кладовщика</span>
                           )}
                         </td>
                       </tr>
@@ -1216,9 +1216,9 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
         <>
           {/* --- Проекты, готовые к отгрузке: чекбоксы по позициям + выбор склада --- */}
           {pendingError && (
-            <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-lg mb-4">
-              <AlertTriangle size={15} className="text-red-500 mt-0.5 shrink-0" />
-              <p className="text-sm text-red-700">{pendingError}</p>
+            <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg mb-4">
+              <AlertTriangle size={15} className="text-destructive mt-0.5 shrink-0" />
+              <p className="text-sm text-red-700 dark:text-red-300">{pendingError}</p>
             </div>
           )}
 
@@ -1228,7 +1228,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
               <p className="text-sm text-muted-foreground">Загрузка проектов на отгрузку…</p>
             </div>
           ) : pendingShipments.length === 0 ? (
-            <div className="py-8 text-center text-sm text-slate-400 bg-card rounded-lg border border-dashed border-border mb-6">
+            <div className="py-8 text-center text-sm text-muted-foreground bg-card rounded-lg border border-dashed border-border mb-6">
               Нет проектов, готовых к отгрузке
             </div>
           ) : (
@@ -1244,13 +1244,13 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                         <h3 className="text-sm font-bold text-foreground">{proj.projectName}</h3>
                         <p className="text-xs text-muted-foreground">{proj.items.length} позиций к сборке</p>
                       </div>
-                      <span className="px-2.5 py-1 text-xs font-semibold bg-amber-50 text-amber-700 rounded-full flex items-center gap-1">
+                      <span className="px-2.5 py-1 text-xs font-semibold bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 rounded-full flex items-center gap-1">
                         <PackageCheck size={12} /> Зарезервировано
                       </span>
                     </div>
 
                     {proj.error && (
-                      <div className="mx-5 mt-3 flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg text-xs">
+                      <div className="mx-5 mt-3 flex items-start gap-2 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 text-red-700 dark:text-red-300 px-3 py-2 rounded-lg text-xs">
                         <AlertTriangle size={13} className="mt-0.5 shrink-0" />
                         {proj.error}
                       </div>
@@ -1281,15 +1281,15 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                               />
                               )}
                               </td>
-                              <td className="px-5 py-3 text-sm font-medium text-slate-800">{it.productName}</td>
-                              <td className="px-5 py-3 text-sm font-mono text-slate-700 text-center">{it.quantity}</td>
+                              <td className="px-5 py-3 text-sm font-medium text-foreground">{it.productName}</td>
+                              <td className="px-5 py-3 text-sm font-mono text-foreground text-center">{it.quantity}</td>
                               <td className="px-5 py-3 text-xs text-muted-foreground">{it.unit}</td>
                               <td className="px-5 py-3">
                                 {it.availableWarehouses.length === 0 ? (
-                                  <span className="text-xs text-red-500 italic">Нет резерва ни на одном складе</span>
+                                  <span className="text-xs text-destructive italic">Нет резерва ни на одном складе</span>
                                 ) : (
                                   <div className="flex items-center gap-1.5">
-                                    <Building2 size={13} className="text-slate-400" />
+                                    <Building2 size={13} className="text-muted-foreground" />
                                     <select
                                       value={it.warehouseId ?? ""}
                                       onChange={(e) => setShipmentItemWarehouse(proj.projectId, it.id, Number(e.target.value))}
@@ -1319,7 +1319,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                           className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg shadow-sm transition-colors ${
                             canSubmit
                               ? "bg-green-600 hover:bg-success/90 text-white cursor-pointer"
-                              : "bg-slate-200 text-slate-400 cursor-not-allowed"
+                              : "bg-slate-200 text-muted-foreground cursor-not-allowed"
                           }`}
                         >
                           {proj.submitting ? <Loader2 size={15} className="animate-spin" /> : <PackageCheck size={15} />}
@@ -1336,9 +1336,9 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
           {/* --- История уже отгруженного --- */}
           <div className="bg-card rounded-lg border border-border overflow-hidden">
           {shipmentsError && (
-            <div className="flex items-start gap-3 p-4 bg-red-50 border-b border-red-200">
-              <AlertTriangle size={15} className="text-red-500 mt-0.5 shrink-0" />
-              <p className="text-sm text-red-700">{shipmentsError}</p>
+            <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-400/15 border-b border-red-200 dark:border-red-400/25">
+              <AlertTriangle size={15} className="text-destructive mt-0.5 shrink-0" />
+              <p className="text-sm text-red-700 dark:text-red-300">{shipmentsError}</p>
             </div>
           )}
 
@@ -1364,12 +1364,12 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                 <tbody className="divide-y divide-border">
                   {shipments.map((s) => (
                     <tr key={s.id} className="hover:bg-background/50 transition-colors">
-                      <td className="px-4 py-3.5 text-xs font-mono font-medium text-slate-700">№{s.id}</td>
-                      <td className="px-4 py-3.5 text-sm font-bold text-slate-800">{s.project}</td>
-                      <td className="px-4 py-3.5 text-sm text-slate-600">{s.date}</td>
+                      <td className="px-4 py-3.5 text-xs font-mono font-medium text-foreground">№{s.id}</td>
+                      <td className="px-4 py-3.5 text-sm font-bold text-foreground">{s.project}</td>
+                      <td className="px-4 py-3.5 text-sm text-muted-foreground">{s.date}</td>
                       <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">{s.items}</td>
                       <td className="px-4 py-3.5 text-center">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300">
                           <CheckCircle2 size={14} /> {s.status || "Отгружено"}
                         </span>
                       </td>

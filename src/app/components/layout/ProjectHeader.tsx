@@ -12,7 +12,7 @@ export function ProjectHeader() {
           {i > 0 && <div className="w-px h-7 bg-border mx-6" />}
           <div>
             <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide leading-none mb-0.5">{item.label}</p>
-            <p className={`text-sm ${item.bold ? "font-semibold text-foreground" : "text-slate-700"} leading-tight`}>{item.value}</p>
+            <p className={`text-sm ${item.bold ? "font-semibold text-foreground" : "text-foreground"} leading-tight`}>{item.value}</p>
           </div>
         </div>
       ))}

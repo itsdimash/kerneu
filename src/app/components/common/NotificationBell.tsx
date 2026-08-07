@@ -42,7 +42,7 @@ const DESTRUCTIVE = { fg: "var(--destructive)", bg: "var(--destructive-muted)" }
 const SUCCESS = { fg: "var(--success)", bg: "var(--success-muted)" };
 const WARNING = { fg: "var(--warning)", bg: "var(--warning-muted)" };
 const INFO = { fg: "var(--info)", bg: "var(--info-muted)" };
-const VIOLET = { fg: "var(--chart-5)", bg: "#F5F3FF" };
+const VIOLET = { fg: "var(--chart-5)", bg: "color-mix(in srgb, var(--chart-5) 12%, transparent)" };
 
 const CATEGORY_META: Record<
   NotificationCategory,
@@ -194,7 +194,7 @@ export function NotificationBell({ role, onNavigate, onSelectProject }: Props) {
         side="bottom"
         align="end"
         sideOffset={8}
-        className="w-[400px] p-0 overflow-hidden"
+        className="w-[calc(100vw-2rem)] sm:w-[400px] p-0 overflow-hidden"
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-4 py-3">

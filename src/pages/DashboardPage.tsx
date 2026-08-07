@@ -11,6 +11,8 @@ import { getStageMeta } from "../lib/projectStage";
 import { PROJECTS } from "../data/projects";
 import { STOCK_INIT } from "../data/stock";
 import { INVOICES_INIT } from "../data/invoices";
+import { RobotFleetWidget } from "../app/components/common/RobotFleetWidget";
+import { RevenueTrendWidget } from "../app/components/common/RevenueTrendWidget";
 import {
   Plus, FolderOpen, Send, TrendingUp, AlertTriangle, Inbox, BarChart2, 
   Clock, Check, X, CheckCircle2, XCircle, ChevronRight, MoreHorizontal,
@@ -600,17 +602,17 @@ const handleSave = async () => {
             {isSaving && (
               <div className="absolute inset-0 z-10 bg-card/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3 rounded-xl px-6 text-center">
                 <Loader2 size={28} className="text-primary animate-spin" />
-                <p className="text-sm font-medium text-slate-800">Обработка файла...</p>
+                <p className="text-sm font-medium text-foreground">Обработка файла...</p>
                 <p className="text-xs text-muted-foreground">Парсим документ и сопоставляем товары. Это может занять до пары минут — не закрывайте окно.</p>
               </div>
             )}
 
             <div className="flex items-center justify-between px-5 py-4 border-b border-border bg-background flex-shrink-0">
-              <h3 className="font-semibold text-slate-800">Создание нового КП</h3>
+              <h3 className="font-semibold text-foreground">Создание нового КП</h3>
               <button
                 onClick={resetModal}
                 disabled={isSaving}
-                className="text-slate-400 hover:text-slate-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="text-muted-foreground hover:text-muted-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <X size={18} />
               </button>
@@ -622,9 +624,9 @@ const handleSave = async () => {
                   type="checkbox"
                   checked={isNewClient}
                   onChange={(e) => setIsNewClient(e.target.checked)}
-                  className="w-4 h-4 text-primary rounded border-slate-300 focus:ring-primary"
+                  className="w-4 h-4 text-primary rounded border-input focus:ring-primary"
                 />
-                <span className="text-sm font-medium text-slate-700">Новый клиент</span>
+                <span className="text-sm font-medium text-foreground">Новый клиент</span>
               </label>
 
               <div className="h-px w-full bg-muted" />
@@ -638,7 +640,7 @@ const handleSave = async () => {
                       type="text"
                       value={newClientForm.name}
                       onChange={(e) => setNewClientForm({...newClientForm, name: e.target.value})}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                      className="w-full px-3 py-2 border border-input rounded-lg text-sm text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                       placeholder="Например, ООО «Инновации»"
                     />
                   </div>
@@ -648,7 +650,7 @@ const handleSave = async () => {
                       type="email"
                       value={newClientForm.email}
                       onChange={(e) => setNewClientForm({...newClientForm, email: e.target.value})}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                      className="w-full px-3 py-2 border border-input rounded-lg text-sm text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                       placeholder="client@example.com"
                     />
                   </div>
@@ -660,7 +662,7 @@ const handleSave = async () => {
                       onChange={handlePhoneChange}
                       inputMode="tel"
                       maxLength={20}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                      className="w-full px-3 py-2 border border-input rounded-lg text-sm text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                       placeholder="+7 (707) 123-45-67"
                     />
                   </div>
@@ -673,7 +675,7 @@ const handleSave = async () => {
                       value={selectedClientId}
                       onChange={(e) => setSelectedClientId(e.target.value)}
                       disabled={clientsLoading || !!clientsError}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary bg-card disabled:bg-background disabled:text-slate-400"
+                      className="w-full px-3 py-2 border border-input rounded-lg text-sm text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary bg-card disabled:bg-background disabled:text-muted-foreground"
                     >
                       <option value="" disabled>
                         {clientsLoading ? "Загрузка клиентов..." : "-- Выберите из списка --"}
@@ -684,7 +686,7 @@ const handleSave = async () => {
                       ))}
                     </select>
                     {clientsError && (
-                      <p className="text-xs text-red-600 mt-1.5">{clientsError}</p>
+                      <p className="text-xs text-destructive mt-1.5">{clientsError}</p>
                     )}
                   </div>
 
@@ -718,9 +720,9 @@ const handleSave = async () => {
                           })}
                           placeholder="Например: ООО Бекнур"
                           className={`w-full px-3 py-2 border rounded-lg outline-none ${
-                              projectForm.name.trim() && !isProjectNameValid ? "border-red-400 focus:border-red-500" : "border-slate-300 focus:border-blue-500"}`}/>
+                              projectForm.name.trim() && !isProjectNameValid ? "border-red-400 focus:border-red-500" : "border-input focus:border-primary"}`}/>
                         {projectForm.name.trim() && !isProjectNameValid && (
-                            <p className="mt-1 text-xs text-red-500">
+                            <p className="mt-1 text-xs text-destructive">
                                 Название должно начинаться с русской или английской буквы</p>
                         )}
                     </div>
@@ -730,7 +732,7 @@ const handleSave = async () => {
                         type="date"
                         value={projectForm.deadline}
                         onChange={(e) => setProjectForm({ ...projectForm, deadline: e.target.value })}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                        className="w-full px-3 py-2 border border-input rounded-lg text-sm text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                       />
                     </div>
                   </div>
@@ -747,11 +749,11 @@ const handleSave = async () => {
                 {!kpFile ? (
                   <label
                     htmlFor="kp-file-upload"
-                    className="flex flex-col items-center justify-center gap-1.5 w-full py-6 border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-primary hover:bg-blue-50/30 transition-colors"
+                    className="flex flex-col items-center justify-center gap-1.5 w-full py-6 border-2 border-dashed border-input rounded-lg cursor-pointer hover:border-primary hover:bg-accent/50 transition-colors"
                   >
-                    <UploadCloud size={20} className="text-slate-400" />
-                    <span className="text-sm text-slate-600">Нажмите, чтобы выбрать файл</span>
-                    <span className="text-xs text-slate-400">PDF, DOCX, XLSX до 10 МБ</span>
+                    <UploadCloud size={20} className="text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">Нажмите, чтобы выбрать файл</span>
+                    <span className="text-xs text-muted-foreground">PDF, DOCX, XLSX до 10 МБ</span>
                     <input
                       id="kp-file-upload"
                       type="file"
@@ -765,13 +767,13 @@ const handleSave = async () => {
                     <div className="flex items-center gap-2 min-w-0">
                       <FileText size={16} className="text-primary flex-shrink-0" />
                       <div className="min-w-0">
-                        <p className="text-sm font-medium text-slate-800 truncate">{kpFile.name}</p>
-                        <p className="text-xs text-slate-400">{(kpFile.size / 1024).toFixed(0)} КБ</p>
+                        <p className="text-sm font-medium text-foreground truncate">{kpFile.name}</p>
+                        <p className="text-xs text-muted-foreground">{(kpFile.size / 1024).toFixed(0)} КБ</p>
                       </div>
                     </div>
                     <button
                       onClick={() => setKpFile(null)}
-                      className="text-slate-400 hover:text-red-500 transition-colors flex-shrink-0"
+                      className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
                       title="Удалить файл"
                     >
                       <Trash2 size={15} />
@@ -787,7 +789,7 @@ const handleSave = async () => {
               <button
                 onClick={resetModal}
                 disabled={isSaving}
-                className="px-4 py-2 text-sm font-medium text-slate-600 bg-card border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 text-sm font-medium text-muted-foreground bg-card border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Назад
               </button>
@@ -823,40 +825,45 @@ const handleSave = async () => {
           value={stats ? String(stats.pending_kp) : "—"}
           sub="Ожидают согласования"
           icon={Send}
-          iconColor="text-amber-500"
-          iconBg="bg-amber-50"
+          iconColor="text-amber-500 dark:text-amber-400"
+          iconBg="bg-amber-50 dark:bg-amber-400/15"
         />
         <StatCard
           label="Выручка (план)"
           value={stats ? fmt(stats.planned_revenue) : "—"}
           sub="Текущий месяц"
           icon={TrendingUp}
-          iconColor="text-green-500"
-          iconBg="bg-green-50"
+          iconColor="text-green-500 dark:text-green-400 dark:text-emerald-400"
+          iconBg="bg-green-50 dark:bg-green-400/15 dark:bg-emerald-400/15"
         />
         <StatCard
           label="Близко к дедлайну"
           value={stats ? String(stats.deadline_projects) : "—"}
           sub={stats ? `+${stats.new_projects_month} новых за месяц` : "Загрузка..."}
           icon={AlertTriangle}
-          iconColor="text-amber-500"
-          iconBg="bg-amber-50"
+          iconColor="text-amber-500 dark:text-amber-400"
+          iconBg="bg-amber-50 dark:bg-amber-400/15"
         />
       </div>
       {statsError && (
-        <p className="text-xs text-red-600 mb-4">{statsError}</p>
+        <p className="text-xs text-destructive mb-4">{statsError}</p>
       )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        <RevenueTrendWidget />
+        <RobotFleetWidget />
+      </div>
 
       <SectionHeader title="Проекты" action={
         <div className="flex items-center gap-3">
           <div className="relative">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
             <input
               type="text"
               value={projectSearch}
               onChange={(e) => setProjectSearch(e.target.value)}
               placeholder="Поиск по проекту или клиенту..."
-              className="pl-7 pr-3 py-1.5 text-xs border border-border rounded-lg text-slate-700 placeholder:text-slate-400 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary w-56"
+              className="pl-7 pr-3 py-1.5 text-xs border border-border rounded-lg text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary w-56"
             />
           </div>
           <button onClick={() => setShowAllProjects(!showAllProjects)} className="text-xs text-primary hover:underline flex items-center gap-1 whitespace-nowrap">
@@ -907,7 +914,7 @@ const handleSave = async () => {
                           </td>
 
                           {/* Клиент */}
-                          <td className="px-4 py-3 text-sm text-slate-600">
+                          <td className="px-4 py-3 text-sm text-muted-foreground">
                               {p.client?.client_name}
                           </td>
 
@@ -919,7 +926,7 @@ const handleSave = async () => {
                           {/* Бюджет: сумма (кол-во * себестоимость) по позициям проекта —
                               считается на бэкенде (project_service._get_budget_map),
                               а не invoice.amount (тот всегда 0, см. handleSave payload) */}
-                          <td className="px-4 py-3 text-sm text-slate-700 font-mono text-right">
+                          <td className="px-4 py-3 text-sm text-foreground font-mono text-right">
                               {fmt(Number(p.budget ?? 0))}
                           </td>
 
@@ -936,13 +943,13 @@ const handleSave = async () => {
 
                           {/* Ответственный */}
                           <td className="px-4 py-3">
-                            <span className="text-xs font-medium text-slate-700 bg-muted px-2 py-0.5 rounded">
+                            <span className="text-xs font-medium text-foreground bg-muted px-2 py-0.5 rounded">
                               {p.pm?.name}
                             </span>
                           </td>
 
                           {/* Менеджер */}
-                          <td className="px-4 py-3 text-sm text-slate-600">
+                          <td className="px-4 py-3 text-sm text-muted-foreground">
                               {p.pm?.name}
                           </td>
 
@@ -951,7 +958,7 @@ const handleSave = async () => {
                                   onClick={() =>
                                       setOpenMenu(openMenu === p.id ? null : p.id)
                                   }
-                                  className="w-7 h-7 flex items-center justify-center rounded hover:bg-muted text-slate-400"
+                                  className="w-7 h-7 flex items-center justify-center rounded hover:bg-muted text-muted-foreground"
                               >
                                   <MoreHorizontal size={14}/>
                               </button>
@@ -964,9 +971,9 @@ const handleSave = async () => {
                                               setOpenMenu(null);
                                               onOpenProject(p.id);
                                           }}
-                                          className="flex w-full items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-muted transition-colors"
+                                          className="flex w-full items-center gap-3 px-4 py-3 text-sm text-foreground hover:bg-muted transition-colors"
                                       >
-                                          <FolderOpen size={18} className="text-amber-500"/>
+                                          <FolderOpen size={18} className="text-amber-500 dark:text-amber-400"/>
                                           Открыть проект
                                       </button>
 
@@ -976,7 +983,7 @@ const handleSave = async () => {
                                                   <div className="h-px bg-muted"/>
                                                   <button
                                                       onClick={() => handleArchive(p.id, p.name ?? `Проект №${p.id}`)}
-                                                      className="flex w-full items-center gap-3 px-4 py-3 text-sm text-amber-700 hover:bg-amber-50 transition-colors"
+                                                      className="flex w-full items-center gap-3 px-4 py-3 text-sm text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:bg-amber-400/15 transition-colors"
                                                   >
                                                       <Archive size={18}/>
                                                       Отправить в архив
@@ -988,7 +995,7 @@ const handleSave = async () => {
                                               <div className="h-px bg-muted"/>
                                               <button
                                                   onClick={() => handleDelete(p.id, p.name ?? `Проект №${p.id}`)}
-                                                  className="flex w-full items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                                                  className="flex w-full items-center gap-3 px-4 py-3 text-sm text-destructive hover:bg-red-50 dark:bg-red-400/15 transition-colors"
                                               >
                                                   <Trash2 size={19}/>
                                                   Удалить
@@ -1012,14 +1019,14 @@ const handleSave = async () => {
             {deadlines.length > 0 ? (
               deadlines.map(item => {
                 const d = item.days_left;
-                const color = d <= 7 ? "text-red-600 font-bold" : d <= 14 ? "text-orange-600 font-semibold" : "text-green-600 font-medium";
+                const color = d <= 7 ? "text-destructive font-bold" : d <= 14 ? "text-orange-600 dark:text-orange-400 font-semibold" : "text-green-600 dark:text-green-400 font-medium";
                 return (
                   <div key={item.project_id} className="flex items-center justify-between">
                     <div>
-                      <button onClick={() => onOpenProject(item.project_id)} className="text-sm text-slate-700 hover:text-primary hover:underline text-left">
+                      <button onClick={() => onOpenProject(item.project_id)} className="text-sm text-foreground hover:text-primary hover:underline text-left">
                         {item.name}
                       </button>
-                      <p className="text-xs text-slate-400">{item.deadline}</p>
+                      <p className="text-xs text-muted-foreground">{item.deadline}</p>
                     </div>
                     <span className={`text-xs ${color}`}>{d >= 0 ? `${d}д` : "Просрочен"}</span>
                   </div>
@@ -1039,8 +1046,8 @@ const handleSave = async () => {
                 <div key={i} className="flex items-start gap-2.5">
                   <div className="w-1.5 h-1.5 rounded-full bg-primary mt-2 flex-shrink-0" />
                   <div>
-                    <p className="text-sm text-slate-700">{a.text}</p>
-                    <p className="text-xs text-slate-400">{a.time}</p>
+                    <p className="text-sm text-foreground">{a.text}</p>
+                    <p className="text-xs text-muted-foreground">{a.time}</p>
                   </div>
                 </div>
               ))
@@ -1057,8 +1064,8 @@ const handleSave = async () => {
           <div className="bg-card rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
             <div className="p-6">
               <div className="flex items-start gap-3 mb-4">
-                <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0">
-                  <Trash2 size={18} className="text-red-600" />
+                <div className="w-10 h-10 rounded-full bg-red-50 dark:bg-red-400/15 flex items-center justify-center flex-shrink-0">
+                  <Trash2 size={18} className="text-destructive" />
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">Удалить проект?</h3>
@@ -1071,7 +1078,7 @@ const handleSave = async () => {
                 <button
                   onClick={() => setProjectToDelete(null)}
                   disabled={isDeleting}
-                  className="px-4 py-2 text-sm font-medium text-slate-600 rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+                  className="px-4 py-2 text-sm font-medium text-muted-foreground rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
                 >
                   Отмена
                 </button>
@@ -1095,8 +1102,8 @@ const handleSave = async () => {
           <div className="bg-card rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
             <div className="p-6">
               <div className="flex items-start gap-3 mb-4">
-                <div className="w-10 h-10 rounded-full bg-amber-50 flex items-center justify-center flex-shrink-0">
-                  <Archive size={18} className="text-amber-600" />
+                <div className="w-10 h-10 rounded-full bg-amber-50 dark:bg-amber-400/15 flex items-center justify-center flex-shrink-0">
+                  <Archive size={18} className="text-amber-600 dark:text-amber-400" />
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">Отправить в архив?</h3>
@@ -1109,7 +1116,7 @@ const handleSave = async () => {
                 <button
                   onClick={() => setProjectToArchive(null)}
                   disabled={isArchiving}
-                  className="px-4 py-2 text-sm font-medium text-slate-600 rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+                  className="px-4 py-2 text-sm font-medium text-muted-foreground rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
                 >
                   Отмена
                 </button>
@@ -1135,10 +1142,10 @@ export function DashboardDirector({ onNavigate, receipts }: { onNavigate: (p: Pa
   return (
     <PageWrap title="Дашборд Комдира" subtitle="Проекты на утверждение, маржа и дедлайны">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatCard label="На утверждении" value="3 КП" sub="Ожидают решения" icon={Inbox} iconColor="text-amber-500" iconBg="bg-amber-50" />
-        <StatCard label="Средняя маржа" value="24.1%" sub="по портфелю" delta="+2.3% vs план" icon={BarChart2} iconColor="text-blue-500" iconBg="bg-blue-50" />
-        <StatCard label="Выручка (факт)" value="38.2 млн ₸" sub="Июль 2024" delta="+12%" icon={TrendingUp} iconColor="text-green-500" iconBg="bg-green-50" />
-        <StatCard label="Критичных дедлайнов" value="2" sub="Риск срыва" icon={AlertTriangle} iconColor="text-red-500" iconBg="bg-red-50" />
+        <StatCard label="На утверждении" value="3 КП" sub="Ожидают решения" icon={Inbox} iconColor="text-amber-500 dark:text-amber-400" iconBg="bg-amber-50 dark:bg-amber-400/15" />
+        <StatCard label="Средняя маржа" value="24.1%" sub="по портфелю" delta="+2.3% vs план" icon={BarChart2} iconColor="text-blue-500 dark:text-blue-400 dark:text-indigo-300" iconBg="bg-blue-50 dark:bg-blue-400/15 dark:bg-indigo-400/15" />
+        <StatCard label="Выручка (факт)" value="38.2 млн ₸" sub="Июль 2024" delta="+12%" icon={TrendingUp} iconColor="text-green-500 dark:text-green-400 dark:text-emerald-400" iconBg="bg-green-50 dark:bg-green-400/15 dark:bg-emerald-400/15" />
+        <StatCard label="Критичных дедлайнов" value="2" sub="Риск срыва" icon={AlertTriangle} iconColor="text-destructive dark:text-red-400" iconBg="bg-red-50 dark:bg-red-400/15" />
       </div>
       <SectionHeader title="КП на согласование" />
       <div className="space-y-3 mb-6">
@@ -1151,7 +1158,7 @@ export function DashboardDirector({ onNavigate, receipts }: { onNavigate: (p: Pa
             <div className="flex-1">
               <div className="flex items-center gap-3 mb-1">
                 <button onClick={() => onNavigate("project")} className="text-sm font-semibold text-primary hover:underline">{kp.name}</button>
-                <span className={`text-xs font-medium px-2 py-0.5 rounded ring-1 ${kp.margin >= 25 ? "bg-green-50 text-green-700 ring-green-200" : kp.margin >= 20 ? "bg-amber-50 text-amber-700 ring-amber-200" : "bg-red-50 text-red-700 ring-red-200"}`}>{kp.margin}% маржа</span>
+                <span className={`text-xs font-medium px-2 py-0.5 rounded ring-1 ${kp.margin >= 25 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-green-200" : kp.margin >= 20 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-amber-200" : "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-red-200"}`}>{kp.margin}% маржа</span>
               </div>
               <div className="flex items-center gap-4 text-xs text-muted-foreground">
                 <span>{kp.client}</span><span>·</span><span>{fmt(kp.amount)}</span><span>·</span>
@@ -1160,7 +1167,7 @@ export function DashboardDirector({ onNavigate, receipts }: { onNavigate: (p: Pa
             </div>
             <div className="flex items-center gap-2 ml-6">
               <button className="flex items-center gap-1.5 px-3 py-1.5 bg-success text-success-foreground text-xs font-medium rounded-md hover:bg-success/90 transition-colors"><Check size={12} /> Одобрить</button>
-              <button className="flex items-center gap-1.5 px-3 py-1.5 bg-card text-red-600 text-xs font-medium rounded-md border border-border hover:bg-red-50 transition-colors"><X size={12} /> Отклонить</button>
+              <button className="flex items-center gap-1.5 px-3 py-1.5 bg-card text-destructive text-xs font-medium rounded-md border border-border hover:bg-red-50 dark:bg-red-400/15 transition-colors"><X size={12} /> Отклонить</button>
             </div>
           </div>
         ))}
@@ -1170,9 +1177,9 @@ export function DashboardDirector({ onNavigate, receipts }: { onNavigate: (p: Pa
           <div key={p.id} className="bg-card rounded-lg border border-border p-4">
             <div className="flex items-start justify-between mb-2"><p className="text-sm font-medium text-foreground leading-tight">{p.name}</p><Chip status={p.stage} /></div>
             <p className="text-xs text-muted-foreground mb-3">{p.client}</p>
-            <div className="flex items-center justify-between text-xs mb-1"><span className="text-muted-foreground">Маржа</span><span className={`font-semibold ${p.margin >= 25 ? "text-green-600" : p.margin >= 20 ? "text-amber-600" : "text-red-600"}`}>{p.margin}%</span></div>
+            <div className="flex items-center justify-between text-xs mb-1"><span className="text-muted-foreground">Маржа</span><span className={`font-semibold ${p.margin >= 25 ? "text-green-600 dark:text-green-400" : p.margin >= 20 ? "text-amber-600 dark:text-amber-400" : "text-destructive"}`}>{p.margin}%</span></div>
             <div className="w-full bg-muted rounded-full h-1.5 mb-3"><div className={`h-1.5 rounded-full ${p.margin >= 25 ? "bg-green-500" : p.margin >= 20 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${Math.min(p.margin * 2, 100)}%` }} /></div>
-            <div className="flex items-center gap-1 text-xs text-slate-400"><Clock size={10} />{p.deadline}</div>
+            <div className="flex items-center gap-1 text-xs text-muted-foreground"><Clock size={10} />{p.deadline}</div>
           </div>
         ))}
       </div>
@@ -1188,25 +1195,25 @@ export function DashboardDirector({ onNavigate, receipts }: { onNavigate: (p: Pa
             <SectionHeader title="Финансовые чеки — аналитика" />
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
               <div className="bg-card rounded-lg border border-border p-5">
-                <div className="flex items-center gap-2 mb-2"><CheckCircle2 size={15} className="text-green-500" /><p className="text-xs font-medium text-muted-foreground">Подтверждено чеками</p></div>
+                <div className="flex items-center gap-2 mb-2"><CheckCircle2 size={15} className="text-green-500 dark:text-green-400" /><p className="text-xs font-medium text-muted-foreground">Подтверждено чеками</p></div>
                 <p className="text-xl font-semibold text-foreground">{fmt(sum(verified))}</p>
-                <p className="text-xs text-slate-400 mt-0.5">{verified.length} чек(ов) «Проверен»</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{verified.length} чек(ов) «Проверен»</p>
               </div>
               <div className="bg-card rounded-lg border border-border p-5">
-                <div className="flex items-center gap-2 mb-2"><Clock size={15} className="text-amber-500" /><p className="text-xs font-medium text-muted-foreground">В обработке</p></div>
+                <div className="flex items-center gap-2 mb-2"><Clock size={15} className="text-amber-500 dark:text-amber-400" /><p className="text-xs font-medium text-muted-foreground">В обработке</p></div>
                 <p className="text-xl font-semibold text-foreground">{fmt(sum(processing))}</p>
-                <p className="text-xs text-slate-400 mt-0.5">{processing.length} чек(ов) ожидают проверки</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{processing.length} чек(ов) ожидают проверки</p>
               </div>
               <div className="bg-card rounded-lg border border-border p-5">
-                <div className="flex items-center gap-2 mb-2"><XCircle size={15} className="text-red-500" /><p className="text-xs font-medium text-muted-foreground">Отклонено</p></div>
+                <div className="flex items-center gap-2 mb-2"><XCircle size={15} className="text-destructive" /><p className="text-xs font-medium text-muted-foreground">Отклонено</p></div>
                 <p className="text-xl font-semibold text-foreground">{fmt(sum(rejected))}</p>
-                <p className="text-xs text-slate-400 mt-0.5">{rejected.length} чек(ов) «Отклонен»</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{rejected.length} чек(ов) «Отклонен»</p>
               </div>
             </div>
             <div className="bg-card rounded-lg border border-border overflow-hidden">
               <div className="px-4 py-2.5 border-b border-border bg-background/60 flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Все чеки компании · только просмотр</span>
-                <span className="text-xs text-slate-400">{receipts.length} записей</span>
+                <span className="text-xs text-muted-foreground">{receipts.length} записей</span>
               </div>
               <table className="w-full border-collapse">
                 <thead><tr className="border-b border-border">
@@ -1217,13 +1224,13 @@ export function DashboardDirector({ onNavigate, receipts }: { onNavigate: (p: Pa
                 <tbody className="divide-y divide-border">
                   {receipts.map(r => (
                     <tr key={r.id} className="hover:bg-background/50 transition-colors">
-                      <td className="px-4 py-3 text-sm text-slate-800">{r.project}</td>
-                      <td className="px-4 py-3 text-sm text-slate-600">{r.fileName}</td>
+                      <td className="px-4 py-3 text-sm text-foreground">{r.project}</td>
+                      <td className="px-4 py-3 text-sm text-muted-foreground">{r.fileName}</td>
                       <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">{r.uploadedBy}</td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
-                        <span className="text-sm font-mono font-semibold text-slate-800">{fmt(r.amount)}</span>
+                        <span className="text-sm font-mono font-semibold text-foreground">{fmt(r.amount)}</span>
                         {r.amount > 1_000_000 && (
-                          <span className="ml-2 inline-flex items-center gap-1 text-xs font-medium text-orange-700 bg-orange-50 px-2 py-0.5 rounded ring-1 ring-orange-200 align-middle"><AlertTriangle size={10} /> Крупная сумма</span>
+                          <span className="ml-2 inline-flex items-center gap-1 text-xs font-medium text-orange-700 dark:text-orange-300 bg-orange-50 dark:bg-orange-400/15 px-2 py-0.5 rounded ring-1 ring-orange-200 align-middle"><AlertTriangle size={10} /> Крупная сумма</span>
                         )}
                       </td>
                       <td className="px-4 py-3"><ReceiptStatusBadge status={r.status} /></td>
@@ -1243,10 +1250,10 @@ export function DashboardAccountant({ onNavigate }: { onNavigate: (p: Page) => v
   return (
     <PageWrap title="Дашборд Бухгалтера" subtitle="Счета к оплате и статус платежей">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatCard label="К оплате" value="5.54 млн ₸" sub="3 счёта ожидают" icon={DollarSign} iconColor="text-blue-500" iconBg="bg-blue-50" />
-        <StatCard label="Оплачено за месяц" value="12.3 млн ₸" sub="Июль 2024" delta="+8%" icon={CheckCircle2} iconColor="text-green-500" iconBg="bg-green-50" />
-        <StatCard label="Просрочено" value="1 счёт" sub="675 000 ₸" icon={XCircle} iconColor="text-red-500" iconBg="bg-red-50" />
-        <StatCard label="На согласовании" value="2 счёта" sub="Ожидают Комдира" icon={Clock} iconColor="text-amber-500" iconBg="bg-amber-50" />
+        <StatCard label="К оплате" value="5.54 млн ₸" sub="3 счёта ожидают" icon={DollarSign} iconColor="text-blue-500 dark:text-blue-400 dark:text-indigo-300" iconBg="bg-blue-50 dark:bg-blue-400/15 dark:bg-indigo-400/15" />
+        <StatCard label="Оплачено за месяц" value="12.3 млн ₸" sub="Июль 2024" delta="+8%" icon={CheckCircle2} iconColor="text-green-500 dark:text-green-400 dark:text-emerald-400" iconBg="bg-green-50 dark:bg-green-400/15 dark:bg-emerald-400/15" />
+        <StatCard label="Просрочено" value="1 счёт" sub="675 000 ₸" icon={XCircle} iconColor="text-destructive dark:text-red-400" iconBg="bg-red-50 dark:bg-red-400/15" />
+        <StatCard label="На согласовании" value="2 счёта" sub="Ожидают Комдира" icon={Clock} iconColor="text-amber-500 dark:text-amber-400" iconBg="bg-amber-50 dark:bg-amber-400/15" />
       </div>
       <SectionHeader title="Счета к оплате" action={<button onClick={() => onNavigate("procurement")} className="text-xs text-primary hover:underline flex items-center gap-1">Все счета <ChevronRight size={12} /></button>} />
       <div className="bg-card rounded-lg border border-border overflow-hidden">
@@ -1259,10 +1266,10 @@ export function DashboardAccountant({ onNavigate }: { onNavigate: (p: Page) => v
           <tbody className="divide-y divide-border">
             {INVOICES_INIT.map(inv => (
               <tr key={inv.id} className="hover:bg-background/50 transition-colors">
-                <td className="px-4 py-3 text-sm font-mono text-slate-700">{inv.id}</td>
-                <td className="px-4 py-3 text-sm text-slate-700">{inv.supplier}</td>
+                <td className="px-4 py-3 text-sm font-mono text-foreground">{inv.id}</td>
+                <td className="px-4 py-3 text-sm text-foreground">{inv.supplier}</td>
                 <td className="px-4 py-3 text-sm font-mono text-foreground">{fmt(inv.amount)}</td>
-                <td className="px-4 py-3 text-sm text-slate-600">{inv.dueDate}</td>
+                <td className="px-4 py-3 text-sm text-muted-foreground">{inv.dueDate}</td>
                 <td className="px-4 py-3"><Chip status={inv.status} /></td>
                 <td className="px-4 py-3">{inv.status === "approved" && <button className="text-xs px-2.5 py-1 bg-success text-success-foreground rounded font-medium hover:bg-success/90 transition-colors">Оплатить</button>}</td>
               </tr>
@@ -1279,10 +1286,10 @@ export function DashboardWarehouse({ onNavigate }: { onNavigate: (p: Page) => vo
     <PageWrap title="Дашборд Склада" subtitle="Остатки, резерв и отгрузки"
       actions={<button className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors"><Plus size={14} /> Новый приход</button>}>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Позиций на складе" value="142" sub="6 ниже минимума" icon={Archive} iconColor="text-blue-500" iconBg="bg-blue-50" />
-        <StatCard label="В резерве" value="34 позиции" sub="4 проекта" icon={Package} iconColor="text-violet-500" iconBg="bg-violet-50" />
-        <StatCard label="Отгрузок за неделю" value="8" sub="12 позиций" delta="+3 vs пред.неделя" icon={Truck} iconColor="text-green-500" iconBg="bg-green-50" />
-        <StatCard label="Ожидаемых поставок" value="3" sub="На этой неделе" icon={Clock} iconColor="text-amber-500" iconBg="bg-amber-50" />
+        <StatCard label="Позиций на складе" value="142" sub="6 ниже минимума" icon={Archive} iconColor="text-blue-500 dark:text-blue-400 dark:text-indigo-300" iconBg="bg-blue-50 dark:bg-blue-400/15 dark:bg-indigo-400/15" />
+        <StatCard label="В резерве" value="34 позиции" sub="4 проекта" icon={Package} iconColor="text-violet-500 dark:text-violet-400" iconBg="bg-violet-50 dark:bg-violet-400/15" />
+        <StatCard label="Отгрузок за неделю" value="8" sub="12 позиций" delta="+3 vs пред.неделя" icon={Truck} iconColor="text-green-500 dark:text-green-400 dark:text-emerald-400" iconBg="bg-green-50 dark:bg-green-400/15 dark:bg-emerald-400/15" />
+        <StatCard label="Ожидаемых поставок" value="3" sub="На этой неделе" icon={Clock} iconColor="text-amber-500 dark:text-amber-400" iconBg="bg-amber-50 dark:bg-amber-400/15" />
       </div>
       <SectionHeader title="Остатки товара" action={<button onClick={() => onNavigate("warehouse")} className="text-xs text-primary hover:underline flex items-center gap-1">Полный склад <ChevronRight size={12} /></button>} />
       <div className="bg-card rounded-lg border border-border overflow-hidden">
@@ -1294,13 +1301,13 @@ export function DashboardWarehouse({ onNavigate }: { onNavigate: (p: Page) => vo
           </tr></thead>
           <tbody className="divide-y divide-border">
             {STOCK_INIT.map(item => (
-              <tr key={item.id} className={`hover:bg-background/50 transition-colors ${item.available < 200 ? "bg-red-50/20" : ""}`}>
+              <tr key={item.id} className={`hover:bg-background/50 transition-colors ${item.available < 200 ? "bg-red-50/20 dark:bg-red-400/10" : ""}`}>
                 <td className="px-4 py-3 text-xs font-mono text-muted-foreground">{item.sku}</td>
-                <td className="px-4 py-3 text-sm text-slate-700">{item.name}</td>
+                <td className="px-4 py-3 text-sm text-foreground">{item.name}</td>
                 <td className="px-4 py-3 text-xs text-muted-foreground">{item.unit}</td>
-                <td className="px-4 py-3 text-sm font-mono text-slate-700 text-right">{item.total.toLocaleString("ru-RU")}</td>
-                <td className="px-4 py-3 text-sm font-mono text-violet-600 text-right">{item.reserved.toLocaleString("ru-RU")}</td>
-                <td className="px-4 py-3 text-right"><span className={`text-sm font-mono font-medium ${item.available < 200 ? "text-red-600" : "text-green-600"}`}>{item.available.toLocaleString("ru-RU")}</span></td>
+                <td className="px-4 py-3 text-sm font-mono text-foreground text-right">{item.total.toLocaleString("ru-RU")}</td>
+                <td className="px-4 py-3 text-sm font-mono text-violet-600 dark:text-violet-400 text-right">{item.reserved.toLocaleString("ru-RU")}</td>
+                <td className="px-4 py-3 text-right"><span className={`text-sm font-mono font-medium ${item.available < 200 ? "text-destructive" : "text-green-600 dark:text-green-400"}`}>{item.available.toLocaleString("ru-RU")}</span></td>
               </tr>
             ))}
           </tbody>

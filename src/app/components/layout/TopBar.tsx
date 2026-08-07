@@ -1,4 +1,4 @@
-import { ChevronDown, LogOut, User } from "lucide-react";
+import { ChevronDown, LogOut, Menu, Moon, Sun, User } from "lucide-react";
 import { Page, Role } from "../../../types";
 import { ROLES } from "../../../data/roles";
 import {
@@ -6,6 +6,7 @@ import {
   DropdownMenuItem, DropdownMenuSeparator,
 } from "../ui/dropdown-menu";
 import { NotificationBell } from "../common/NotificationBell";
+import { useTheme } from "../../theme/ThemeProvider";
 import getme from "../api/user"
 
 type UserData = {
@@ -16,7 +17,7 @@ type UserData = {
     created_at: string;
 };
 
-export function TopBar({ role, user, onNavigate, onLogout, onOpenProject, onSelectProject }: {
+export function TopBar({ role, user, onNavigate, onLogout, onOpenProject, onSelectProject, onOpenMobileNav }: {
   role: Role;
   onNavigate: (p: Page) => void;
   onLogout: () => void;
@@ -31,12 +32,34 @@ export function TopBar({ role, user, onNavigate, onLogout, onOpenProject, onSele
    *  right project and then land on its own page (procurement/documents),
    *  instead of always being forced onto the Project page like onOpenProject. */
   onSelectProject?: (idOrName: number | string) => Promise<void> | void;
+  /** Opens the off-canvas Sidebar drawer — only relevant below the lg:
+   *  breakpoint, where the sidebar isn't always visible. */
+  onOpenMobileNav?: () => void;
 }) {
   const cfg = ROLES[role];
+  const { theme, toggleTheme } = useTheme();
   return (
-    <header className="h-14 bg-card border-b border-border flex items-center justify-between px-6 flex-shrink-0">
-      <div />
-      <div className="flex items-center gap-3">
+    <header className="h-16 bg-card border-b border-border flex items-center justify-between px-4 sm:px-6 flex-shrink-0">
+      <button
+        onClick={onOpenMobileNav}
+        aria-label="Открыть меню"
+        className="lg:hidden flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors -ml-2"
+      >
+        <Menu size={20} />
+      </button>
+      <div className="hidden lg:block" />
+      <div className="flex items-center gap-1.5 sm:gap-3">
+        <button
+          onClick={toggleTheme}
+          className="relative flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+          aria-label={theme === "dark" ? "Включить светлую тему" : "Включить тёмную тему"}
+        >
+          <Sun size={16} className={`absolute transition-all duration-300 ${theme === "dark" ? "scale-0 -rotate-90 opacity-0" : "scale-100 rotate-0 opacity-100"}`} />
+          <Moon size={16} className={`absolute transition-all duration-300 ${theme === "dark" ? "scale-100 rotate-0 opacity-100" : "scale-0 rotate-90 opacity-0"}`} />
+        </button>
+
+        <div className="h-5 w-px bg-border" />
+
         <NotificationBell
           role={role}
           onNavigate={onNavigate}

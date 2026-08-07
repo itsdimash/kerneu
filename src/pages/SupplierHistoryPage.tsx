@@ -152,21 +152,21 @@ export function SupplierHistoryPage() {
           <div className="relative">
             <Search
               size={15}
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
             />
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Поставщик или товар"
-              className="w-full rounded-md border border-slate-300 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
+              className="w-full rounded-md border border-input py-2 pl-9 pr-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
             />
           </div>
 
           <div className="flex max-h-[70vh] flex-col gap-1.5 overflow-y-auto">
             {loadingList ? (
-              <p className="px-3 py-4 text-sm text-slate-400">Загрузка…</p>
+              <p className="px-3 py-4 text-sm text-muted-foreground">Загрузка…</p>
             ) : suppliers.length === 0 ? (
-              <p className="rounded-md border bg-background px-3 py-5 text-center text-sm text-slate-400">
+              <p className="rounded-md border bg-background px-3 py-5 text-center text-sm text-muted-foreground">
                 Поставщики не найдены
               </p>
             ) : (
@@ -189,7 +189,7 @@ export function SupplierHistoryPage() {
                       {item.name}
                     </span>
                     {item.supplier_kind === "raw" && (
-                      <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
+                      <span className="rounded bg-amber-50 dark:bg-amber-400/15 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">
                         вручную
                       </span>
                     )}
@@ -197,7 +197,7 @@ export function SupplierHistoryPage() {
                   <div className="mt-0.5 text-xs text-muted-foreground">
                     {item.products_count} товаров · {item.purchases_count} закупок
                   </div>
-                  <div className="text-xs text-slate-400">
+                  <div className="text-xs text-muted-foreground">
                     Последняя: {formatDate(item.last_purchase_at)}
                   </div>
                 </button>
@@ -207,11 +207,11 @@ export function SupplierHistoryPage() {
         </aside>
 
         <main className="min-w-0 flex-1 rounded-lg border border-border bg-card p-5">
-          {error && <p className="mb-3 rounded bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+          {error && <p className="mb-3 rounded bg-red-50 dark:bg-red-400/15 px-3 py-2 text-sm text-red-700 dark:text-red-300">{error}</p>}
           {loadingDetail ? (
-            <p className="py-8 text-center text-sm text-slate-400">Загрузка…</p>
+            <p className="py-8 text-center text-sm text-muted-foreground">Загрузка…</p>
           ) : !supplier ? (
-            <p className="py-8 text-center text-sm text-slate-400">Выберите поставщика слева</p>
+            <p className="py-8 text-center text-sm text-muted-foreground">Выберите поставщика слева</p>
           ) : (
             <>
               <div className="mb-4">
@@ -235,7 +235,7 @@ export function SupplierHistoryPage() {
                   <tbody>
                     {supplier.products.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
+                        <td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">
                           Закупок пока нет
                         </td>
                       </tr>
@@ -248,7 +248,7 @@ export function SupplierHistoryPage() {
                         >
                           <td className="px-4 py-3 font-medium text-primary">
                             {product.product_name}{" "}
-                            <span className="font-normal text-slate-400">({product.unit})</span>
+                            <span className="font-normal text-muted-foreground">({product.unit})</span>
                           </td>
                           <td className="px-4 py-3 text-muted-foreground">
                             {formatDate(product.last_purchase_at)}

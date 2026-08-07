@@ -48,20 +48,20 @@ const ML_STATUS_STYLES: Record<
   }
 > = {
   "Нет в системе": {
-    badge: "bg-red-100 text-red-800 border border-red-300",
-    row: "bg-red-50 hover:bg-red-100/60",
+    badge: "bg-red-100 dark:bg-red-400/20 text-red-800 dark:text-red-200 border border-red-300 dark:border-red-400/30",
+    row: "bg-red-50 dark:bg-red-400/15 hover:bg-red-100/60 dark:bg-red-400/30",
   },
   "Нет в системе (похожие варианты)": {
-    badge: "bg-orange-100 text-orange-800 border border-orange-300",
-    row: "bg-orange-50 hover:bg-orange-100/60",
+    badge: "bg-orange-100 dark:bg-orange-400/20 text-orange-800 dark:text-orange-200 border border-orange-300 dark:border-orange-400/30",
+    row: "bg-orange-50 dark:bg-orange-400/15 hover:bg-orange-100/60 dark:bg-orange-400/30",
   },
   "Есть в системе (недостаточно)": {
-    badge: "bg-yellow-100 text-yellow-800 border border-yellow-300",
-    row: "bg-yellow-50 hover:bg-yellow-100/60",
+    badge: "bg-yellow-100 dark:bg-yellow-400/20 text-yellow-800 dark:text-yellow-200 border border-yellow-300 dark:border-yellow-400/30",
+    row: "bg-yellow-50 dark:bg-yellow-400/15 hover:bg-yellow-100/60 dark:bg-yellow-400/30",
   },
   "На складе": {
-    badge: "bg-green-100 text-green-800 border border-green-300",
-    row: "bg-green-50 hover:bg-green-100/60",
+    badge: "bg-green-100 dark:bg-green-400/20 text-green-800 dark:text-green-200 border border-green-300 dark:border-green-400/30",
+    row: "bg-green-50 dark:bg-green-400/15 hover:bg-green-100/60 dark:bg-green-400/30",
   },
 };
 
@@ -83,7 +83,7 @@ const normalizeMlStatus = (
 };
 
 const UNKNOWN_ML_STATUS_STYLE = {
-  badge: "bg-muted text-slate-700 border border-slate-300",
+  badge: "bg-muted text-foreground border border-input",
   row: "bg-card hover:bg-background",
 };
 
@@ -133,7 +133,7 @@ function EstimateTable({ rows }: { rows: EstimateRow[] }) {
             Справочные цены КазНИИСА. Они не участвуют в расчёте себестоимости и маржи.
           </p>
         </div>
-        <span className="whitespace-nowrap rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 ring-1 ring-blue-200">
+        <span className="whitespace-nowrap rounded-full bg-blue-50 dark:bg-blue-400/15 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300 ring-1 ring-blue-200">
           План
         </span>
       </div>
@@ -155,7 +155,7 @@ function EstimateTable({ rows }: { rows: EstimateRow[] }) {
           <tbody className="divide-y divide-border">
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-sm text-slate-400">
+                <td colSpan={5} className="px-4 py-10 text-center text-sm text-muted-foreground">
                   В смете пока нет позиций
                 </td>
               </tr>
@@ -165,15 +165,15 @@ function EstimateTable({ rows }: { rows: EstimateRow[] }) {
 
                 return (
                   <tr key={row.id} className="hover:bg-background/50">
-                    <td className="px-4 py-3 text-sm text-slate-700">{row.name}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-600">{row.code ?? "—"}</td>
-                    <td className="px-4 py-3 font-mono text-sm text-slate-700">
+                    <td className="px-4 py-3 text-sm text-foreground">{row.name}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{row.code ?? "—"}</td>
+                    <td className="px-4 py-3 font-mono text-sm text-foreground">
                       {row.quantity.toLocaleString("ru-RU")}
                     </td>
-                    <td className="px-4 py-3 font-mono text-sm text-slate-700">
+                    <td className="px-4 py-3 font-mono text-sm text-foreground">
                       {row.estimatedPrice == null ? "Не найдена" : formatEstimateMoney(row.estimatedPrice)}
                     </td>
-                    <td className="px-4 py-3 font-mono text-sm font-semibold text-slate-800">
+                    <td className="px-4 py-3 font-mono text-sm font-semibold text-foreground">
                       {row.estimatedPrice == null ? "—" : formatEstimateMoney(rowTotal)}
                     </td>
                   </tr>
@@ -183,7 +183,7 @@ function EstimateTable({ rows }: { rows: EstimateRow[] }) {
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-border bg-background/80">
-              <td colSpan={4} className="px-4 py-3 text-right text-sm font-semibold text-slate-700">
+              <td colSpan={4} className="px-4 py-3 text-right text-sm font-semibold text-foreground">
                 Итого по смете
               </td>
               <td className="px-4 py-3 font-mono text-base font-bold text-primary">
@@ -701,12 +701,12 @@ export function ProjectPagePM({
   if (!hasValidProjectId) {
     return (
       <PageWrap title="Проект не выбран" subtitle="Не удалось определить ID проекта">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-5">
+        <div className="bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg p-5">
           <div className="flex items-start gap-3">
-            <AlertTriangle size={18} className="text-red-500 mt-0.5" />
+            <AlertTriangle size={18} className="text-destructive mt-0.5" />
             <div>
-              <p className="text-sm font-semibold text-red-700">Некорректный ID проекта</p>
-              <p className="text-sm text-red-600 mt-1">Получено значение: {String(projectId)}</p>
+              <p className="text-sm font-semibold text-red-700 dark:text-red-300">Некорректный ID проекта</p>
+              <p className="text-sm text-destructive mt-1">Получено значение: {String(projectId)}</p>
             </div>
           </div>
         </div>
@@ -751,8 +751,8 @@ export function ProjectPagePM({
               aria-expanded={showEstimate}
               className={`flex items-center gap-1.5 rounded border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                 showEstimate
-                  ? "border-primary bg-blue-50 text-primary"
-                  : "border-border bg-card text-slate-600 hover:bg-background"
+                  ? "border-primary bg-blue-50 dark:bg-blue-400/15 text-primary"
+                  : "border-border bg-card text-muted-foreground hover:bg-background"
               }`}
             >
               <Calculator size={14}/>
@@ -762,7 +762,7 @@ export function ProjectPagePM({
               <button
                 onClick={handleExportExcel}
                 disabled={isExporting || !project || !mlImport || mlImport.status !== "confirmed"}
-                className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-card border border-border text-slate-600 text-xs font-medium rounded hover:bg-background transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-card border border-border text-muted-foreground text-xs font-medium rounded hover:bg-background transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />}
                 {isExporting ? "Скачивание..." : "Скачать Excel"}
@@ -780,11 +780,11 @@ export function ProjectPagePM({
                       <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold border-2 transition-colors ${
                           step.done ? "bg-primary border-primary text-white" : 
                           step.active ? "bg-card border-primary text-primary" : 
-                          "bg-card border-border text-slate-400"
+                          "bg-card border-border text-muted-foreground"
                       }`}>
                         {step.done ? <Check size={12}/> : i + 1}
                       </div>
-                      <span className={`text-xs mt-1.5 transition-colors ${step.done || step.active ? "text-primary" : "text-slate-400"}`}>
+                      <span className={`text-xs mt-1.5 transition-colors ${step.done || step.active ? "text-primary" : "text-muted-foreground"}`}>
                         {step.label}
                       </span>
                     </div>
@@ -799,19 +799,19 @@ export function ProjectPagePM({
           <div className="bg-card rounded-lg border border-border p-5">
             <h3 className="text-sm font-semibold text-foreground mb-3">Детали проекта</h3>
             {projectError ? (
-              <div className="flex items-start gap-2.5 text-red-600">
+              <div className="flex items-start gap-2.5 text-destructive">
                 <AlertTriangle size={15} className="mt-0.5 flex-shrink-0"/>
                 <div>
                   <p className="text-sm font-medium">Не удалось загрузить детали проекта</p>
-                  <p className="text-xs text-red-500 mt-1">{projectError}</p>
+                  <p className="text-xs text-destructive mt-1">{projectError}</p>
                 </div>
               </div>
             ) : (
               <dl className="space-y-2.5">
                 {sidebarDetails.map(([l, v]) => (
                     <div key={l} className="flex items-start justify-between gap-3">
-                      <dt className="text-xs text-slate-400">{l}</dt>
-                      <dd className="text-xs font-medium text-slate-700 text-right">{v}</dd>
+                      <dt className="text-xs text-muted-foreground">{l}</dt>
+                      <dd className="text-xs font-medium text-foreground text-right">{v}</dd>
                     </div>
                 ))}
               </dl>
@@ -824,15 +824,15 @@ export function ProjectPagePM({
         {sent && !isApproved && (
             <div className="mb-6 rounded-lg border p-5 bg-background border-border">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 size={14} className="animate-spin text-slate-400"/>
+                  <Loader2 size={14} className="animate-spin text-muted-foreground"/>
                   Ожидаем подтверждения Комдира…
                 </div>
             </div>
         )}
 
         {isRejected && (
-            <div className="mb-6 rounded-lg border p-5 bg-red-50 border-red-200">
-                <div className="flex items-center gap-2 text-sm text-red-700">
+            <div className="mb-6 rounded-lg border p-5 bg-red-50 dark:bg-red-400/15 border-red-200 dark:border-red-400/25">
+                <div className="flex items-center gap-2 text-sm text-red-700 dark:text-red-300">
                   <XCircle size={14}/>
                   КП отклонено Комдиром. Отредактируйте товары ниже и отправьте повторно.
                 </div>
@@ -840,11 +840,11 @@ export function ProjectPagePM({
         )}
 
         {(currentStatus === "Ожидание клиента" || currentStatus === "Одобрено Комдиром") && (
-            <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50/70 shadow-sm p-5">
+            <div className="mb-6 rounded-xl border border-blue-200 dark:border-blue-400/25 bg-blue-50/70 dark:bg-blue-400/35 shadow-sm p-5">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div className="flex items-start gap-3">
-                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                    <FileText size={18} className="text-blue-600"/>
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-400/20 flex items-center justify-center">
+                    <FileText size={18} className="text-blue-600 dark:text-blue-400"/>
                   </div>
                   <div>
                     <h3 className="text-sm font-bold text-foreground">Ожидание решения клиента</h3>
@@ -859,7 +859,7 @@ export function ProjectPagePM({
                     <button
                         onClick={handleClientReject}
                         disabled={approvingClient || rejecting || !kpGenerated}
-                        className="flex items-center justify-center gap-2 px-4 py-2.5 bg-card border border-red-300 text-red-600 text-sm font-semibold rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                        className="flex items-center justify-center gap-2 px-4 py-2.5 bg-card border border-red-300 dark:border-red-400/30 text-destructive text-sm font-semibold rounded-lg hover:bg-red-50 dark:bg-red-400/15 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                     >
                       {rejecting ? <Loader2 size={14} className="animate-spin"/> : <XCircle size={14}/>}
                       Клиент просит правки
@@ -887,7 +887,7 @@ export function ProjectPagePM({
                       после одобрения/отклонения это уже видно по статусу проекта
                       сверху, и дублирующий зелёный бейдж только путает. */}
                   {mlImport && !isApproved && !isRejected && (
-                    <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${mlImport.status === "confirmed" ? "bg-green-50 text-green-700 ring-1 ring-green-200" : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"}`}>
+                    <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${mlImport.status === "confirmed" ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200"}`}>
                       {mlImport.status === "confirmed" ? "Подтверждено" : "Черновик"}
                     </span>
                   )}
@@ -905,8 +905,8 @@ export function ProjectPagePM({
                         disabled={!mlImport || mlImport.status !== "confirmed" || !isApproved || isGeneratingKP}
                         className={`flex items-center gap-2 px-5 py-2.5 border text-sm font-semibold rounded-lg transition-colors whitespace-nowrap ${
                           mlImport?.status === "confirmed" && isApproved
-                            ? "bg-card border-border text-slate-700 hover:bg-background cursor-pointer"
-                            : "bg-background border-border text-slate-400 cursor-not-allowed"
+                            ? "bg-card border-border text-foreground hover:bg-background cursor-pointer"
+                            : "bg-background border-border text-muted-foreground cursor-not-allowed"
                         }`}
                       >
                         {isGeneratingKP ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
@@ -943,11 +943,11 @@ export function ProjectPagePM({
             </div>
 
             {mlImportError && (
-              <div className="flex items-start gap-2.5 mb-3 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
-                <AlertTriangle size={15} className="text-red-500 mt-0.5 flex-shrink-0" />
+              <div className="flex items-start gap-2.5 mb-3 px-4 py-3 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg">
+                <AlertTriangle size={15} className="text-destructive mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className="text-sm font-medium text-red-700">Ошибка ML-импорта</p>
-                  <p className="text-xs text-red-600 mt-1">{mlImportError}</p>
+                  <p className="text-sm font-medium text-red-700 dark:text-red-300">Ошибка ML-импорта</p>
+                  <p className="text-xs text-destructive mt-1">{mlImportError}</p>
                 </div>
               </div>
             )}
@@ -955,11 +955,11 @@ export function ProjectPagePM({
             {mlImportLoading ? (
               <div className="bg-card rounded-lg border border-border p-10 flex flex-col items-center">
                 <Loader2 size={26} className="animate-spin text-primary mb-3" />
-                <p className="text-sm text-slate-600">Загружаем результаты ML…</p>
+                <p className="text-sm text-muted-foreground">Загружаем результаты ML…</p>
               </div>
             ) : !mlImport ? (
               <div className="bg-card rounded-lg border border-border px-4 py-10 text-center">
-                <p className="text-sm text-slate-400">Для этого проекта ML-импорт пока не найден</p>
+                <p className="text-sm text-muted-foreground">Для этого проекта ML-импорт пока не найден</p>
               </div>
             ) : (
               <>
@@ -974,7 +974,7 @@ export function ProjectPagePM({
                     </thead>
                     <tbody className="divide-y divide-border">
                       {mlImport.items.length === 0 ? (
-                        <tr><td colSpan={12} className="px-4 py-10 text-center text-sm text-slate-400">В ML-импорте нет товаров</td></tr>
+                        <tr><td colSpan={12} className="px-4 py-10 text-center text-sm text-muted-foreground">В ML-импорте нет товаров</td></tr>
                       ) : (
                         mlImport.items.map((item) => {
                           const isUpdating = updatingItemId === item.id;
@@ -1003,8 +1003,8 @@ export function ProjectPagePM({
                           return (
                               <tr key={item.id} className={`transition-colors ${statusStyle.row}`}>
                                 <td className="px-4 py-3"><p
-                                    className="text-sm font-medium text-slate-800">{item.input_product}</p></td>
-                                <td className="px-4 py-3 text-sm font-mono text-slate-700">{item.input_quantity}</td>
+                                    className="text-sm font-medium text-foreground">{item.input_product}</p></td>
+                                <td className="px-4 py-3 text-sm font-mono text-foreground">{item.input_quantity}</td>
                                 <td className="px-4 py-3">
                                   <span
                                       className={`inline-flex px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap ${statusStyle.badge}`}>
@@ -1038,22 +1038,22 @@ export function ProjectPagePM({
                                                 setOpenVariantPickerId((current) => (current === item.id ? null : item.id))
                                               }
                                               className={`w-56 flex items-center justify-between gap-2 px-2 py-1.5 text-sm border rounded-md bg-card text-left disabled:bg-muted disabled:cursor-not-allowed ${
-                                                item.selected_product_id != null ? "border-border" : "border-orange-300"
+                                                item.selected_product_id != null ? "border-border" : "border-orange-300 dark:border-orange-400/30"
                                               }`}
                                           >
-                                            <span className={`truncate ${selectedProductName ? "text-slate-800" : "text-slate-400"}`}>
+                                            <span className={`truncate ${selectedProductName ? "text-foreground" : "text-muted-foreground"}`}>
                                               {selectedProductName ?? (productCatalogLoading ? "Загрузка каталога…" : "Выберите товар")}
                                             </span>
                                             <ChevronDown
                                                 size={14}
-                                                className={`flex-shrink-0 text-slate-400 transition-transform ${isPickerOpen ? "rotate-180" : ""}`}
+                                                className={`flex-shrink-0 text-muted-foreground transition-transform ${isPickerOpen ? "rotate-180" : ""}`}
                                             />
                                           </button>
 
                                           {isPickerOpen && (
                                             <div className="absolute z-20 mt-1 w-64 max-h-64 overflow-y-auto bg-card border border-border rounded-lg shadow-lg py-1">
                                               {matchedCatalogOptions.length === 0 ? (
-                                                <p className="px-3 py-2 text-xs text-slate-400">Похожих товаров в каталоге не найдено</p>
+                                                <p className="px-3 py-2 text-xs text-muted-foreground">Похожих товаров в каталоге не найдено</p>
                                               ) : (
                                                 matchedCatalogOptions.map((product) => (
                                                   <button
@@ -1065,8 +1065,8 @@ export function ProjectPagePM({
                                                       }}
                                                       className={`w-full text-left px-3 py-2 text-sm hover:bg-background transition-colors ${
                                                         item.selected_product_id === product.id
-                                                          ? "bg-blue-50 text-primary font-medium"
-                                                          : "text-slate-700"
+                                                          ? "bg-blue-50 dark:bg-blue-400/15 text-primary font-medium"
+                                                          : "text-foreground"
                                                       }`}
                                                   >
                                                     {product.name}
@@ -1080,7 +1080,7 @@ export function ProjectPagePM({
                                                       setOpenVariantPickerId(null);
                                                       openProductModal(item);
                                                     }}
-                                                    className="w-full flex items-center gap-1.5 text-left px-3 py-2 text-sm font-medium text-primary hover:bg-blue-50 transition-colors"
+                                                    className="w-full flex items-center gap-1.5 text-left px-3 py-2 text-sm font-medium text-primary hover:bg-accent transition-colors"
                                                 >
                                                   <Plus size={14} /> Это новый товар
                                                 </button>
@@ -1091,9 +1091,9 @@ export function ProjectPagePM({
                                       );
                                     })() : (
                                     <>
-                                      <p className="text-sm text-slate-700">{item.matched_product ?? "—"}</p>
+                                      <p className="text-sm text-foreground">{item.matched_product ?? "—"}</p>
                                       {item.matched_external_id &&
-                                          <p className="text-xs text-slate-400 mt-1">ML ID: {item.matched_external_id}</p>}
+                                          <p className="text-xs text-muted-foreground mt-1">ML ID: {item.matched_external_id}</p>}
                                     </>
                                   )}
                                 </td>
@@ -1114,7 +1114,7 @@ export function ProjectPagePM({
                                       className={`w-44 px-2 py-1.5 text-sm border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted ${
                                         item.supplier_name?.trim()
                                           ? "border-border"
-                                          : "border-red-300"
+                                          : "border-red-300 dark:border-red-400/30"
                                       }`}
                                   />
                                 </td>
@@ -1152,15 +1152,15 @@ export function ProjectPagePM({
                                   />
                                 </td>
                                 <td className="px-4 py-3 whitespace-nowrap"><span
-                                    className="text-sm font-semibold font-mono text-slate-800">{formatMoney(totalAmount)}</span>
+                                    className="text-sm font-semibold font-mono text-foreground">{formatMoney(totalAmount)}</span>
                                 </td>
                                 <td className="px-4 py-3">
                                 <span
-                                    className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${marginPercent >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : marginPercent > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : marginPercent < 0 ? "bg-red-50 text-red-700 ring-1 ring-red-200" : "bg-muted text-slate-600 ring-1 ring-slate-200"}`}>
+                                    className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${marginPercent >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : marginPercent > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : marginPercent < 0 ? "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-1 ring-red-200" : "bg-muted text-muted-foreground ring-1 ring-slate-200"}`}>
                                   {marginPercent.toFixed(1)}%
                                 </span>
                                 </td>
-                                <td className="px-4 py-3 text-sm font-mono text-slate-700">{item.available_quantity}</td>
+                                <td className="px-4 py-3 text-sm font-mono text-foreground">{item.available_quantity}</td>
                                 <td className="px-4 py-3">
                                   <input
                                       key={`${item.id}-comment-${item.user_comment ?? ""}`}
@@ -1183,7 +1183,7 @@ export function ProjectPagePM({
                                       />
                                   ) : item.is_confirmed ? (
                                       <span
-                                          className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
+                                          className="inline-flex items-center gap-1 text-xs font-medium text-green-700 dark:text-green-300">
       <CheckCircle2 size={14}/>
       Добавлен
     </span>
@@ -1192,13 +1192,13 @@ export function ProjectPagePM({
                                           type="button"
                                           onClick={() => openProductModal(item)}
                                           disabled={mlImport.status !== "draft"}
-                                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-red-600 rounded-md hover:bg-red-700 transition-colors disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-red-600 rounded-md hover:bg-red-700 transition-colors disabled:bg-slate-200 disabled:text-muted-foreground disabled:cursor-not-allowed"
                                       >
                                         Добавить товар
                                       </button>
                                   ) : normalizedStatus === "На складе" ? (
                                       <span
-                                          className="inline-flex items-center gap-1 text-xs font-medium text-green-700">
+                                          className="inline-flex items-center gap-1 text-xs font-medium text-green-700 dark:text-green-300">
       <CheckCircle2 size={14}/>
       На складе
     </span>
@@ -1210,12 +1210,12 @@ export function ProjectPagePM({
                                       0
                                   ) > 0 ? (
                                       <span
-                                          className="inline-flex items-center gap-1 text-xs font-medium text-amber-700">
+                                          className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300">
       <CheckCircle2 size={14}/>
       Будет куплено
     </span>
                                   ) : (
-                                      <span className="text-xs font-medium text-red-700">
+                                      <span className="text-xs font-medium text-red-700 dark:text-red-300">
       Требуется указать цену
     </span>
                                   )}
@@ -1229,7 +1229,7 @@ export function ProjectPagePM({
                 </div>
 
                 <div className="flex items-center justify-between gap-4 mt-4">
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-muted-foreground">
                     Для строк «Нет в системе» создайте товар через кнопку в строке.
                     Для строк «Нет в системе (похожие варианты)» выберите товар из
                     предложенного списка либо нажмите «Это новый товар», если
@@ -1240,7 +1240,7 @@ export function ProjectPagePM({
                       type="button"
                       onClick={handleConfirmMlImport}
                       disabled={!canConfirmMlImport || confirmingImport}
-                      className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-colors disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed enabled:bg-primary enabled:text-white enabled:hover:bg-primary/90 enabled:cursor-pointer"
+                      className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-colors disabled:bg-slate-200 disabled:text-muted-foreground disabled:cursor-not-allowed enabled:bg-primary enabled:text-white enabled:hover:bg-primary/90 enabled:cursor-pointer"
                   >
                     {confirmingImport ? (
                         <>
@@ -1288,7 +1288,7 @@ export function ProjectPagePM({
                     type="button"
                     onClick={closeProductModal}
                     disabled={savingProduct}
-                    className="rounded-md p-1 text-slate-400 hover:bg-muted hover:text-slate-600 disabled:cursor-not-allowed"
+                    className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-muted-foreground disabled:cursor-not-allowed"
                     aria-label="Закрыть"
                 >
                   <XCircle size={20}/>
@@ -1297,7 +1297,7 @@ export function ProjectPagePM({
 
               <form onSubmit={handleCreateProduct} className="space-y-4 px-6 py-5">
                 <label className="block">
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700">
+                  <span className="mb-1.5 block text-sm font-medium text-foreground">
                     Название товара
                   </span>
                   <input
@@ -1309,12 +1309,12 @@ export function ProjectPagePM({
                         ...current,
                         product_name: event.target.value,
                       }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+                      className="w-full rounded-lg border border-input px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
                   />
                 </label>
 
                 <label className="block">
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700">
+                  <span className="mb-1.5 block text-sm font-medium text-foreground">
                     Поставщик
                   </span>
                   <input
@@ -1327,12 +1327,12 @@ export function ProjectPagePM({
                         supplier_name: event.target.value,
                       }))}
                       placeholder="Введите имя поставщика"
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+                      className="w-full rounded-lg border border-input px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
                   />
                 </label>
 
                 <label className="block">
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700">
+                  <span className="mb-1.5 block text-sm font-medium text-foreground">
                     Единица измерения
                   </span>
                   <input
@@ -1346,7 +1346,7 @@ export function ProjectPagePM({
                         unit: event.target.value,
                       }))}
                       placeholder="Выберите или введите"
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+                      className="w-full rounded-lg border border-input px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
                   />
                   <datalist id="ml-product-unit-options">
                     {["шт", "компл.", "упак.", "кг", "м", "л"].map((unit) => (
@@ -1357,7 +1357,7 @@ export function ProjectPagePM({
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <label className="block">
-                    <span className="mb-1.5 block text-sm font-medium text-slate-700">
+                    <span className="mb-1.5 block text-sm font-medium text-foreground">
                       Себестоимость
                     </span>
                     <input
@@ -1370,12 +1370,12 @@ export function ProjectPagePM({
                           ...current,
                           price_cost: event.target.value,
                         }))}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+                        className="w-full rounded-lg border border-input px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
                     />
                   </label>
 
                   <label className="block">
-                    <span className="mb-1.5 block text-sm font-medium text-slate-700">
+                    <span className="mb-1.5 block text-sm font-medium text-foreground">
                       Цена продажи
                     </span>
                     <input
@@ -1388,13 +1388,13 @@ export function ProjectPagePM({
                           ...current,
                           price: event.target.value,
                         }))}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+                        className="w-full rounded-lg border border-input px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
                     />
                   </label>
                 </div>
 
                 {productModalError && (
-                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  <div className="rounded-lg border border-red-200 dark:border-red-400/25 bg-red-50 dark:bg-red-400/15 px-3 py-2 text-sm text-red-700 dark:text-red-300">
                     {productModalError}
                   </div>
                 )}
@@ -1404,7 +1404,7 @@ export function ProjectPagePM({
                       type="button"
                       onClick={closeProductModal}
                       disabled={savingProduct}
-                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-background disabled:cursor-not-allowed disabled:opacity-60"
+                      className="rounded-lg border border-input px-4 py-2 text-sm font-medium text-foreground hover:bg-background disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     Отмена
                   </button>
@@ -1615,8 +1615,8 @@ const [projectItemsError, setProjectItemsError] =
             aria-expanded={showEstimate}
             className={`flex items-center gap-1.5 rounded border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
               showEstimate
-                ? "border-primary bg-blue-50 text-primary"
-                : "border-border bg-card text-slate-600 hover:bg-background"
+                ? "border-primary bg-blue-50 dark:bg-blue-400/15 text-primary"
+                : "border-border bg-card text-muted-foreground hover:bg-background"
             }`}
           >
             <Calculator size={14}/>
@@ -1625,7 +1625,7 @@ const [projectItemsError, setProjectItemsError] =
           <button
             onClick={handleExportExcel}
             disabled={isExporting || !project}
-            className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-card border border-border text-slate-600 text-xs font-medium rounded hover:bg-background transition-colors whitespace-nowrap disabled:opacity-50"
+            className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-card border border-border text-muted-foreground text-xs font-medium rounded hover:bg-background transition-colors whitespace-nowrap disabled:opacity-50"
           >
             {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />}
             {isExporting ? "Скачивание..." : "Скачать Excel"}
@@ -1634,11 +1634,11 @@ const [projectItemsError, setProjectItemsError] =
       }
     >
       {projectError && (
-        <div className="mb-6 flex items-start gap-2.5 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
-          <AlertTriangle size={15} className="text-red-500 mt-0.5 flex-shrink-0" />
+        <div className="mb-6 flex items-start gap-2.5 px-4 py-3 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg">
+          <AlertTriangle size={15} className="text-destructive mt-0.5 flex-shrink-0" />
           <div>
-            <p className="text-sm font-medium text-red-700">Не удалось загрузить проект</p>
-            <p className="text-xs text-red-600 mt-1">{projectError}</p>
+            <p className="text-sm font-medium text-red-700 dark:text-red-300">Не удалось загрузить проект</p>
+            <p className="text-xs text-destructive mt-1">{projectError}</p>
           </div>
         </div>
       )}
@@ -1658,20 +1658,20 @@ const [projectItemsError, setProjectItemsError] =
               <tbody className="divide-y divide-border">
                 {projectItemsLoading ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400">
+                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">
                       <Loader2 size={16} className="inline-block animate-spin text-primary mr-2" />
                       Загружаем позиции проекта…
                     </td>
                   </tr>
                 ) : projectItemsError ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-red-500">
+                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-destructive">
                       {projectItemsError}
                     </td>
                   </tr>
                 ) : projectItems.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400">
+                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">
                       В проекте нет позиций
                     </td>
                   </tr>
@@ -1685,8 +1685,8 @@ const [projectItemsError, setProjectItemsError] =
 
                     return (
                         <tr key={item.id} className="hover:bg-background/50">
-                          <td className="px-4 py-3 text-sm text-slate-700">{item.product?.name ?? "—"}</td>
-                          <td className="px-4 py-3 text-sm text-slate-700">
+                          <td className="px-4 py-3 text-sm text-foreground">{item.product?.name ?? "—"}</td>
+                          <td className="px-4 py-3 text-sm text-foreground">
                             {item.supplier_raw_name ?? item.supplier?.supplier_name ?? "—"}
                           </td>
                           <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
@@ -1696,7 +1696,7 @@ const [projectItemsError, setProjectItemsError] =
                           <td className="px-4 py-3 text-sm font-mono font-semibold">{total.toLocaleString("ru-RU")}</td>
                           <td className="px-4 py-3">
                           <span
-                              className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 text-green-700 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" : "bg-red-50 text-red-700 ring-1 ring-red-200"}`}>
+                              className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-1 ring-red-200"}`}>
                             {margin.toFixed(1)}%
                           </span>
                           </td>
@@ -1722,7 +1722,7 @@ const [projectItemsError, setProjectItemsError] =
                       onChange={(e) => setRejectReason(e.target.value)}
                       placeholder="Причина отклонения (необязательно)"
                       rows={3}
-                      className="w-full rounded-lg border border-border px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-200"
+                      className="w-full rounded-lg border border-border px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-red-200"
                     />
                     <div className="flex items-center gap-3">
                       <button
@@ -1733,7 +1733,7 @@ const [projectItemsError, setProjectItemsError] =
                       </button>
                       <button
                         onClick={() => { setShowRejectForm(false); setRejectReason(""); }}
-                        className="px-5 py-2.5 bg-card text-slate-600 text-sm font-medium rounded-lg border border-border hover:bg-background transition-colors whitespace-nowrap"
+                        className="px-5 py-2.5 bg-card text-muted-foreground text-sm font-medium rounded-lg border border-border hover:bg-background transition-colors whitespace-nowrap"
                       >
                         Отмена
                       </button>
@@ -1746,19 +1746,19 @@ const [projectItemsError, setProjectItemsError] =
                       <CheckCircle2 size={15}/> Подтверждаю
                     </button>
                     <button onClick={() => decide(false)} disabled={!project}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-card text-red-600 text-sm font-medium rounded-lg border border-border hover:bg-red-50 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+                            className="flex items-center gap-2 px-5 py-2.5 bg-card text-destructive text-sm font-medium rounded-lg border border-border hover:bg-red-50 dark:bg-red-400/15 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                       <XCircle size={15}/> Отклонить КП
                     </button>
                   </div>
                 )
             ) : decision ? (
-                <div className="flex items-center gap-2 px-4 py-3 bg-green-50 rounded-lg border border-green-200">
-                  <CheckCircle2 size={16} className="text-green-600"/><span
-                    className="text-sm font-medium text-green-700">КП подтверждено</span></div>
+                <div className="flex items-center gap-2 px-4 py-3 bg-green-50 dark:bg-green-400/15 rounded-lg border border-green-200 dark:border-green-400/25">
+                  <CheckCircle2 size={16} className="text-green-600 dark:text-green-400"/><span
+                    className="text-sm font-medium text-green-700 dark:text-green-300">КП подтверждено</span></div>
             ) : (
-                <div className="flex items-center gap-2 px-4 py-3 bg-red-50 rounded-lg border border-red-200"><XCircle
-                    size={16} className="text-red-600"/><span
-                    className="text-sm font-medium text-red-700">КП отклонено</span></div>
+                <div className="flex items-center gap-2 px-4 py-3 bg-red-50 dark:bg-red-400/15 rounded-lg border border-red-200 dark:border-red-400/25"><XCircle
+                    size={16} className="text-destructive"/><span
+                    className="text-sm font-medium text-red-700 dark:text-red-300">КП отклонено</span></div>
             )}
           </div>
         </div>
@@ -1767,7 +1767,7 @@ const [projectItemsError, setProjectItemsError] =
           <div className="bg-card rounded-lg border border-border p-5">
             <h3 className="text-sm font-semibold text-foreground mb-3">Детали</h3>
             {projectError ? (
-                <div className="flex items-start gap-2.5 text-red-600">
+                <div className="flex items-start gap-2.5 text-destructive">
                   <AlertTriangle
                       size={15}
                       className="mt-0.5 flex-shrink-0"
@@ -1778,7 +1778,7 @@ const [projectItemsError, setProjectItemsError] =
                       Не удалось загрузить детали проекта
                     </p>
 
-                    <p className="mt-1 text-xs text-red-500">
+                    <p className="mt-1 text-xs text-destructive">
                       {projectError}
                     </p>
                   </div>
@@ -1790,11 +1790,11 @@ const [projectItemsError, setProjectItemsError] =
                           key={label}
                           className="flex items-start justify-between gap-3"
                       >
-                        <dt className="text-xs text-slate-400">
+                        <dt className="text-xs text-muted-foreground">
                           {label}
                         </dt>
 
-                        <dd className="text-right text-xs font-medium text-slate-700">
+                        <dd className="text-right text-xs font-medium text-foreground">
                           {value}
                         </dd>
                       </div>
@@ -1831,7 +1831,7 @@ export function ProjectPageAccountant({projectId}: { projectId: number }) {
           <button
             onClick={handleExportExcel}
             disabled={isExporting}
-            className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-card border border-border text-slate-600 text-xs font-medium rounded hover:bg-background transition-colors whitespace-nowrap disabled:opacity-50"
+            className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-card border border-border text-muted-foreground text-xs font-medium rounded hover:bg-background transition-colors whitespace-nowrap disabled:opacity-50"
           >
             {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />}
             {isExporting ? "Скачивание..." : "Скачать Excel"}
@@ -1847,8 +1847,8 @@ export function ProjectPageAccountant({projectId}: { projectId: number }) {
           <tbody className="divide-y divide-border">
             {INVOICES_INIT.slice(0,3).map(inv => (
               <tr key={inv.id} className="hover:bg-background/50">
-                <td className="px-4 py-3 text-xs font-mono text-slate-600">{inv.id}</td>
-                <td className="px-4 py-3 text-sm text-slate-700">{inv.supplier}</td>
+                <td className="px-4 py-3 text-xs font-mono text-muted-foreground">{inv.id}</td>
+                <td className="px-4 py-3 text-sm text-foreground">{inv.supplier}</td>
                 <td className="px-4 py-3 text-sm font-mono text-foreground">{fmt(inv.amount)}</td>
                 <td className="px-4 py-3"><Chip status={inv.status} /></td>
                 <td className="px-4 py-3">{inv.status === "approved" && <button className="text-xs px-2.5 py-1 bg-success text-success-foreground rounded font-medium hover:bg-success/90 transition-colors whitespace-nowrap">Оплатить</button>}</td>
@@ -1869,10 +1869,10 @@ export function ProjectPageWarehouse() {
         <div className="space-y-2">
           {STOCK_INIT.slice(0,4).map(item => (
             <div key={item.id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
-              <span className="text-sm text-slate-700">{item.name}</span>
+              <span className="text-sm text-foreground">{item.name}</span>
               <div className="flex items-center gap-3">
-                <span className="text-xs text-violet-600 font-medium">{item.reserved} {item.unit} зарезервировано</span>
-                <span className="text-xs text-green-600 font-medium">{item.available} доступно</span>
+                <span className="text-xs text-violet-600 dark:text-violet-400 font-medium">{item.reserved} {item.unit} зарезервировано</span>
+                <span className="text-xs text-green-600 dark:text-green-400 font-medium">{item.available} доступно</span>
               </div>
             </div>
           ))}
