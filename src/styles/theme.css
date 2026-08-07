@@ -238,3 +238,16 @@
     }
   }
 }
+
+/* Premium ambient motion — login branding panel.
+   Kept as slow, low-amplitude loops; globally muted by the
+   prefers-reduced-motion rule above. */
+@keyframes kerneu-breathe {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+@keyframes kerneu-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
