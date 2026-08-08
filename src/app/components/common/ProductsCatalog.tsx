@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { createPortal } from "react-dom";
 import { Package, X, ExternalLink, Loader2, TrendingUp, TrendingDown, Minus, Wallet, ArrowDownCircle, ArrowUpCircle } from "lucide-react";
 
 // --- Типы данных (соответствуют backend-модели) ---
@@ -235,18 +236,16 @@ export default function ProductsCatalog() {
   return (
     <>
       {/* --- Кнопка --- */}
-      <div className="fixed bottom-6 left-6 z-40">
-        <button
-          onClick={openCatalog}
-          className="flex items-center gap-2 px-4 py-2.5 bg-foreground hover:bg-foreground/90 text-background text-sm font-medium rounded-lg shadow-md transition-colors"
-        >
-          <Package size={18} />
-          Каталог товаров
-        </button>
-      </div>
+      <button
+        onClick={openCatalog}
+        className="flex items-center gap-2 px-4 py-2.5 bg-foreground hover:bg-foreground/90 text-background text-sm font-medium rounded-lg shadow-md transition-colors w-full"
+      >
+        <Package size={18} />
+        Каталог товаров
+      </button>
 
       {/* --- Список товаров --- */}
-      {isMainModalOpen && (
+      {isMainModalOpen && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
           <div className="bg-card rounded-xl shadow-modal w-full max-w-xl max-h-[75vh] flex flex-col border border-border animate-in fade-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
@@ -314,11 +313,12 @@ export default function ProductsCatalog() {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* --- Детали товара + история цен --- */}
-      {selectedProduct && (
+      {selectedProduct && createPortal(
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
           <div className="bg-card rounded-xl shadow-modal w-full max-w-3xl max-h-[85vh] flex flex-col border border-border animate-in fade-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
@@ -534,7 +534,8 @@ export default function ProductsCatalog() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
