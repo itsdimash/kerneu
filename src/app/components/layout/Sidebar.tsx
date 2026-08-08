@@ -2,6 +2,7 @@ import { useState } from "react";
 import { FolderOpen, FileText, ShoppingCart, Package, CheckSquare, Receipt, LayoutDashboard, X, Search, History } from "lucide-react";
 import type { Page, Role, ProjectState } from "../../../types";
 import { KerneuLogo } from "../common/KerneuLogo";
+import ProductsCatalog from "../common/ProductsCatalog";
 
 export const NAV: { id: Page; label: string; icon: React.ElementType; badge?: number; roles: Role[] }[] = [
   { id: "dashboard",   label: "Дашборд",    icon: LayoutDashboard, roles: ["commercial_director", "pm"] },
@@ -90,6 +91,10 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject, mobil
             );
           })}
         </nav>
+
+        <div className="px-3 py-3 border-t border-sidebar-border flex-shrink-0">
+          <ProductsCatalog />
+        </div>
       </aside>
 
       {showProjectModal && (

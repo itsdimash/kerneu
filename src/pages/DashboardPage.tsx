@@ -11,7 +11,7 @@ import { getStageMeta } from "../lib/projectStage";
 import { PROJECTS } from "../data/projects";
 import { STOCK_INIT } from "../data/stock";
 import { INVOICES_INIT } from "../data/invoices";
-import { RobotFleetWidget } from "../app/components/common/RobotFleetWidget";
+import { ProjectStatusBreakdown } from "../app/components/common/ProjectStatusBreakdown";
 import { RevenueTrendWidget } from "../app/components/common/RevenueTrendWidget";
 import {
   Plus, FolderOpen, Send, TrendingUp, AlertTriangle, Inbox, BarChart2, 
@@ -851,7 +851,7 @@ const handleSave = async () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         <RevenueTrendWidget />
-        <RobotFleetWidget />
+        <ProjectStatusBreakdown />
       </div>
 
       <SectionHeader title="Проекты" action={

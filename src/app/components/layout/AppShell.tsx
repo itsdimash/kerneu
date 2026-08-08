@@ -20,7 +20,6 @@ import { ProcurementPage } from "../../../pages/ProcurementPage";
 import { WarehousePage } from "../../../pages/WarehousePage";
 import { DocumentsPage } from "../../../pages/DocumentsPage";
 import { SupplierHistoryPage } from "../../../pages/SupplierHistoryPage";
-import ProductsCatalog from '../common/ProductsCatalog';
 
 type UserData = {
   id: number;
@@ -292,9 +291,6 @@ export function AppShell({
           )}
 
           {page === "suppliers" && <SupplierHistoryPage />}
-          
-          {/* ВСТАВИТЬ ЭТУ СТРОКУ СЮДА: */}
-      <ProductsCatalog />
         </main>
       </div>
     </div>
