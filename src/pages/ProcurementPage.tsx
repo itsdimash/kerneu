@@ -268,9 +268,12 @@ export function ProcurementPage({
   const [expandedSuppliers, setExpandedSuppliers] = useState<Record<string, boolean>>({});
   const [supplierWorkflows, setSupplierWorkflows] = useState<Record<string, SupplierWorkflowState>>({});
 
-  // Модалка выбора склада для отправки на приход
+  // Модалка выбора склада для отправки на приход — теперь привязана к
+  // конкретному поставщику (incomeModalSupplier), а не ко всем сразу:
+  // любой поставщик можно отправить на любой склад независимо от других.
   const [warehouses, setWarehouses] = useState<WarehouseInfo[]>([]);
   const [isIncomeModalOpen, setIsIncomeModalOpen] = useState(false);
+  const [incomeModalSupplier, setIncomeModalSupplier] = useState<string | null>(null);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<number>(1);
   const [isSendingToIncome, setIsSendingToIncome] = useState(false);
 
@@ -534,120 +537,88 @@ export function ProcurementPage({
     }
   };
 
-  const pendingSendSuppliers = useMemo(() => {
-    return supplierKeys.filter(sup => isAwaitingSend(supplierWorkflows[sup]?.status ?? 'draft'));
-  }, [supplierKeys, supplierWorkflows]);
+  // NEW: "Отправить на проверку" — теперь per-supplier, а не одной общей
+  // кнопкой на всех сразу. PM или бухгалтер отправляет счёт конкретного
+  // поставщика директору независимо от остальных поставщиков проекта.
+  const handleSendToCheck = async (supplier: string) => {
+    const wf = supplierWorkflows[supplier];
+    if (!wf?.docId) return;
 
-  const pendingSendSuppliersWithFile = useMemo(() => {
-    return pendingSendSuppliers.filter(sup => !!(supplierWorkflows[sup]?.file || supplierWorkflows[sup]?.fileName));
-  }, [pendingSendSuppliers, supplierWorkflows]);
-
-  const hasPendingSendSuppliers = pendingSendSuppliers.length > 0;
-  const allPendingSendFilesUploaded = pendingSendSuppliers.length > 0 && pendingSendSuppliers.length === pendingSendSuppliersWithFile.length;
-
-  const hasRejectedPendingSuppliers = useMemo(() => {
-    return pendingSendSuppliers.some(sup => {
-      const st = supplierWorkflows[sup]?.status;
-      return st === 'rejected_by_accountant' || st === 'rejected_by_director';
-    });
-  }, [pendingSendSuppliers, supplierWorkflows]);
-
-  const allSuppliersApproved = useMemo(() => {
-    if (supplierKeys.length === 0) return false;
-    return supplierKeys.every(sup => {
-      const st = supplierWorkflows[sup]?.status;
-      return st === 'approved' || st === 'income';
-    });
-  }, [supplierKeys, supplierWorkflows]);
-
-  const canGlobalSendToIncome = allSuppliersApproved;
-
-  const allSuppliersIncomed = useMemo(() => {
-    if (supplierKeys.length === 0) return false;
-    return supplierKeys.every(sup => supplierWorkflows[sup]?.status === 'income');
-  }, [supplierKeys, supplierWorkflows]);
-
-  const [isSendingToCheck, setIsSendingToCheck] = useState(false);
-
-  const handleGlobalSendToCheck = async () => {
-    const targets = pendingSendSuppliersWithFile;
-    if (targets.length === 0) return;
-
-    setIsSendingToCheck(true);
+    updateSupplierWorkflow(supplier, { actionLoading: true });
     try {
-      await Promise.all(
-        targets.map(sup => {
-          const docId = supplierWorkflows[sup]?.docId;
-          return docId ? sendInvoiceToCheck(docId) : Promise.resolve();
-        })
-      );
-      setSupplierWorkflows(prev => {
-        const next = { ...prev };
-        targets.forEach(sup => {
-          if (next[sup]) {
-            next[sup] = {
-              ...next[sup],
-              status: 'pending_accountant',
-              rejectionReason: null,
-            };
-          }
-        });
-        return next;
+      await sendInvoiceToCheck(wf.docId);
+      // Бэкенд (send_invoice_to_check) переводит счёт сразу в
+      // 'pending_director' — отдельного шага согласования бухгалтером
+      // больше нет, поэтому и здесь ставим 'pending_director', а не
+      // легаси 'pending_accountant'.
+      updateSupplierWorkflow(supplier, {
+        status: 'pending_director',
+        rejectionReason: null,
+        actionLoading: false,
       });
     } catch (error) {
       console.error("Send to check failed", error);
-      alert("Не удалось отправить счета на проверку.");
-    } finally {
-      setIsSendingToCheck(false);
+      alert("Не удалось отправить счёт на проверку.");
+      updateSupplierWorkflow(supplier, { actionLoading: false });
     }
   };
 
-  const handleOpenSendToIncomeModal = () => {
-    if (!canGlobalSendToIncome) return;
+  // NEW: "Отправить на приход" — открывает модалку выбора склада для
+  // ОДНОГО конкретного поставщика. Любой поставщик можно отправить на
+  // любой склад независимо от остальных.
+  const handleOpenSendToIncomeModal = (supplier: string) => {
+    const wf = supplierWorkflows[supplier];
+    if (!wf || wf.status !== 'approved') return;
+    setIncomeModalSupplier(supplier);
     setIsIncomeModalOpen(true);
   };
 
-  const handleConfirmGlobalSendToIncome = async () => {
-    if (!selectedWarehouseId) return;
+  const closeIncomeModal = () => {
+    setIsIncomeModalOpen(false);
+    setIncomeModalSupplier(null);
+  };
 
-    const approvedSuppliers = supplierKeys.filter(
-      sup => supplierWorkflows[sup]?.status === 'approved'
-    );
-    if (approvedSuppliers.length === 0) {
-      setIsIncomeModalOpen(false);
+  const handleConfirmSendToIncome = async () => {
+    const supplier = incomeModalSupplier;
+    if (!supplier || !selectedWarehouseId) return;
+
+    const wf = supplierWorkflows[supplier];
+    const docId = wf?.docId;
+    if (!docId) {
+      closeIncomeModal();
       return;
     }
 
     setIsSendingToIncome(true);
     try {
-      await Promise.all(
-        approvedSuppliers.map(sup => {
-          const docId = supplierWorkflows[sup]?.docId;
-          if (!docId) return Promise.resolve();
+      const items = (groupedItems[supplier] || []).map(item => ({
+        product_id: Number(item.product_id ?? item.product?.id ?? item.id),
+        quantity: toNumber(item.required_quantity ?? item.quantity),
+        purchase_price: getPurchasePrice(item),
+      }));
 
-          const items = (groupedItems[sup] || []).map(item => ({
-            product_id: Number(item.product_id ?? item.product?.id ?? item.id),
-            quantity: toNumber(item.required_quantity ?? item.quantity),
-            purchase_price: getPurchasePrice(item),
-          }));
+      const itemWithoutPurchasePrice = items.find(item => item.purchase_price <= 0);
+      if (itemWithoutPurchasePrice) {
+        throw new Error(
+          `Не указана себестоимость товара №${itemWithoutPurchasePrice.product_id}`
+        );
+      }
 
-          const itemWithoutPurchasePrice = items.find(
-            item => item.purchase_price <= 0
-          );
-          if (itemWithoutPurchasePrice) {
-            throw new Error(
-              `Не указана себестоимость товара №${itemWithoutPurchasePrice.product_id}`
-            );
-          }
+      await sendInvoiceToIncomeApi(docId, selectedWarehouseId, items);
 
-          return sendInvoiceToIncomeApi(docId, selectedWarehouseId, items);
-        })
-      );
+      const nextWorkflows = {
+        ...supplierWorkflows,
+        [supplier]: { ...wf, status: 'income' as InvoiceWorkflowStatus },
+      };
+      setSupplierWorkflows(nextWorkflows);
 
-      // Переводит проект в статус "На приходе" на бэкенде — как только
-      // друг реализует /send-to-receiving, ProjectPage сразу подхватит
-      // новый статус: "Активный закуп" станет done, "На приходе" — active.
-      if (selectedProject) {
+      // Переводит проект в статус "На приходе" на бэкенде, но только
+      // когда ЭТОТ поставщик оказался последним, ожидавшим отправки —
+      // т.е. после этого обновления все поставщики проекта в статусе
+      // 'income'. До этого момента у проекта ещё есть неотправленные
+      // поставщики, статус менять рано.
+      const allIncomedNow = supplierKeys.every(sup => nextWorkflows[sup]?.status === 'income');
+      if (allIncomedNow && selectedProject) {
         try {
           await sendProjectToReceiving(selectedProject.id);
           const nextStatus = { status_name: "На приходе" };
@@ -663,28 +634,23 @@ export function ProcurementPage({
         }
       }
 
-      setSupplierWorkflows(prev => {
-        const next = { ...prev };
-        approvedSuppliers.forEach(sup => {
-          if (next[sup]) {
-            next[sup] = { ...next[sup], status: 'income' };
-          }
-        });
-        return next;
-      });
-
-      setIsIncomeModalOpen(false);
+      closeIncomeModal();
     } catch (error) {
       console.error("Send to income failed", error);
       alert(
         error instanceof Error
           ? error.message
-          : "Не удалось отправить счета на приход."
+          : "Не удалось отправить счёт на приход."
       );
     } finally {
       setIsSendingToIncome(false);
     }
   };
+
+  const allSuppliersIncomed = useMemo(() => {
+    if (supplierKeys.length === 0) return false;
+    return supplierKeys.every(sup => supplierWorkflows[sup]?.status === 'income');
+  }, [supplierKeys, supplierWorkflows]);
 
   return (
     <PageWrap title="Закупки" subtitle="Оформление счетов и отправка на приход">
@@ -873,6 +839,22 @@ export function ProcurementPage({
                   </div>
 
                   <div className="flex items-center gap-3">
+                    {/* NEW: "Отправить на проверку" для ЭТОГО поставщика —
+                        доступно PM и бухгалтеру, пока файл загружен и счёт
+                        ещё не отправлен (draft / отклонён). */}
+                    {(isPm || isAccountant) && isAwaitingSend(wfState.status) && hasFile && !wfState.isUploading && (
+                      <button
+                        onClick={() => handleSendToCheck(supplier)}
+                        disabled={wfState.actionLoading}
+                        className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-white text-sm font-semibold rounded-lg shadow-sm transition-all active:scale-[0.97] disabled:opacity-50"
+                      >
+                        {wfState.actionLoading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                        {(wfState.status === 'rejected_by_director' || wfState.status === 'rejected_by_accountant')
+                          ? "Отправить заново"
+                          : "Отправить на проверку"}
+                      </button>
+                    )}
+
                     {isAccountant && wfState.status === 'pending_director' && (
                       <span className="text-xs text-muted-foreground italic flex items-center gap-1.5">
                         <AlertCircle size={13} className="text-amber-500 dark:text-amber-400" />
@@ -922,6 +904,27 @@ export function ProcurementPage({
                           </button>
                         </>
                       )
+                    )}
+
+                    {/* NEW: "Отправить на приход" для ЭТОГО поставщика —
+                        только PM, только когда директор уже одобрил счёт
+                        именно этого поставщика. Открывает модалку выбора
+                        склада (можно выбрать любой склад под каждого
+                        поставщика отдельно). */}
+                    {isPm && wfState.status === 'approved' && (
+                      <button
+                        onClick={() => handleOpenSendToIncomeModal(supplier)}
+                        className="flex items-center gap-2.5 px-4 py-2 text-sm font-bold rounded-lg shadow-sm transition-all bg-success hover:bg-success/90 text-success-foreground cursor-pointer shadow-success/30 active:scale-[0.97]"
+                      >
+                        <PackageCheck size={16} />
+                        Отправить на приход
+                      </button>
+                    )}
+                    {!isPm && isAccountant && wfState.status === 'approved' && (
+                      <span className="text-xs text-muted-foreground italic flex items-center gap-1.5">
+                        <AlertCircle size={13} className="text-amber-500 dark:text-amber-400" />
+                        Директор подтвердил. Отправить на приход может только менеджер проекта.
+                      </span>
                     )}
                   </div>
                 </div>
@@ -981,83 +984,21 @@ export function ProcurementPage({
         );
       })}
 
-      {selectedProject && supplierKeys.length > 0 && (isPm || isAccountant) && (
+      {/* Общий баннер завершения — все поставщики проекта уже оприходованы.
+          Сами кнопки отправки теперь живут внутри карточки каждого
+          поставщика (см. выше), общих кнопок на всех сразу больше нет. */}
+      {selectedProject && supplierKeys.length > 0 && allSuppliersIncomed && (
         <div className="mt-8 mb-10 flex flex-col items-end gap-3 border-t border-border pt-6">
-          {allSuppliersIncomed ? (
-            <div className="flex items-center gap-2 px-5 py-3 bg-success-muted border border-success/20 text-success rounded-xl text-sm font-medium shadow-sm">
-              <PackageCheck size={18} className="text-success" />
-              Все закупки проекта отправлены на приход!
-            </div>
-          ) : (
-            <>
-              {/* Отправка на проверку директору — доступна и PM, и бухгалтеру,
-                  т.к. оба могут загружать счета. */}
-              {hasPendingSendSuppliers && (
-                <div className="flex flex-col items-end gap-2">
-                  {!allPendingSendFilesUploaded && (
-                    <p className="text-xs text-muted-foreground flex items-center gap-1.5 bg-muted px-3 py-1.5 rounded-lg">
-                      <AlertCircle size={13} className="text-amber-500 dark:text-amber-400" />
-                      Загружено {pendingSendSuppliersWithFile.length} из {pendingSendSuppliers.length} счетов, ожидающих отправки.
-                    </p>
-                  )}
-
-                  <button
-                    onClick={handleGlobalSendToCheck}
-                    disabled={!allPendingSendFilesUploaded || isSendingToCheck}
-                    className={`flex items-center gap-2.5 px-6 py-3 text-sm font-bold rounded-xl shadow-sm transition-all ${
-                      allPendingSendFilesUploaded && !isSendingToCheck
-                        ? "bg-primary hover:bg-primary/90 text-white cursor-pointer active:scale-[0.97]"
-                        : "bg-muted text-muted-foreground cursor-not-allowed border border-border"
-                    }`}
-                  >
-                    {isSendingToCheck ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                    {hasRejectedPendingSuppliers ? "Отправить заново" : "Отправить на проверку"}
-                  </button>
-                </div>
-              )}
-
-              {/* Отправка на приход — только PM, ровно как раньше. */}
-              {!hasPendingSendSuppliers && isPm && (
-                <div className="flex flex-col items-end gap-2">
-                  {!canGlobalSendToIncome && (
-                    <p className="text-xs text-muted-foreground flex items-center gap-1.5 bg-muted px-3 py-1.5 rounded-lg">
-                      <AlertCircle size={13} className="text-amber-500 dark:text-amber-400" />
-                      Счета отправлены на проверку. Кнопка «Отправить на приход» станет активной после того, как Директор подтвердит всё.
-                    </p>
-                  )}
-
-                  <button
-                    onClick={handleOpenSendToIncomeModal}
-                    disabled={!canGlobalSendToIncome}
-                    className={`flex items-center gap-2.5 px-6 py-3 text-sm font-bold rounded-xl shadow-sm transition-all ${
-                      canGlobalSendToIncome
-                        ? "bg-success hover:bg-success/90 text-success-foreground cursor-pointer shadow-success/30 active:scale-[0.97]"
-                        : "bg-muted text-muted-foreground cursor-not-allowed border border-border"
-                    }`}
-                  >
-                    <PackageCheck size={18} />
-                    Отправить на приход
-                  </button>
-                </div>
-              )}
-
-              {/* Бухгалтер видит статус, но саму отправку на приход
-                  делает только PM. */}
-              {!hasPendingSendSuppliers && !isPm && isAccountant && (
-                <p className="text-xs text-muted-foreground italic flex items-center gap-1.5 bg-muted px-3 py-1.5 rounded-lg">
-                  <AlertCircle size={13} className="text-amber-500 dark:text-amber-400" />
-                  {canGlobalSendToIncome
-                    ? "Директор подтвердил все счета. Отправить на приход может только менеджер проекта."
-                    : "Счета отправлены директору на проверку."}
-                </p>
-              )}
-            </>
-          )}
+          <div className="flex items-center gap-2 px-5 py-3 bg-success-muted border border-success/20 text-success rounded-xl text-sm font-medium shadow-sm">
+            <PackageCheck size={18} className="text-success" />
+            Все закупки проекта отправлены на приход!
+          </div>
         </div>
       )}
 
-      {/* Модальное окно выбора склада для отправки на приход */}
-      {isIncomeModalOpen && (
+      {/* Модальное окно выбора склада для отправки на приход конкретного
+          поставщика (incomeModalSupplier). */}
+      {isIncomeModalOpen && incomeModalSupplier && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-md bg-card rounded-xl shadow-xl p-6 border border-border">
             <div className="flex items-center justify-between mb-4">
@@ -1065,13 +1006,14 @@ export function ProcurementPage({
                 <Building2 className="text-blue-600 dark:text-blue-400" size={20} />
                 <h3>Выбор склада для поступления</h3>
               </div>
-              <button onClick={() => setIsIncomeModalOpen(false)} className="text-muted-foreground hover:text-muted-foreground">
+              <button onClick={closeIncomeModal} className="text-muted-foreground hover:text-muted-foreground">
                 <X size={18} />
               </button>
             </div>
 
             <p className="text-xs text-muted-foreground mb-4">
-              Выберите склад, на который кладовщик будет принимать ожидаемый товар по одобренным счетам:
+              Выберите склад, на который кладовщик будет принимать ожидаемый товар поставщика{" "}
+              <span className="font-semibold text-foreground">«{incomeModalSupplier}»</span>:
             </p>
 
             <div className="space-y-2 mb-6">
@@ -1101,13 +1043,13 @@ export function ProcurementPage({
 
             <div className="flex justify-end gap-3">
               <button
-                onClick={() => setIsIncomeModalOpen(false)}
+                onClick={closeIncomeModal}
                 className="px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted rounded-lg"
               >
                 Отмена
               </button>
               <button
-                onClick={handleConfirmGlobalSendToIncome}
+                onClick={handleConfirmSendToIncome}
                 disabled={isSendingToIncome}
                 className="flex items-center gap-2 px-5 py-2 text-xs font-semibold bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50"
               >
