@@ -15,7 +15,6 @@ import {
   UploadCloud,
   RefreshCw,
   ChevronDown,
-  ChevronUp,
   FileText,
   Send,
   Check,
@@ -153,9 +152,6 @@ async function postInvoiceAction(documentId: number, action: string, body?: unkn
 }
 
 const sendInvoiceToCheck = (documentId: number) => postInvoiceAction(documentId, "send-to-check");
-const accountantApproveInvoice = (documentId: number) => postInvoiceAction(documentId, "accountant-approve");
-const accountantRejectInvoice = (documentId: number, reason: string) =>
-  postInvoiceAction(documentId, "accountant-reject", { reason });
 const directorApproveInvoice = (documentId: number) => postInvoiceAction(documentId, "director-approve");
 const directorRejectInvoice = (documentId: number, reason: string) =>
   postInvoiceAction(documentId, "director-reject", { reason });
@@ -501,43 +497,6 @@ export function ProcurementPage({
   const closeRejectForm = (supplier: string) => updateSupplierWorkflow(supplier, { rejectFormOpen: false, rejectDraftReason: "" });
   const setRejectDraftReason = (supplier: string, value: string) => updateSupplierWorkflow(supplier, { rejectDraftReason: value });
 
-  const handleAccountantApprove = async (supplier: string) => {
-    const docId = supplierWorkflows[supplier]?.docId;
-    if (!docId) return;
-    updateSupplierWorkflow(supplier, { actionLoading: true });
-    try {
-      await accountantApproveInvoice(docId);
-      updateSupplierWorkflow(supplier, { status: 'pending_director', accountantApproved: true, actionLoading: false });
-    } catch (error) {
-      console.error("Accountant approve failed", error);
-      alert("Не удалось подтвердить счёт.");
-      updateSupplierWorkflow(supplier, { actionLoading: false });
-    }
-  };
-
-  const handleAccountantReject = async (supplier: string) => {
-    const wf = supplierWorkflows[supplier];
-    const reason = wf?.rejectDraftReason?.trim();
-    if (!wf?.docId || !reason) return;
-    updateSupplierWorkflow(supplier, { actionLoading: true });
-    try {
-      await accountantRejectInvoice(wf.docId, reason);
-      updateSupplierWorkflow(supplier, {
-        status: 'rejected_by_accountant',
-        accountantApproved: false,
-        directorApproved: false,
-        rejectionReason: reason,
-        rejectFormOpen: false,
-        rejectDraftReason: "",
-        actionLoading: false,
-      });
-    } catch (error) {
-      console.error("Accountant reject failed", error);
-      alert("Не удалось отклонить счёт.");
-      updateSupplierWorkflow(supplier, { actionLoading: false });
-    }
-  };
-
   const handleDirectorApprove = async (supplier: string) => {
     const docId = supplierWorkflows[supplier]?.docId;
     if (!docId) return;
@@ -796,7 +755,7 @@ export function ProcurementPage({
         const hasFile = !!(wfState.file || wfState.fileName);
         
         return (
-          <div key={supplier} className="bg-card rounded-lg border border-border mb-5 shadow-sm overflow-hidden transition-all">
+          <div key={supplier} className="bg-card rounded-lg border border-border mb-5 shadow-sm overflow-hidden transition-all duration-200 hover:shadow-md hover:border-primary/20">
             <div 
               className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-4 bg-background cursor-pointer hover:bg-muted/50 border-b border-border"
               onClick={() => toggleSupplier(supplier)}
@@ -829,24 +788,16 @@ export function ProcurementPage({
                   </span>
                 )}
 
-                {(wfState.status === 'pending_accountant' || wfState.status === 'pending_director') && (
-                  <div className="flex items-center gap-1.5">
-                    <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${wfState.accountantApproved ? "bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300"}`}>
-                      {wfState.accountantApproved ? "✓ Бухгалтер" : "⏳ Бухгалтер"}
-                    </span>
-                    <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                      wfState.directorApproved
-                        ? "bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300"
-                        : wfState.status === 'pending_director'
-                          ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300"
-                          : "bg-muted text-muted-foreground"
-                    }`}>
-                      {wfState.directorApproved ? "✓ Директор" : wfState.status === 'pending_director' ? "⏳ Директор" : "— Директор"}
-                    </span>
-                  </div>
+                {(wfState.status === 'pending_director' || wfState.status === 'pending_accountant') && (
+                  <span className="px-2.5 py-1 text-xs font-semibold bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 rounded-full flex items-center gap-1 animate-pulse">
+                    <AlertCircle size={12}/> На проверке у директора
+                  </span>
                 )}
 
-                {isExpanded ? <ChevronUp size={16} className="text-muted-foreground" /> : <ChevronDown size={16} className="text-muted-foreground" />}
+                <ChevronDown
+                  size={16}
+                  className={`text-muted-foreground transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}
+                />
               </div>
             </div>
 
@@ -860,7 +811,7 @@ export function ProcurementPage({
                         Отклонено {wfState.status === 'rejected_by_director' ? 'директором' : 'бухгалтером'}:
                       </span>{" "}
                       {wfState.rejectionReason}
-                      {isPm && (
+                      {(isPm || isAccountant) && (
                         <span className="block mt-1 text-destructive/80">
                           Замените файл счёта и отправьте его на проверку заново.
                         </span>
@@ -876,7 +827,7 @@ export function ProcurementPage({
                           <Loader2 size={16} className="animate-spin text-primary" /> Загрузка файла...
                        </div>
                     ) : !hasFile ? (
-                      isPm ? (
+                      (isPm || isAccountant) ? (
                         <label className="flex items-center gap-2 px-4 py-2 bg-background border border-border text-foreground text-sm font-medium rounded-lg cursor-pointer hover:bg-muted transition-colors">
                           <UploadCloud size={16} className="text-primary" />
                           Загрузить Счет на оплату
@@ -905,7 +856,7 @@ export function ProcurementPage({
                           <Download size={13}/> Скачать
                         </button>
                         
-                        {isPm && isAwaitingSend(wfState.status) && (
+                        {(isPm || isAccountant) && isAwaitingSend(wfState.status) && (
                           <label className="text-xs font-medium text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1 ml-2">
                             Заменить
                             <input 
@@ -922,56 +873,11 @@ export function ProcurementPage({
                   </div>
 
                   <div className="flex items-center gap-3">
-                    {isAccountant && wfState.status === 'pending_accountant' && (
-                      wfState.rejectFormOpen ? (
-                        <div className="flex flex-col gap-2 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg p-3 w-full sm:w-80">
-                          <label className="text-xs font-medium text-red-700 dark:text-red-300">Причина отклонения</label>
-                          <textarea
-                            value={wfState.rejectDraftReason || ""}
-                            onChange={(e) => setRejectDraftReason(supplier, e.target.value)}
-                            placeholder="Что нужно исправить в счёте?"
-                            rows={2}
-                            className="text-sm border border-red-200 dark:border-red-400/25 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-red-400 resize-none"
-                          />
-                          <div className="flex items-center justify-end gap-2">
-                            <button onClick={() => closeRejectForm(supplier)} className="text-xs text-muted-foreground hover:underline">
-                              Отмена
-                            </button>
-                            <button
-                              onClick={() => handleAccountantReject(supplier)}
-                              disabled={!wfState.rejectDraftReason?.trim() || wfState.actionLoading}
-                              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white text-xs font-semibold rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
-                            >
-                              <XCircle size={13}/> Отклонить счёт
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          <button
-                            onClick={() => openRejectForm(supplier)}
-                            disabled={wfState.actionLoading}
-                            className="flex items-center gap-2 px-4 py-2 bg-card border border-red-200 dark:border-red-400/25 text-destructive text-sm font-medium rounded-lg hover:bg-red-50 dark:bg-red-400/15 transition-colors disabled:opacity-50"
-                          >
-                            <XCircle size={14}/> Отклонить
-                          </button>
-                          <button
-                            onClick={() => handleAccountantApprove(supplier)}
-                            disabled={wfState.actionLoading}
-                            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
-                          >
-                            <Check size={14}/> Одобрить (Бухгалтер)
-                          </button>
-                        </>
-                      )
-                    )}
-                    {isAccountant && (wfState.status === 'pending_director' || wfState.status === 'approved' || wfState.status === 'income') && (
-                      <span className="text-xs font-semibold text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-400/15 px-3 py-1.5 rounded-lg border border-green-200 dark:border-green-400/25 flex items-center gap-1">
-                        <CheckCircle2 size={13} /> Бухгалтер подтвердил
+                    {isAccountant && wfState.status === 'pending_director' && (
+                      <span className="text-xs text-muted-foreground italic flex items-center gap-1.5">
+                        <AlertCircle size={13} className="text-amber-500 dark:text-amber-400" />
+                        Ожидает решения директора
                       </span>
-                    )}
-                    {isAccountant && isAwaitingSend(wfState.status) && (
-                      <span className="text-xs text-muted-foreground italic">Ожидает отправки от менеджера</span>
                     )}
 
                     {isDirector && wfState.status === 'pending_director' && (
@@ -1075,7 +981,7 @@ export function ProcurementPage({
         );
       })}
 
-      {selectedProject && supplierKeys.length > 0 && isPm && (
+      {selectedProject && supplierKeys.length > 0 && (isPm || isAccountant) && (
         <div className="mt-8 mb-10 flex flex-col items-end gap-3 border-t border-border pt-6">
           {allSuppliersIncomed ? (
             <div className="flex items-center gap-2 px-5 py-3 bg-success-muted border border-success/20 text-success rounded-xl text-sm font-medium shadow-sm">
@@ -1084,6 +990,8 @@ export function ProcurementPage({
             </div>
           ) : (
             <>
+              {/* Отправка на проверку директору — доступна и PM, и бухгалтеру,
+                  т.к. оба могут загружать счета. */}
               {hasPendingSendSuppliers && (
                 <div className="flex flex-col items-end gap-2">
                   {!allPendingSendFilesUploaded && (
@@ -1098,7 +1006,7 @@ export function ProcurementPage({
                     disabled={!allPendingSendFilesUploaded || isSendingToCheck}
                     className={`flex items-center gap-2.5 px-6 py-3 text-sm font-bold rounded-xl shadow-sm transition-all ${
                       allPendingSendFilesUploaded && !isSendingToCheck
-                        ? "bg-primary hover:bg-primary/90 text-white cursor-pointer"
+                        ? "bg-primary hover:bg-primary/90 text-white cursor-pointer active:scale-[0.97]"
                         : "bg-muted text-muted-foreground cursor-not-allowed border border-border"
                     }`}
                   >
@@ -1108,12 +1016,13 @@ export function ProcurementPage({
                 </div>
               )}
 
-              {!hasPendingSendSuppliers && (
+              {/* Отправка на приход — только PM, ровно как раньше. */}
+              {!hasPendingSendSuppliers && isPm && (
                 <div className="flex flex-col items-end gap-2">
                   {!canGlobalSendToIncome && (
                     <p className="text-xs text-muted-foreground flex items-center gap-1.5 bg-muted px-3 py-1.5 rounded-lg">
                       <AlertCircle size={13} className="text-amber-500 dark:text-amber-400" />
-                      Счета отправлены на проверку. Кнопка «Отправить на приход» станет активной после того, как Бухгалтер и Директор подтвердят всё.
+                      Счета отправлены на проверку. Кнопка «Отправить на приход» станет активной после того, как Директор подтвердит всё.
                     </p>
                   )}
 
@@ -1122,7 +1031,7 @@ export function ProcurementPage({
                     disabled={!canGlobalSendToIncome}
                     className={`flex items-center gap-2.5 px-6 py-3 text-sm font-bold rounded-xl shadow-sm transition-all ${
                       canGlobalSendToIncome
-                        ? "bg-success hover:bg-success/90 text-success-foreground cursor-pointer shadow-success/30"
+                        ? "bg-success hover:bg-success/90 text-success-foreground cursor-pointer shadow-success/30 active:scale-[0.97]"
                         : "bg-muted text-muted-foreground cursor-not-allowed border border-border"
                     }`}
                   >
@@ -1130,6 +1039,17 @@ export function ProcurementPage({
                     Отправить на приход
                   </button>
                 </div>
+              )}
+
+              {/* Бухгалтер видит статус, но саму отправку на приход
+                  делает только PM. */}
+              {!hasPendingSendSuppliers && !isPm && isAccountant && (
+                <p className="text-xs text-muted-foreground italic flex items-center gap-1.5 bg-muted px-3 py-1.5 rounded-lg">
+                  <AlertCircle size={13} className="text-amber-500 dark:text-amber-400" />
+                  {canGlobalSendToIncome
+                    ? "Директор подтвердил все счета. Отправить на приход может только менеджер проекта."
+                    : "Счета отправлены директору на проверку."}
+                </p>
               )}
             </>
           )}

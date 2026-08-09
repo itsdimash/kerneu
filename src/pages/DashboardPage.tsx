@@ -16,7 +16,8 @@ import { RevenueTrendWidget } from "../app/components/common/RevenueTrendWidget"
 import {
   Plus, FolderOpen, Send, TrendingUp, AlertTriangle, Inbox, BarChart2, 
   Clock, Check, X, CheckCircle2, XCircle, ChevronRight, MoreHorizontal,
-  Archive, Package, Truck, DollarSign, UploadCloud, FileText, Trash2, Loader2, Search
+  Archive, Package, Truck, DollarSign, UploadCloud, FileText, Trash2, Loader2, Search,
+  ArrowUpDown
 } from "lucide-react";
 import {
   fetchDashboardStats,
@@ -108,11 +109,21 @@ function projectStatusOrderIndex(statusName?: string | null): number {
   return idx === -1 ? PROJECT_STATUS_DISPLAY_ORDER.length : idx;
 }
 
+// Отдельный список для меню "Сортировать" — не трогаем
+// PROJECT_STATUS_DISPLAY_ORDER напрямую, т.к. он используется и для
+// сортировки таблицы по умолчанию (projectStatusOrderIndex). Убираем
+// "Новый"/"Новый проект" только из выпадающего меню сортировки по этапу.
+const SORT_MENU_STAGES = PROJECT_STATUS_DISPLAY_ORDER.filter(
+  (stage) => stage !== "Новый" && stage !== "Новый проект"
+);
+
 export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string; onNavigate: (p: Page) => void; onOpenProject: (projectId: number) => void }) {
   // Стейты для модального окна
   const [isKpModalOpen, setIsKpModalOpen] = useState(false);
   const [showAllProjects, setShowAllProjects] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
+  const [sortStage, setSortStage] = useState<string | null>(null);
+  const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [isNewClient, setIsNewClient] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState("");
   const [newClientForm, setNewClientForm] = useState({ name: "", email: "", phone: "" });
@@ -869,6 +880,56 @@ const handleSave = async () => {
           <button onClick={() => setShowAllProjects(!showAllProjects)} className="text-xs text-primary hover:underline flex items-center gap-1 whitespace-nowrap">
             {showAllProjects ? "Только активные" : "Все проекты"} <ChevronRight size={12} />
           </button>
+          <div className="relative">
+            <button
+              onClick={() => setIsSortMenuOpen((v) => !v)}
+              className={`text-xs flex items-center gap-1.5 whitespace-nowrap px-2.5 py-1.5 rounded-lg border transition-all duration-150 active:scale-95 ${
+                sortStage
+                  ? "border-primary text-primary bg-primary/5"
+                  : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
+              }`}
+            >
+              <ArrowUpDown
+                size={12}
+                className={`transition-transform duration-200 ${isSortMenuOpen ? "rotate-180" : ""}`}
+              />
+              {sortStage ? `Этап: ${sortStage}` : "Сортировать"}
+            </button>
+
+            {isSortMenuOpen && (
+              <>
+                {/* Клик вне меню закрывает его */}
+                <div className="fixed inset-0 z-10" onClick={() => setIsSortMenuOpen(false)} />
+                <div className="absolute right-0 top-full mt-2 w-56 overflow-hidden rounded-xl border border-border bg-card shadow-xl z-20 py-1 max-h-80 overflow-y-auto animate-in fade-in zoom-in-95 slide-in-from-top-1 duration-150 origin-top-right">
+                  <button
+                    onClick={() => {
+                      setSortStage(null);
+                      setIsSortMenuOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2 text-xs text-left hover:bg-muted transition-colors text-muted-foreground"
+                  >
+                    Без сортировки по этапу
+                    {!sortStage && <Check size={12} className="text-primary animate-in fade-in zoom-in duration-150" />}
+                  </button>
+                  <div className="h-px bg-muted my-1" />
+                  {SORT_MENU_STAGES.map((stageName, i) => (
+                    <button
+                      key={stageName}
+                      onClick={() => {
+                        setSortStage(stageName);
+                        setIsSortMenuOpen(false);
+                      }}
+                      style={{ animationDelay: `${i * 20}ms` }}
+                      className="w-full flex items-center justify-between px-3 py-2 text-xs text-left hover:bg-muted transition-colors text-foreground animate-in fade-in slide-in-from-top-1 duration-150 fill-mode-both"
+                    >
+                      {stageName}
+                      {sortStage === stageName && <Check size={12} className="text-primary animate-in fade-in zoom-in duration-150" />}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       } />
       <div className="bg-card rounded-lg border border-border overflow-visible mb-6">
@@ -893,12 +954,20 @@ const handleSave = async () => {
                   );
                 })
                 .slice()
-                .sort((a: any, b: any) =>
-                  projectStatusOrderIndex(a.status?.status_name) - projectStatusOrderIndex(b.status?.status_name)
-                )
+                .sort((a: any, b: any) => {
+                  if (sortStage) {
+                    // Выбранный этап — наверх; остальные — в обычном порядке следом
+                    const aMatches = a.status?.status_name === sortStage ? 0 : 1;
+                    const bMatches = b.status?.status_name === sortStage ? 0 : 1;
+                    if (aMatches !== bMatches) return aMatches - bMatches;
+                  }
+                  return (
+                    projectStatusOrderIndex(a.status?.status_name) - projectStatusOrderIndex(b.status?.status_name)
+                  );
+                })
                 .map((p: any) => {
                   return (
-                      <tr key={p.id} className="hover:bg-background/50 transition-colors">
+                      <tr key={p.id} className="hover:bg-background/50 transition-colors animate-in fade-in slide-in-from-top-1 duration-200 fill-mode-both">
 
                           {/* Проект */}
                           <td className="px-4 py-3">
