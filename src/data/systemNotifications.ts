@@ -111,7 +111,7 @@ export const MOCK_SYSTEM_NOTIFICATIONS: SystemNotification[] = [
   },
   {
     id: "n-docs-confirmed-1",
-    category: "docs_confirmed",
+    category: "docs_approved",
     forRole: ["pm", "admin"],
     projectId: 1039,
     projectName: "Android",

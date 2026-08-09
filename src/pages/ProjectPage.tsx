@@ -6,7 +6,7 @@ import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
 import { fmt } from "../lib/format";
 import { INVOICES_INIT } from "../data/invoices";
 import { STOCK_INIT } from "../data/stock";
-import { AlertTriangle, Calculator, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText, ChevronDown, Plus } from "lucide-react";
+import { AlertTriangle, Calculator, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText, ChevronDown, Plus, Pencil } from "lucide-react";
 import {
   fetchProjectDetails,
   fetchProjectItems,
@@ -218,6 +218,15 @@ export function ProjectPagePM({
   const [mlImport, setMlImport] = useState<MlImportDetailResponse | null>(null);
   const [mlImportLoading, setMlImportLoading] = useState(false);
   const [mlImportError, setMlImportError] = useState<string | null>(null);
+
+  // После confirm_ml_import черновик ml-импорта больше не отражает
+  // реальность — Комдир может поправить поставщика/себестоимость/цену
+  // прямо в ProjectItem, а строки ml-импорта останутся со старыми
+  // значениями. liveItems — это то же самое, что видит Комдир, читаем
+  // напрямую из /project-items, чтобы ПМ видел актуальные цифры.
+  const [liveItems, setLiveItems] = useState<ProjectItemResponse[]>([]);
+  const [liveItemsLoading, setLiveItemsLoading] = useState(false);
+  const [liveItemsError, setLiveItemsError] = useState<string | null>(null);
   const [updatingItemId, setUpdatingItemId] = useState<number | null>(null);
   const [confirmingImport, setConfirmingImport] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -352,6 +361,29 @@ export function ProjectPagePM({
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStatus]);
+
+  useEffect(() => {
+    if (!hasValidProjectId || mlImport?.status !== "confirmed") {
+      setLiveItems([]);
+      return;
+    }
+    let cancelled = false;
+    setLiveItemsLoading(true);
+    setLiveItemsError(null);
+    fetchProjectItems(resolvedProjectId)
+      .then((data) => { if (!cancelled) setLiveItems(data); })
+      .catch((error) => {
+        if (!cancelled) {
+          setLiveItemsError(error instanceof Error ? error.message : "Не удалось загрузить позиции проекта");
+        }
+      })
+      .finally(() => { if (!cancelled) setLiveItemsLoading(false); });
+    return () => { cancelled = true; };
+    // Перечитываем при каждой смене статуса проекта — например, когда
+    // Комдир сохранил правки и/или принял решение, а ПМ уже открыл
+    // страницу и просто ждёт.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedProjectId, hasValidProjectId, mlImport?.status, mlImport?.id, currentStatus]);
 
   const statusToIndex: Record<string, number> = {
     "Новый": 0,
@@ -963,6 +995,90 @@ export function ProjectPagePM({
               </div>
             ) : (
               <>
+                {isApproved ? (
+                  <div className="bg-card rounded-lg border border-border overflow-x-auto">
+                    <div className="px-4 py-2.5 text-xs text-muted-foreground border-b border-border bg-background/60">
+                      Финальные значения по проекту, с учётом правок Комдира (если он их вносил).
+                    </div>
+                    <table className="w-full min-w-[900px] border-collapse">
+                      <thead>
+                        <tr className="border-b border-border bg-background/60">
+                          {["Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"].map(h => (
+                              <th key={h}
+                                  className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {liveItemsLoading ? (
+                          <tr>
+                            <td colSpan={9} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                              <Loader2 size={16} className="inline-block animate-spin text-primary mr-2" />
+                              Загружаем позиции проекта…
+                            </td>
+                          </tr>
+                        ) : liveItemsError ? (
+                          <tr>
+                            <td colSpan={9} className="px-4 py-10 text-center text-sm text-destructive">
+                              {liveItemsError}
+                            </td>
+                          </tr>
+                        ) : liveItems.length === 0 ? (
+                          <tr>
+                            <td colSpan={9} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                              В проекте нет позиций
+                            </td>
+                          </tr>
+                        ) : (
+                          liveItems.map(item => {
+                            const qty = Number(item.required_quantity ?? 0);
+                            const price = Number(item.sale_price ?? 0);
+                            const priceCost = Number(item.cost_price ?? 0);
+                            const total = item.total_sum != null ? Number(item.total_sum) : qty * price;
+                            const margin = price > 0 ? ((price - priceCost) / price) * 100 : 0;
+                            const isEditedByDirector = Boolean((item as { edited_by_director?: boolean }).edited_by_director);
+                            const stockStatusName = item.status?.status_name ?? "—";
+                            const isInStock = stockStatusName === "На складе";
+
+                            return (
+                                <tr key={item.id} className="hover:bg-background/50">
+                                  <td className="px-4 py-3 text-sm text-foreground">{item.product?.name ?? "—"}</td>
+                                  <td className="px-4 py-3 text-sm text-foreground">
+                                    {item.supplier_raw_name ?? item.supplier?.supplier_name ?? "—"}
+                                  </td>
+                                  <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
+                                  <td className="px-4 py-3 text-xs text-muted-foreground">{item.product?.unit ?? "шт"}</td>
+                                  <td className="px-4 py-3 text-sm font-mono">{priceCost.toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2,})}</td>
+                                  <td className="px-4 py-3 text-sm font-mono">{price.toLocaleString("ru-RU")}</td>
+                                  <td className="px-4 py-3 text-sm font-mono font-semibold">{total.toLocaleString("ru-RU")}</td>
+                                  <td className="px-4 py-3">
+                                  <span
+                                      className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-1 ring-red-200"}`}>
+                                    {margin.toFixed(1)}%
+                                  </span>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center gap-1.5">
+                                      <span
+                                          className={`inline-flex px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap ${isInStock ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200"}`}>
+                                        {stockStatusName}
+                                      </span>
+                                      {isEditedByDirector && (
+                                        <span title="Изменено Комдиром">
+                                          <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                            )
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                <>
                 <div className="bg-card rounded-lg border border-border overflow-x-auto">
                   <table className="w-full min-w-[1900px] border-collapse">
                     <thead>
@@ -1260,6 +1376,8 @@ export function ProjectPagePM({
                     )}
                   </button>
                 </div>
+                </>
+                )}
               </>
             )}
         </div>
@@ -1435,6 +1553,7 @@ export function ProjectPageDirector({projectState, onKpApproved, projectId}: {
   const [showEstimate, setShowEstimate] = useState(false);
   const [showRejectForm, setShowRejectForm] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  const [isGeneratingKP, setIsGeneratingKP] = useState(false);
 
   const resolvedProjectId = Number(projectId);
   const hasValidProjectId = Number.isInteger(resolvedProjectId) && resolvedProjectId > 0;
@@ -1445,6 +1564,12 @@ const [projectItemsLoading, setProjectItemsLoading] =
   useState(false);
 
 const [projectItemsError, setProjectItemsError] =
+  useState<string | null>(null);
+
+const [updatingItemId, setUpdatingItemId] =
+  useState<number | null>(null);
+
+const [itemSaveError, setItemSaveError] =
   useState<string | null>(null);
 
   const estimateRows: EstimateRow[] = projectItems.map((item) => {
@@ -1561,6 +1686,62 @@ const [projectItemsError, setProjectItemsError] =
     }
   };
 
+  // Комдир может править позиции только пока КП ещё не решено — как
+  // только он подтвердил или отклонил, поля блокируются (бэкенд это
+  // тоже проверяет, здесь только для UX).
+  const canEditItems = decision === null;
+
+  // Базовый путь API. Если у тебя запросы в api/api.ts идут не через
+  // "/api/v1", а через другой префикс (например, полный URL из env) —
+  // поменяй только эту строку.
+  // Базовый URL API. Свагер у тебя на localhost:8000, а страница — на
+  // localhost:5173 (Vite), поэтому относительный путь "/api/v1/..."
+  // уходил на сам Vite и 404-ился. Если бэкенд слушает не на 8000 (или
+  // в проде это другой домен) — поменяй только эту строку, в идеале
+  // на ту же переменную окружения, что использует api/api.ts.
+  const PROJECT_ITEMS_API_BASE = "http://localhost:8000/api/v1/project-items";
+
+  const handleItemFieldUpdate = async (
+    itemId: number,
+    payload: Record<string, number | string | null>,
+  ) => {
+    if (!project) return;
+
+    setUpdatingItemId(itemId);
+    setItemSaveError(null);
+
+    try {
+      const response = await fetch(`${PROJECT_ITEMS_API_BASE}/${project.id}/${itemId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => null);
+        const detail = Array.isArray(errorBody?.detail)
+          ? errorBody.detail.map((e: { msg?: string }) => e.msg).join("; ")
+          : errorBody?.detail;
+        throw new Error(detail || "Не удалось сохранить изменения");
+      }
+
+      const updatedItem = await response.json();
+
+      setProjectItems((current) =>
+        current.map((existing) =>
+          existing.id === itemId ? { ...existing, ...updatedItem } : existing,
+        ),
+      );
+    } catch (error) {
+      setItemSaveError(
+        error instanceof Error ? error.message : "Не удалось сохранить изменения",
+      );
+    } finally {
+      setUpdatingItemId(null);
+    }
+  };
+
   const handleExportExcel = async () => {
     if (!project) return;
     try {
@@ -1570,6 +1751,26 @@ const [projectItemsError, setProjectItemsError] =
       console.error("Ошибка при скачивании:", error);
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  // Комдир может генерировать КП после того, как сам его одобрил (decision
+  // === true), и до тех пор, пока клиент не подписал — как только проект
+  // ушёл в "Ожидание подписания" (или дальше), кнопка больше не нужна.
+  // Одобрить/отклонить от имени клиента ("Одобрено клиентом" /
+  // "Клиент просит правки") у Комдира по-прежнему нет — это только у ПМ.
+  const canGenerateKP = decision === true && currentStatus === "Ожидание клиента";
+
+  const handleGenerateKP = async () => {
+    if (!project) return;
+    try {
+      setIsGeneratingKP(true);
+      await downloadKpDocument(project.id);
+    } catch (error) {
+      console.error("Ошибка генерации КП:", error);
+      alert(error instanceof Error ? error.message : "Не удалось сгенерировать КП");
+    } finally {
+      setIsGeneratingKP(false);
     }
   };
 
@@ -1630,6 +1831,16 @@ const [projectItemsError, setProjectItemsError] =
             {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />}
             {isExporting ? "Скачивание..." : "Скачать Excel"}
           </button>
+          {canGenerateKP && (
+            <button
+              onClick={handleGenerateKP}
+              disabled={isGeneratingKP || !project}
+              className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-card border border-border text-foreground text-xs font-medium rounded hover:bg-background transition-colors whitespace-nowrap disabled:opacity-50"
+            >
+              {isGeneratingKP ? <Loader2 size={14} className="animate-spin"/> : <FileText size={14} />}
+              {isGeneratingKP ? "Генерация..." : "Сгенерировать КП"}
+            </button>
+          )}
         </div>
       }
     >
@@ -1642,14 +1853,32 @@ const [projectItemsError, setProjectItemsError] =
           </div>
         </div>
       )}
-      {showEstimate && <EstimateTable rows={estimateRows}/>} 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="col-span-2 space-y-5">
-          <div className="bg-card rounded-lg border border-border overflow-hidden">
-            <table className="w-full border-collapse">
+      {showEstimate && <EstimateTable rows={estimateRows}/>}
+
+      <div className="mb-6 flex flex-wrap items-center gap-x-8 gap-y-3 px-5 py-4 bg-card rounded-lg border border-border">
+        {sidebarDetails.map(([label, value]) => (
+            <div key={label} className="flex items-baseline gap-2">
+              <dt className="text-xs text-muted-foreground">{label}</dt>
+              <dd className="text-sm font-medium text-foreground">{value}</dd>
+            </div>
+        ))}
+      </div>
+
+      <div className="space-y-5">
+        {itemSaveError && (
+            <div className="mb-3 flex items-start gap-2.5 px-4 py-3 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg">
+              <AlertTriangle size={15} className="text-destructive mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-red-700 dark:text-red-300">Не удалось сохранить</p>
+                <p className="text-xs text-destructive mt-1">{itemSaveError}</p>
+              </div>
+            </div>
+          )}
+          <div className="bg-card rounded-lg border border-border overflow-x-auto">
+            <table className="w-full min-w-[1100px] border-collapse">
               <thead>
               <tr className="border-b border-border bg-background/60">
-                {["Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа"].map(h => (
+                {["Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"].map(h => (
                     <th key={h}
                         className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
                 ))}
@@ -1658,20 +1887,20 @@ const [projectItemsError, setProjectItemsError] =
               <tbody className="divide-y divide-border">
                 {projectItemsLoading ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    <td colSpan={9} className="px-4 py-10 text-center text-sm text-muted-foreground">
                       <Loader2 size={16} className="inline-block animate-spin text-primary mr-2" />
                       Загружаем позиции проекта…
                     </td>
                   </tr>
                 ) : projectItemsError ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-destructive">
+                    <td colSpan={9} className="px-4 py-10 text-center text-sm text-destructive">
                       {projectItemsError}
                     </td>
                   </tr>
                 ) : projectItems.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    <td colSpan={9} className="px-4 py-10 text-center text-sm text-muted-foreground">
                       В проекте нет позиций
                     </td>
                   </tr>
@@ -1682,23 +1911,99 @@ const [projectItemsError, setProjectItemsError] =
                     const priceCost = Number(item.cost_price ?? 0);
                     const total = item.total_sum != null ? Number(item.total_sum) : qty * price;
                     const margin = price > 0 ? ((price - priceCost) / price) * 100 : 0;
+                    const isEditedByDirector = Boolean((item as { edited_by_director?: boolean }).edited_by_director);
+                    const isSaving = updatingItemId === item.id;
+                    const disabled = !canEditItems || isSaving;
+                    const stockStatusName = item.status?.status_name ?? "—";
+                    const isInStock = stockStatusName === "На складе";
 
                     return (
                         <tr key={item.id} className="hover:bg-background/50">
                           <td className="px-4 py-3 text-sm text-foreground">{item.product?.name ?? "—"}</td>
-                          <td className="px-4 py-3 text-sm text-foreground">
-                            {item.supplier_raw_name ?? item.supplier?.supplier_name ?? "—"}
+                          <td className="px-4 py-3">
+                            <input
+                                key={`${item.id}-supplier-${item.supplier_raw_name ?? ""}`}
+                                type="text"
+                                maxLength={255}
+                                disabled={disabled}
+                                defaultValue={item.supplier_raw_name ?? item.supplier?.supplier_name ?? ""}
+                                placeholder="Укажите поставщика"
+                                onBlur={(event) => {
+                                  const supplierName = event.target.value.trim() || null;
+                                  if (supplierName !== (item.supplier_raw_name ?? null)) {
+                                    handleItemFieldUpdate(item.id, { supplier_raw_name: supplierName });
+                                  }
+                                }}
+                                className="w-36 px-2 py-1.5 text-sm border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
+                            />
                           </td>
                           <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
                           <td className="px-4 py-3 text-xs text-muted-foreground">{item.product?.unit ?? "шт"}</td>
-                          <td className="px-4 py-3 text-sm font-mono">{priceCost.toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2,})}</td>
-                          <td className="px-4 py-3 text-sm font-mono">{price.toLocaleString("ru-RU")}</td>
-                          <td className="px-4 py-3 text-sm font-mono font-semibold">{total.toLocaleString("ru-RU")}</td>
+                          <td className="px-4 py-3">
+                            <input
+                                key={`${item.id}-cost-${priceCost}`}
+                                type="number"
+                                min={0}
+                                step="1"
+                                disabled={disabled}
+                                defaultValue={priceCost}
+                                onBlur={(event) => {
+                                  const newCost = Number(event.target.value);
+                                  if (!Number.isFinite(newCost) || newCost < 0) {
+                                    setItemSaveError("Себестоимость должна быть числом больше или равным нулю");
+                                    return;
+                                  }
+                                  if (newCost !== priceCost) {
+                                    handleItemFieldUpdate(item.id, { cost_price: newCost });
+                                  }
+                                }}
+                                className="w-28 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <input
+                                key={`${item.id}-price-${price}`}
+                                type="number"
+                                min={0}
+                                step="1"
+                                disabled={disabled}
+                                defaultValue={price}
+                                onBlur={(event) => {
+                                  const newPrice = Number(event.target.value);
+                                  if (!Number.isFinite(newPrice) || newPrice < 0) {
+                                    setItemSaveError("Цена должна быть числом больше или равным нулю");
+                                    return;
+                                  }
+                                  if (newPrice !== price) {
+                                    handleItemFieldUpdate(item.id, { sale_price: newPrice });
+                                  }
+                                }}
+                                className="w-28 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
+                            />
+                          </td>
+                          <td className="px-4 py-3 text-sm font-mono font-semibold whitespace-nowrap">{total.toLocaleString("ru-RU")}</td>
                           <td className="px-4 py-3">
                           <span
                               className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-1 ring-red-200"}`}>
                             {margin.toFixed(1)}%
                           </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            {isSaving ? (
+                              <Loader2 size={16} className="animate-spin text-primary" />
+                            ) : (
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                    className={`inline-flex px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap ${isInStock ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200"}`}>
+                                  {stockStatusName}
+                                </span>
+                                {isEditedByDirector && (
+                                  <span title="Изменено Комдиром">
+                                    <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </td>
                         </tr>
                     )
@@ -1762,48 +2067,6 @@ const [projectItemsError, setProjectItemsError] =
             )}
           </div>
         </div>
-
-        <div className="space-y-4">
-          <div className="bg-card rounded-lg border border-border p-5">
-            <h3 className="text-sm font-semibold text-foreground mb-3">Детали</h3>
-            {projectError ? (
-                <div className="flex items-start gap-2.5 text-destructive">
-                  <AlertTriangle
-                      size={15}
-                      className="mt-0.5 flex-shrink-0"
-                  />
-
-                  <div>
-                    <p className="text-sm font-medium">
-                      Не удалось загрузить детали проекта
-                    </p>
-
-                    <p className="mt-1 text-xs text-destructive">
-                      {projectError}
-                    </p>
-                  </div>
-                </div>
-            ) : (
-                <dl className="space-y-2.5">
-                  {sidebarDetails.map(([label, value]) => (
-                      <div
-                          key={label}
-                          className="flex items-start justify-between gap-3"
-                      >
-                        <dt className="text-xs text-muted-foreground">
-                          {label}
-                        </dt>
-
-                        <dd className="text-right text-xs font-medium text-foreground">
-                          {value}
-                        </dd>
-                      </div>
-                  ))}
-                </dl>
-            )}
-          </div>
-        </div>
-      </div>
     </PageWrap>
   );
 }
