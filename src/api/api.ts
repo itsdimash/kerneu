@@ -717,18 +717,20 @@ export const signProjectContract = async (projectId: number) => {
 export interface WarehouseReceiptResponse {
   id: number;
   receipt_number?: string;
-  project_id?: number;         // <-- ID проекта
-  project_name?: string;       // <-- Название проекта
-  date: string;                // Когда придет товар
+  project_id?: number;
+  project_name?: string;
+  date: string;
   supplier_id: number;
   product_id: number;
   warehouse_id?: number | null;
   quantity: number;
-  status: string;              // 'pending' | 'arrived' | 'cancelled'
+  status: string;
   actual_quantity?: number | null;
   photo_path?: string | null;
   warehouse_comment?: string | null;
   confirmed_at?: string | null;
+  defective_quantity?: number;      // добавить, если нет
+  defect_resolved?: boolean;        // добавить, если нет
   supplier?: {
     id: number;
     supplier_name: string;
@@ -746,13 +748,8 @@ export interface WarehouseReceiptResponse {
   } | null;
 }
 
-export async function fetchWarehouseReceipts(): Promise<
-  WarehouseReceiptResponse[]
-> {
-  const { data } = await api.get<WarehouseReceiptResponse[]>(
-    "/warehouse/receipts",
-  );
-
+export async function fetchWarehouseReceipts(): Promise<WarehouseReceiptResponse[]> {
+  const { data } = await api.get<WarehouseReceiptResponse[]>("/warehouse/receipts");
   return data;
 }
 
@@ -777,7 +774,7 @@ export async function setReceiptCancelled(
 
 export interface ConfirmReceiptPayload {
   actual_quantity: number;
-  defective_quantity?: number; // <-- ДОБАВИТЬ ЭТУ СТРОКУ
+  defective_quantity?: number;
   comment?: string;
   photo?: File | null;
 }
@@ -788,14 +785,13 @@ export async function confirmReceipt(
 ): Promise<WarehouseReceiptResponse> {
   const formData = new FormData();
   formData.append("actual_quantity", String(payload.actual_quantity));
-  
-  // Добавляем отправку брака на бэкенд (если не передано, отправляем 0)
+
   if (payload.defective_quantity !== undefined) {
     formData.append("defective_quantity", String(payload.defective_quantity));
   } else {
     formData.append("defective_quantity", "0");
   }
-  
+
   formData.append("comment", payload.comment || "");
   if (payload.photo) formData.append("photo", payload.photo);
 
@@ -901,6 +897,66 @@ export const fetchWarehouseShipments = async (): Promise<ShipmentResponse[]> => 
   return data;
 };
 
+// ==========================================
+// ЧЕК-ЛИСТ НА ОТГРУЗКУ (docx-таблица) — печатается ДО фактической
+// отгрузки, по позициям проекта, готовым к отгрузке (STATUS_RESERVED).
+// ==========================================
+
+export const downloadShipmentChecklist = async (projectId: number): Promise<void> => {
+  const response = await api.get(`/warehouse/shipments/${projectId}/document`, {
+    responseType: "blob",
+  });
+
+  const blob = new Blob([response.data], {
+    type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  });
+
+  let filename = `Список_на_отгрузку_проект_${projectId}.docx`;
+  const disposition = response.headers["content-disposition"];
+  if (disposition && disposition.includes("filename*=UTF-8''")) {
+    filename = decodeURIComponent(disposition.split("filename*=UTF-8''")[1]);
+  }
+
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+};
+
+// ==========================================
+// ФОТО ОТГРУЗКИ — прикладывается кладовщиком в момент завершения
+// отгрузки проекта (часть handleSendToShipment на фронте)
+// ==========================================
+
+export interface ShipmentPhotoResponse {
+  id: number;
+  project_id: number;
+  photo_path: string;
+  comment: string | null;
+  created_at: string;
+}
+
+export async function uploadShipmentPhoto(
+  projectId: number,
+  photo: File,
+  comment?: string,
+): Promise<ShipmentPhotoResponse> {
+  const formData = new FormData();
+  formData.append("photo", photo);
+  if (comment) formData.append("comment", comment);
+
+  const { data } = await api.post<ShipmentPhotoResponse>(
+    `/warehouse/shipments/${projectId}/photo`,
+    formData,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
+  return data;
+}
+
 export async function deleteProjectDocument(
   documentId: number
 ): Promise<void> {
@@ -918,17 +974,11 @@ export async function completeProjectOnBackend(projectId: string | number): Prom
 // ==========================================
 // ДОГОВОР: ГЕНЕРАЦИЯ (только бухгалтер)
 // ==========================================
-// Бэкенд сам подтягивает Спецификацию из project_items — сюда передаются
-// только реквизиты покупателя и условия договора. Ничего не сохраняется
-// на бэкенде (см. POST /contracts/generate) — только generate -> download.
-// Проверенный/исправленный файл бухгалтер потом отдельно загружает на
-// странице "Документы" через уже существующий uploadProjectDocument().
- 
 export interface ContractGenerateRequest {
   project_id: number;
   contract_number: string;
-  contract_date?: string; // YYYY-MM-DD; по умолчанию на бэкенде — сегодня
-  contract_valid_until?: string; // YYYY-MM-DD; по умолчанию — 31 декабря года подписания
+  contract_date?: string;
+  contract_valid_until?: string;
   buyer_company_name: string;
   buyer_director_name: string;
   buyer_address: string;
@@ -938,17 +988,10 @@ export interface ContractGenerateRequest {
   buyer_kbe?: string;
   specification_number?: string;
   delivery_term_days?: number;
-  // "pickup" — самовывоз покупателем со склада (можно указать pickup_address).
-  // "delivery" — доставка силами Поставщика; текст в договоре генерируется
-  // без адреса, ничего вводить не нужно.
   shipment_method?: "pickup" | "delivery";
   pickup_address?: string;
 }
  
-// Человекочитаемые названия для полей ContractGenerateRequest — используются
-// только чтобы собрать понятное сообщение из 422-ответа Pydantic, если
-// что-то невалидное всё же прошло через проверку на фронте (например,
-// странный формат даты).
 const FIELD_LABELS: Record<string, string> = {
   contract_number: "Номер договора",
   buyer_company_name: "Название компании",
@@ -965,7 +1008,6 @@ const FIELD_LABELS: Record<string, string> = {
 function friendlyErrorFromDetail(detail: unknown): string | null {
   if (typeof detail === "string") return detail;
  
-  // Pydantic 422: detail — массив {loc: [...], msg: "...", type: "..."}
   if (Array.isArray(detail) && detail.length > 0) {
     const fieldNames = detail
       .map((item) => {
@@ -993,10 +1035,6 @@ export const generateContract = async (
       responseType: "blob",
     });
   } catch (error) {
-    // responseType: "blob" means axios also stuffs JSON error bodies (400,
-    // 422, 500 from FastAPI) into a Blob instead of parsed JSON — have to
-    // read it back out manually to surface the real "detail" message
-    // (e.g. "У проекта нет позиций...") instead of a generic axios error.
     if (axios.isAxiosError(error) && error.response?.data instanceof Blob) {
       const errorBlob = error.response.data;
       let friendly: string | null = null;
@@ -1005,11 +1043,8 @@ export const generateContract = async (
         const parsed = JSON.parse(text);
         friendly = friendlyErrorFromDetail(parsed?.detail);
       } catch {
-        // wasn't JSON / no detail field — friendly stays null, falls through below
+        // wasn't JSON / no detail field
       }
-      // ВАЖНО: throw здесь, а не внутри try выше — иначе его же ловит
-      // соседний catch{} и подменяет вот этим самым generic-сообщением ниже,
-      // и реальный текст ошибки с бэкенда никогда не доходит до пользователя.
       if (friendly) throw new Error(friendly);
     }
     throw error instanceof Error ? error : new Error("Не удалось сгенерировать договор");
@@ -1035,12 +1070,17 @@ export const generateContract = async (
   window.URL.revokeObjectURL(url);
 };
  
-// Бухгалтер загрузил финальный файл договора на странице "Документы" —
-// переводит проект из "Ожидание подписания" в "Активный закуп".
-// См. project_status_router.py: POST /projects/{project_id}/contract-uploaded
 export const markContractUploaded = async (
   projectId: string | number,
 ): Promise<void> => {
   await api.post(`/projects/${projectId}/contract-uploaded`);
 };
- 
+
+export async function resolveDefectReplacement(
+  receiptId: number
+): Promise<WarehouseReceiptResponse> {
+  const { data } = await api.post<WarehouseReceiptResponse>(
+    `/warehouse/receipts/${receiptId}/resolve-defect`
+  );
+  return data;
+}

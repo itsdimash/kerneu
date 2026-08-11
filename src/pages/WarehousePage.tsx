@@ -13,6 +13,7 @@ import {
   Camera,
   Clock,
   Inbox,
+  FileText,
 } from "lucide-react";
 import type { ProjectState, Role } from "../types";
 import {
@@ -28,6 +29,9 @@ import {
   fetchWarehouseShipments,
   fetchPendingShipments,
   fetchWarehouseList,
+  downloadShipmentChecklist,
+  uploadShipmentPhoto,
+  resolveDefectReplacement,
   WarehouseStockResponse,
   WarehouseReceiptResponse,
   WarehouseInfo,
@@ -57,16 +61,18 @@ type ArrivalRow = {
   project: string;
   projectId: number | null;
   date: string;
-  warehouseName: string; // Новое поле: на какой склад придет товар
+  warehouseName: string;
   supplier: string;
   item: string;
   qty: number;
   unit: string;
-  status: string; // 'pending' | 'arrived' | 'cancelled'
+  status: string;
   actualQuantity: number | null;
   warehouseComment: string | null;
   photoPath: string | null;
   confirmedAt: string | null;
+  defectiveQuantity: number;
+  defectResolved: boolean;
 };
 
 type ShipmentRow = {
@@ -92,13 +98,11 @@ type PendingShipmentProjectRow = {
   projectId: number;
   projectName: string;
   items: PendingShipmentItemRow[];
+  photo: File | null;
   submitting?: boolean;
   error?: string | null;
 };
 
-// Склады как отдельного справочника на бэке нет — реальные id/название склада
-// приходят вложенными внутрь каждого товара в /warehouse/stocks (item.stocks[].warehouse_id/warehouse_name).
-// Поэтому список складов для колонок таблицы собираем из этих данных, а не из отдельного (несуществующего) эндпоинта.
 function deriveWarehouses(items: WarehouseStockResponse[]): WarehouseInfo[] {
   const found = new Map<number, string>();
   items.forEach((item) => {
@@ -150,10 +154,6 @@ function mapStock(item: WarehouseStockResponse): StockRow {
 
 const WAREHOUSE_API_BASE = "http://localhost:8000/api/v1";
 
-// TODO(backend): эндпоинт ещё не реализован — предполагаемый контракт:
-// POST /projects/{project_id}/send-to-shipment
-// Должен перевести Project.status_id проекта из "На приходе" в
-// "На отгрузке" (id=6 в project_statuses).
 async function sendProjectToShipment(projectId: number) {
   const response = await fetch(`${WAREHOUSE_API_BASE}/projects/${projectId}/send-to-shipment`, {
     method: "POST",
@@ -168,10 +168,6 @@ async function sendProjectToShipment(projectId: number) {
   return response.json().catch(() => null);
 }
 
-// Кладовщик физически отгрузил товар — переводим проект в статус
-// "Ожидание документов". Эндпоинт уже есть на бэке
-// (POST /projects/{project_id}/wait-for-documents), но раньше фронт его
-// не вызывал, поэтому статус проекта "зависал" на "На отгрузке".
 async function sendProjectToDocuments(projectId: number) {
   const response = await fetch(`${WAREHOUSE_API_BASE}/projects/${projectId}/wait-for-documents`, {
     method: "POST",
@@ -203,6 +199,8 @@ function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
     warehouseComment: item.warehouse_comment ?? null,
     photoPath: item.photo_path ?? null,
     confirmedAt: item.confirmed_at ?? null,
+    defectiveQuantity: item.defective_quantity ?? 0,
+    defectResolved: item.defect_resolved ?? false,
   };
 }
 
@@ -343,9 +341,6 @@ function AddStockModal({
 // ==========================================
 // Модалка подтверждения прихода кладовщиком
 // ==========================================
-// ==========================================
-// Модалка подтверждения прихода кладовщиком
-// ==========================================
 function ConfirmReceiptModal({
   receipt,
   onClose,
@@ -356,8 +351,7 @@ function ConfirmReceiptModal({
   onSuccess: () => void;
 }) {
   const [actualQuantity, setActualQuantity] = useState(String(receipt.qty));
-  // НОВОЕ СОСТОЯНИЕ ДЛЯ БРАКА
-  const [defectiveQuantity, setDefectiveQuantity] = useState("0"); 
+  const [defectiveQuantity, setDefectiveQuantity] = useState("0");
   const [comment, setComment] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -365,7 +359,7 @@ function ConfirmReceiptModal({
 
   const handleSubmit = async () => {
     const qty = Number(actualQuantity);
-    const defQty = Number(defectiveQuantity); 
+    const defQty = Number(defectiveQuantity);
 
     if (!actualQuantity || Number.isNaN(qty) || qty < 0) {
       setError("Укажите корректное фактическое количество");
@@ -376,22 +370,20 @@ function ConfirmReceiptModal({
       return;
     }
 
-    // === НОВАЯ ЛОГИКА ПРОВЕРКИ ===
     if (qty + defQty > receipt.qty) {
       setError(`Общее количество (нормальные + брак) не может превышать план (${receipt.qty} шт.)`);
       return;
     }
-    // =============================
 
     setSubmitting(true);
     setError(null);
-    
+
     try {
-      await confirmReceipt(receipt.id, { 
-        actual_quantity: qty, 
+      await confirmReceipt(receipt.id, {
+        actual_quantity: qty,
         defective_quantity: defQty,
-        comment, 
-        photo 
+        comment,
+        photo,
       });
       onSuccess();
       onClose();
@@ -439,7 +431,6 @@ function ConfirmReceiptModal({
             />
           </div>
 
-          {/* НОВОЕ ПОЛЕ: КОЛИЧЕСТВО БРАКА */}
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">
               Количество брака
@@ -495,9 +486,9 @@ function ConfirmReceiptModal({
     </div>
   );
 }
+
 // ==========================================
 // Модалка просмотра деталей уже подтверждённого прихода
-// (для кладовщика — с возможностью поправить фото/комментарий)
 // ==========================================
 const RECEIPT_PHOTO_BASE = "http://localhost:8000";
 
@@ -517,6 +508,7 @@ function ReceiptDetailsModal({
   const [photo, setPhoto] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
 
   const photoUrl = receipt.photoPath
     ? `${RECEIPT_PHOTO_BASE}/${receipt.photoPath.replace(/^\//, "")}`
@@ -535,6 +527,20 @@ function ReceiptDetailsModal({
       setError(typeof detail === "string" ? detail : "Не удалось сохранить изменения");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleResolveDefect = async () => {
+    setResolving(true);
+    setError(null);
+    try {
+      const updated = await resolveDefectReplacement(receipt.id);
+      onSuccess(mapReceipt(updated));
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail;
+      setError(typeof detail === "string" ? detail : "Не удалось отметить замену");
+    } finally {
+      setResolving(false);
     }
   };
 
@@ -562,10 +568,30 @@ function ReceiptDetailsModal({
           <div className="flex justify-between"><span className="text-muted-foreground">Поставщик</span><span className="font-medium text-foreground">{receipt.supplier}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">Склад</span><span className="font-medium text-foreground">{receipt.warehouseName}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">План / Факт</span><span className="font-mono font-medium text-foreground">{receipt.qty} / {receipt.actualQuantity ?? "—"} {receipt.unit}</span></div>
+          {receipt.defectiveQuantity > 0 && (
+            <div className="flex justify-between"><span className="text-muted-foreground">Брак</span><span className="font-mono font-medium text-destructive">{receipt.defectiveQuantity} {receipt.unit}</span></div>
+          )}
           {receipt.confirmedAt && (
             <div className="flex justify-between"><span className="text-muted-foreground">Подтверждено</span><span className="font-medium text-foreground">{new Date(receipt.confirmedAt).toLocaleString("ru-RU")}</span></div>
           )}
         </div>
+
+        {receipt.defectiveQuantity > 0 && !receipt.defectResolved && canEdit && (
+          <button
+            onClick={handleResolveDefect}
+            disabled={resolving}
+            className="w-full flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-60 mb-4"
+          >
+            {resolving && <Loader2 size={14} className="animate-spin" />}
+            Поступил товар вместо брака ({receipt.defectiveQuantity} шт.)
+          </button>
+        )}
+
+        {receipt.defectResolved && (
+          <div className="flex items-center gap-1.5 text-xs text-green-700 dark:text-green-300 font-medium mb-4">
+            <CheckCircle2 size={13} /> Замена брака поступила
+          </div>
+        )}
 
         {photoUrl && !editing && (
           <img src={photoUrl} alt="Фото товара" className="w-full rounded-lg border border-border mb-4 max-h-64 object-contain bg-background" />
@@ -673,6 +699,8 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   const [showShipmentModal, setShowShipmentModal] = useState(false);
   const [showAddStockModal, setShowAddStockModal] = useState(false);
 
+  const [downloadingChecklistId, setDownloadingChecklistId] = useState<number | null>(null);
+
   useEffect(() => {
     loadWarehousesList();
     loadStock();
@@ -681,10 +709,6 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     loadPendingShipments();
   }, []);
 
-  // Настоящий справочник складов (GET /warehouse/list) — источник истины.
-  // Раньше список складов "угадывался" из /warehouse/stocks (deriveWarehouses),
-  // из-за чего склад, на котором ещё ни разу не было остатка/прихода,
-  // просто не появлялся в таблице, хотя реально существует в БД.
   const loadWarehousesList = async () => {
     try {
       const list = await fetchWarehouseList();
@@ -701,8 +725,6 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     setStockError(null);
     try {
       const data = await fetchWarehouseStocks();
-      // Справочник складов уже приходит из loadWarehousesList(); здесь только
-      // подстраховка на случай, если /warehouse/list недоступен вообще.
       setWarehouses((prev) => (prev.length > 0 ? prev : deriveWarehouses(data)));
       setStock(data.map(mapStock));
     } catch (e) {
@@ -747,9 +769,6 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     }
   };
 
-  // Проекты, у которых все позиции уже зарезервированы (резерв ставится
-  // автоматически после подтверждения клиентом) и ждут, пока кладовщик
-  // физически соберёт товар и отметит все позиции галочками.
   const loadPendingShipments = async () => {
     setPendingLoading(true);
     setPendingError(null);
@@ -759,6 +778,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
         data.map((p) => ({
           projectId: p.project_id,
           projectName: p.project_name,
+          photo: null,
           items: p.items.map((it) => {
             const availableWarehouses = (it.available_warehouses || []).map((w) => ({
               warehouseId: w.warehouse_id,
@@ -809,13 +829,25 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     );
   };
 
-  // Кладовщик отметил все позиции проекта (у каждой уже выбран свой склад,
-  // т.к. резерв мог физически лежать на разных складах) — отгружаем
-  // каждую позицию с её собственного склада и убираем проект из списка ожидающих.
+  const setPendingShipmentPhoto = (projectId: number, file: File | null) => {
+    setPendingShipments((prev) =>
+      prev.map((p) => (p.projectId !== projectId ? p : { ...p, photo: file, error: null }))
+    );
+  };
+
   const handleSendToShipment = async (projectId: number) => {
     const proj = pendingShipments.find((p) => p.projectId === projectId);
     if (!proj) return;
     if (proj.items.length === 0 || !proj.items.every((it) => it.checked && it.warehouseId)) return;
+
+    if (!proj.photo) {
+      setPendingShipments((prev) =>
+        prev.map((p) =>
+          p.projectId === projectId ? { ...p, error: "Прикрепите фото отгруженного товара" } : p
+        )
+      );
+      return;
+    }
 
     setPendingShipments((prev) =>
       prev.map((p) => (p.projectId === projectId ? { ...p, submitting: true, error: null } : p))
@@ -827,13 +859,16 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
         proj.items.map((it) => ({ item_id: it.id, warehouse_id: it.warehouseId as number }))
       );
 
-      // Товар физически ушёл со склада — теперь явно переводим проект
-      // в "Ожидание документов". Раньше этого вызова не было, поэтому
-      // статус проекта не менялся после отгрузки.
       try {
         await sendProjectToDocuments(projectId);
       } catch (statusErr) {
         console.error("Не удалось перевести проект в статус 'Ожидание документов'", statusErr);
+      }
+
+      try {
+        await uploadShipmentPhoto(projectId, proj.photo);
+      } catch (photoErr) {
+        console.error("Не удалось загрузить фото отгрузки", photoErr);
       }
 
       setPendingShipments((prev) => prev.filter((p) => p.projectId !== projectId));
@@ -855,40 +890,57 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     }
   };
 
-  // Кладовщик подтвердил ещё один приход по проекту (галочка/модалка).
-  // Как только у проекта не остаётся ни одного прихода в статусе
-  // "pending", считаем, что весь приход собран целиком, и переводим
-  // проект в "На отгрузке". "cancelled" тоже считаем закрытым — отменённая
-  // позиция больше никогда не придёт, так что она не должна вечно держать
-  // проект в "На приходе".
   const handleConfirmSuccess = async (confirmedReceipt: ArrivalRow | null) => {
-  let freshArrivals: ArrivalRow[] = arrivals;
-  try {
-    const data = await fetchWarehouseReceipts();
-    freshArrivals = data.map(mapReceipt);
-    setArrivals(freshArrivals);
-  } catch (e) {
-    console.error("Не удалось обновить список приходов", e);
-  }
-  loadStock();
-
-  const projectId = confirmedReceipt?.projectId;
-  if (!projectId) return;
-
-  const projectReceipts = freshArrivals.filter((r) => r.projectId === projectId);
-  const allDone = projectReceipts.length > 0 && projectReceipts.every((r) => r.status !== "pending");
-
-  if (allDone) {
+    let freshArrivals: ArrivalRow[] = arrivals;
     try {
-      await sendProjectToShipment(projectId);
-      // ДОБАВЛЕНО: сразу подтягиваем список проектов, готовых к отгрузке,
-      // чтобы вкладка "Отгрузка" обновилась без ручного F5.
-      loadPendingShipments();
+      const data = await fetchWarehouseReceipts();
+      freshArrivals = data.map(mapReceipt);
+      setArrivals(freshArrivals);
     } catch (e) {
-      console.error("Не удалось перевести проект в статус 'На отгрузке'", e);
+      console.error("Не удалось обновить список приходов", e);
     }
-  }
-};
+    loadStock();
+
+    const projectId = confirmedReceipt?.projectId;
+    if (!projectId) return;
+
+    const projectReceipts = freshArrivals.filter((r) => r.projectId === projectId);
+    const allDone = projectReceipts.length > 0 && projectReceipts.every((r) => r.status !== "pending");
+
+    if (allDone) {
+      try {
+        await sendProjectToShipment(projectId);
+        loadPendingShipments();
+      } catch (e) {
+        console.error("Не удалось перевести проект в статус 'На отгрузке'", e);
+      }
+    }
+  };
+
+  const handleDownloadChecklist = async (projectId: number) => {
+    setDownloadingChecklistId(projectId);
+    try {
+      await downloadShipmentChecklist(projectId);
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail;
+      alert(typeof detail === "string" ? detail : "Не удалось скачать список на отгрузку");
+    } finally {
+      setDownloadingChecklistId(null);
+    }
+  };
+
+  const handleToggleCancel = async (receipt: ArrivalRow) => {
+    setCancellingReceiptId(receipt.id);
+    try {
+      const updated = await setReceiptCancelled(receipt.id, receipt.status !== "cancelled");
+      setArrivals((prev) => prev.map((r) => (r.id === updated.id ? mapReceipt(updated) : r)));
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail;
+      alert(typeof detail === "string" ? detail : "Не удалось изменить статус прихода");
+    } finally {
+      setCancellingReceiptId(null);
+    }
+  };
 
   const filteredStock = useMemo(() => {
     return stock
@@ -920,22 +972,22 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
         <ConfirmReceiptModal receipt={confirmTarget} onClose={() => setConfirmTarget(null)} onSuccess={() => handleConfirmSuccess(confirmTarget)} />
       )}
 
-      {detailsTarget && (
-        <ReceiptDetailsModal
-          receipt={detailsTarget}
-          canEdit={isWarehouseUser}
-          onClose={() => setDetailsTarget(null)}
-          onSuccess={(updated) => {
-            setArrivals((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-            setDetailsTarget(updated);
-          }}
-        />
-      )}
+     {detailsTarget && (
+  <ReceiptDetailsModal
+    receipt={detailsTarget}
+    canEdit={isWarehouseUser}
+    onClose={() => setDetailsTarget(null)}
+    onSuccess={(updated) => {
+      setArrivals((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+      setDetailsTarget(updated);
+      loadStock(); // остатки/брак на складе изменились — перезагружаем таблицу
+    }}
+  />
+)}
 
       {showShipmentModal && (
-    <ShipmentModal onClose={() => setShowShipmentModal(false)} onSuccess={loadShipments} />
-  )}
-
+        <ShipmentModal onClose={() => setShowShipmentModal(false)} onSuccess={loadShipments} />
+      )}
 
       <div className="flex items-center gap-1 mb-6 border-b border-border">
         {[{ key: "stock" as const, label: "Остатки" }, { key: "arrivals" as const, label: "Приход" }, { key: "shipments" as const, label: "Отгрузка" }].map((t) => (
@@ -1083,22 +1135,18 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
 
                     return (
                       <tr key={a.id} className={`hover:bg-background/50 transition-colors ${isCancelled ? "opacity-50 bg-background" : ""}`}>
-                        {/* 1. Название проекта */}
                         <td className="px-4 py-3.5 text-sm font-bold text-blue-700 dark:text-blue-300 bg-blue-50/30 dark:bg-blue-400/15">
                           {a.project}
                         </td>
 
-                        {/* 2. Номер прихода */}
                         <td className="px-4 py-3.5 text-xs font-mono font-medium text-foreground">
                           {a.receiptNumber}
                         </td>
 
-                        {/* 3. Когда придет товар */}
                         <td className="px-4 py-3.5 text-sm text-muted-foreground">
                           {a.date}
                         </td>
 
-                        {/* 4. На какой склад (1-ый или 2-ой) */}
                         <td className="px-4 py-3.5 text-sm font-medium text-foreground">
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted text-foreground text-xs font-semibold">
                             <Building2 size={12} className="text-blue-600 dark:text-blue-400" />
@@ -1106,17 +1154,14 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                           </span>
                         </td>
 
-                        {/* 5. Название поставщика */}
                         <td className="px-4 py-3.5 text-sm font-medium text-foreground">
                           {a.supplier}
                         </td>
 
-                        {/* 6. Название товара */}
                         <td className="px-4 py-3.5 text-sm text-foreground font-medium">
                           {a.item}
                         </td>
 
-                        {/* 7. Количество */}
                         <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">
                           {a.qty.toLocaleString("ru-RU")}
                           {a.actualQuantity !== null && a.actualQuantity !== a.qty && (
@@ -1124,12 +1169,10 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                           )}
                         </td>
 
-                        {/* 8. Ед. изм. */}
                         <td className="px-4 py-3.5 text-xs text-muted-foreground">
                           {a.unit}
                         </td>
 
-                        {/* 9. Икс или галочка в зависимости от того, принял ли склад */}
                         <td className="px-4 py-3.5 text-center">
                           {isCancelled ? (
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 whitespace-nowrap" title="Отменено">
@@ -1146,7 +1189,6 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                           )}
                         </td>
 
-                        {/* 10. Действия кладовщика: галочка — принять (открывает окно с фото/количеством/комментарием), крестик — отклонить */}
                         <td className="px-4 py-3.5 text-center">
                           {isCancelled ? (
                             <div className="flex flex-col items-center gap-1">
@@ -1212,9 +1254,9 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
           )}
         </div>
       )}
+
       {tab === "shipments" && (
         <>
-          {/* --- Проекты, готовые к отгрузке: чекбоксы по позициям + выбор склада --- */}
           {pendingError && (
             <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg mb-4">
               <AlertTriangle size={15} className="text-destructive mt-0.5 shrink-0" />
@@ -1235,7 +1277,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
             <div className="space-y-4 mb-8">
               {pendingShipments.map((proj) => {
                 const allChecked = proj.items.length > 0 && proj.items.every((it) => it.checked && it.warehouseId);
-                const canSubmit = allChecked && !proj.submitting;
+                const canSubmit = allChecked && !!proj.photo && !proj.submitting;
 
                 return (
                   <div key={proj.projectId} className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
@@ -1244,9 +1286,24 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                         <h3 className="text-sm font-bold text-foreground">{proj.projectName}</h3>
                         <p className="text-xs text-muted-foreground">{proj.items.length} позиций к сборке</p>
                       </div>
-                      <span className="px-2.5 py-1 text-xs font-semibold bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 rounded-full flex items-center gap-1">
-                        <PackageCheck size={12} /> Зарезервировано
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleDownloadChecklist(proj.projectId)}
+                          disabled={downloadingChecklistId === proj.projectId}
+                          title="Распечатать список на отгрузку"
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-border text-foreground hover:bg-background disabled:opacity-50"
+                        >
+                          {downloadingChecklistId === proj.projectId ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <FileText size={14} />
+                          )}
+                          Список
+                        </button>
+                        <span className="px-2.5 py-1 text-xs font-semibold bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 rounded-full flex items-center gap-1">
+                          <PackageCheck size={12} /> Зарезервировано
+                        </span>
+                      </div>
                     </div>
 
                     {proj.error && (
@@ -1312,19 +1369,42 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                     </div>
 
                     {isWarehouseUser && (
-                      <div className="flex items-center justify-end px-5 py-3.5 border-t border-border bg-background/40">
-                        <button
-                          onClick={() => handleSendToShipment(proj.projectId)}
-                          disabled={!canSubmit}
-                          className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg shadow-sm transition-colors ${
-                            canSubmit
-                              ? "bg-green-600 hover:bg-success/90 text-white cursor-pointer"
-                              : "bg-slate-200 text-muted-foreground cursor-not-allowed"
-                          }`}
-                        >
-                          {proj.submitting ? <Loader2 size={15} className="animate-spin" /> : <PackageCheck size={15} />}
-                          Отправить на отгрузку
-                        </button>
+                      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 border-t border-border bg-background/40">
+                        <label className="flex items-center gap-2 px-3 py-2 text-sm border border-dashed border-border rounded-lg cursor-pointer hover:bg-background text-muted-foreground">
+                          <Camera size={15} className="text-primary" />
+                          {proj.photo ? proj.photo.name : "Фото отгруженного товара *"}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            disabled={proj.submitting}
+                            onChange={(e) => setPendingShipmentPhoto(proj.projectId, e.target.files?.[0] || null)}
+                          />
+                        </label>
+
+                        <div className="flex flex-col items-end gap-1">
+                          {!canSubmit && !proj.submitting && (
+                            <p className="text-xs text-amber-600 dark:text-amber-400">
+                              {!allChecked
+                                ? "Отметьте все позиции и выберите склад для каждой"
+                                : !proj.photo
+                                ? "Прикрепите фото отгруженного товара"
+                                : ""}
+                            </p>
+                          )}
+                          <button
+                            onClick={() => handleSendToShipment(proj.projectId)}
+                            disabled={!canSubmit}
+                            className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg shadow-sm transition-colors ${
+                              canSubmit
+                                ? "bg-green-600 hover:bg-success/90 text-white cursor-pointer"
+                                : "bg-slate-200 text-muted-foreground cursor-not-allowed"
+                            }`}
+                          >
+                            {proj.submitting ? <Loader2 size={15} className="animate-spin" /> : <PackageCheck size={15} />}
+                            Отправить на отгрузку
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1333,7 +1413,6 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
             </div>
           )}
 
-          {/* --- История уже отгруженного --- */}
           <div className="bg-card rounded-lg border border-border overflow-hidden">
           {shipmentsError && (
             <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-400/15 border-b border-red-200 dark:border-red-400/25">
