@@ -92,13 +92,13 @@ type PendingShipmentItemRow = {
   checked: boolean;
   warehouseId: number | null;
   availableWarehouses: { warehouseId: number; warehouseName: string }[];
+  photo: File | null;
 };
 
 type PendingShipmentProjectRow = {
   projectId: number;
   projectName: string;
   items: PendingShipmentItemRow[];
-  photo: File | null;
   submitting?: boolean;
   error?: string | null;
 };
@@ -778,7 +778,6 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
         data.map((p) => ({
           projectId: p.project_id,
           projectName: p.project_name,
-          photo: null,
           items: p.items.map((it) => {
             const availableWarehouses = (it.available_warehouses || []).map((w) => ({
               warehouseId: w.warehouse_id,
@@ -792,6 +791,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
               checked: false,
               warehouseId: availableWarehouses[0]?.warehouseId ?? null,
               availableWarehouses,
+              photo: null,
             };
           }),
         }))
@@ -829,21 +829,34 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     );
   };
 
-  const setPendingShipmentPhoto = (projectId: number, file: File | null) => {
+  const setShipmentItemPhoto = (projectId: number, itemId: number, file: File | null) => {
     setPendingShipments((prev) =>
-      prev.map((p) => (p.projectId !== projectId ? p : { ...p, photo: file, error: null }))
+      prev.map((p) =>
+        p.projectId !== projectId
+          ? p
+          : {
+              ...p,
+              items: p.items.map((it) => (it.id === itemId ? { ...it, photo: file } : it)),
+              error: null,
+            }
+      )
     );
   };
 
   const handleSendToShipment = async (projectId: number) => {
     const proj = pendingShipments.find((p) => p.projectId === projectId);
     if (!proj) return;
-    if (proj.items.length === 0 || !proj.items.every((it) => it.checked && it.warehouseId)) return;
 
-    if (!proj.photo) {
+    const checkedItems = proj.items.filter((it) => it.checked);
+
+    if (checkedItems.length === 0) return;
+
+    if (!checkedItems.every((it) => it.warehouseId && it.photo)) {
       setPendingShipments((prev) =>
         prev.map((p) =>
-          p.projectId === projectId ? { ...p, error: "Прикрепите фото отгруженного товара" } : p
+          p.projectId === projectId
+            ? { ...p, error: "Выберите склад и приложите фото для каждой отмеченной позиции" }
+            : p
         )
       );
       return;
@@ -856,22 +869,46 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     try {
       await shipProjectItemsPerWarehouse(
         projectId,
-        proj.items.map((it) => ({ item_id: it.id, warehouse_id: it.warehouseId as number }))
+        checkedItems.map((it) => ({ item_id: it.id, warehouse_id: it.warehouseId as number }))
       );
 
-      try {
-        await sendProjectToDocuments(projectId);
-      } catch (statusErr) {
-        console.error("Не удалось перевести проект в статус 'Ожидание документов'", statusErr);
+      // Фото — отдельно на каждую отгружаемую позицию.
+      // NOTE: uploadShipmentPhoto нужно расширить в api.ts третьим необязательным
+      // параметром itemId, чтобы фото сохранялось в shipment_photos с привязкой
+      // к project_item_id, а не только к проекту.
+      await Promise.all(
+        checkedItems.map((it) =>
+          uploadShipmentPhoto(projectId, it.photo as File, it.id).catch((photoErr) => {
+            console.error(`Не удалось загрузить фото для позиции ${it.id}`, photoErr);
+          })
+        )
+      );
+
+      const remainingCount = proj.items.length - checkedItems.length;
+
+      setPendingShipments((prev) =>
+        prev
+          .map((p) =>
+            p.projectId !== projectId
+              ? p
+              : {
+                  ...p,
+                  items: p.items.filter((it) => !it.checked),
+                  submitting: false,
+                  error: null,
+                }
+          )
+          .filter((p) => p.projectId !== projectId || p.items.length > 0)
+      );
+
+      if (remainingCount === 0) {
+        try {
+          await sendProjectToDocuments(projectId);
+        } catch (statusErr) {
+          console.error("Не удалось перевести проект в статус 'Ожидание документов'", statusErr);
+        }
       }
 
-      try {
-        await uploadShipmentPhoto(projectId, proj.photo);
-      } catch (photoErr) {
-        console.error("Не удалось загрузить фото отгрузки", photoErr);
-      }
-
-      setPendingShipments((prev) => prev.filter((p) => p.projectId !== projectId));
       loadShipments();
       loadStock();
     } catch (e: any) {
@@ -1276,15 +1313,32 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
           ) : (
             <div className="space-y-4 mb-8">
               {pendingShipments.map((proj) => {
-                const allChecked = proj.items.length > 0 && proj.items.every((it) => it.checked && it.warehouseId);
-                const canSubmit = allChecked && !!proj.photo && !proj.submitting;
+                const checkedItems = proj.items.filter((it) => it.checked);
+                const canSubmit =
+                  checkedItems.length > 0 &&
+                  checkedItems.every((it) => it.warehouseId && it.photo) &&
+                  !proj.submitting;
+
+                let helperText = "";
+                if (!canSubmit && !proj.submitting) {
+                  if (checkedItems.length === 0) {
+                    helperText = "Отметьте хотя бы одну позицию для отгрузки";
+                  } else if (!checkedItems.every((it) => it.warehouseId)) {
+                    helperText = "Выберите склад для каждой отмеченной позиции";
+                  } else if (!checkedItems.every((it) => it.photo)) {
+                    helperText = "Прикрепите фото для каждой отмеченной позиции";
+                  }
+                }
 
                 return (
                   <div key={proj.projectId} className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
                     <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 bg-background border-b border-border">
                       <div>
                         <h3 className="text-sm font-bold text-foreground">{proj.projectName}</h3>
-                        <p className="text-xs text-muted-foreground">{proj.items.length} позиций к сборке</p>
+                        <p className="text-xs text-muted-foreground">
+                          {proj.items.length} позиций к сборке
+                          {checkedItems.length > 0 && ` · отмечено ${checkedItems.length}`}
+                        </p>
                       </div>
                       <div className="flex items-center gap-2">
                         <button
@@ -1322,11 +1376,12 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                             <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Кол.</th>
                             <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Ед.</th>
                             <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Склад</th>
+                            <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Фото</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border">
                           {proj.items.map((it) => (
-                            <tr key={it.id} className="hover:bg-background/40 transition-colors">
+                            <tr key={it.id} className={`hover:bg-background/40 transition-colors ${it.checked ? "bg-primary/5" : ""}`}>
                               <td className="px-5 py-3 text-center">
                               {isWarehouseUser && (
                               <input
@@ -1362,6 +1417,29 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                                   </div>
                                 )}
                               </td>
+                              <td className="px-5 py-3">
+                                {isWarehouseUser && it.checked ? (
+                                  <label
+                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-lg cursor-pointer transition-colors ${
+                                      it.photo
+                                        ? "border-green-300 dark:border-green-400/40 bg-green-50 dark:bg-green-400/10 text-green-700 dark:text-green-300"
+                                        : "border-dashed border-border text-muted-foreground hover:bg-background"
+                                    }`}
+                                  >
+                                    {it.photo ? <CheckCircle2 size={13} /> : <Camera size={13} className="text-primary" />}
+                                    <span className="truncate max-w-[110px]">{it.photo ? it.photo.name : "Приложить фото"}</span>
+                                    <input
+                                      type="file"
+                                      accept="image/*"
+                                      className="hidden"
+                                      disabled={proj.submitting}
+                                      onChange={(e) => setShipmentItemPhoto(proj.projectId, it.id, e.target.files?.[0] || null)}
+                                    />
+                                  </label>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground/60 italic">—</span>
+                                )}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -1369,28 +1447,10 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                     </div>
 
                     {isWarehouseUser && (
-                      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 border-t border-border bg-background/40">
-                        <label className="flex items-center gap-2 px-3 py-2 text-sm border border-dashed border-border rounded-lg cursor-pointer hover:bg-background text-muted-foreground">
-                          <Camera size={15} className="text-primary" />
-                          {proj.photo ? proj.photo.name : "Фото отгруженного товара *"}
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            disabled={proj.submitting}
-                            onChange={(e) => setPendingShipmentPhoto(proj.projectId, e.target.files?.[0] || null)}
-                          />
-                        </label>
-
+                      <div className="flex flex-wrap items-center justify-end gap-3 px-5 py-3.5 border-t border-border bg-background/40">
                         <div className="flex flex-col items-end gap-1">
-                          {!canSubmit && !proj.submitting && (
-                            <p className="text-xs text-amber-600 dark:text-amber-400">
-                              {!allChecked
-                                ? "Отметьте все позиции и выберите склад для каждой"
-                                : !proj.photo
-                                ? "Прикрепите фото отгруженного товара"
-                                : ""}
-                            </p>
+                          {helperText && (
+                            <p className="text-xs text-amber-600 dark:text-amber-400">{helperText}</p>
                           )}
                           <button
                             onClick={() => handleSendToShipment(proj.projectId)}
@@ -1402,7 +1462,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                             }`}
                           >
                             {proj.submitting ? <Loader2 size={15} className="animate-spin" /> : <PackageCheck size={15} />}
-                            Отправить на отгрузку
+                            Отправить на отгрузку{checkedItems.length > 0 ? ` (${checkedItems.length})` : ""}
                           </button>
                         </div>
                       </div>
