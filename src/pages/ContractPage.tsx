@@ -90,7 +90,7 @@ function mapApiProject(p: ContractApiProject): ContractProject {
 }
 
 /* ------------------------------------------------------------------ */
-/* Generate-contract modal (accountant only)                           */
+/* Generate-contract modal (PM, accountant, director)                  */
 /* ------------------------------------------------------------------ */
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -490,7 +490,11 @@ export function ContractPage({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [generateForProject, setGenerateForProject] = useState<ContractProject | null>(null);
 
-  const isAccountant = role === "accountant";
+  const canGenerateContract =
+    role === "accountant" ||
+    role === "pm" ||
+    role === "director" ||
+    role === "commercial_director";
 
   useEffect(() => {
     let cancelled = false;
@@ -603,7 +607,7 @@ export function ContractPage({
                       <CheckCircle2 size={13} className="text-green-600 dark:text-green-400" />
                       <span className="text-xs font-medium text-green-700 dark:text-green-300">Договор загружен</span>
                     </span>
-                  ) : isAccountant ? (
+                  ) : canGenerateContract ? (
                     <span
                       onClick={(e) => {
                         e.stopPropagation();

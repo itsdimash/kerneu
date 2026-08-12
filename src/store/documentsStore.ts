@@ -2,8 +2,6 @@ import type { ProjectDocumentResponse, DocumentReviewResponse } from "../api/api
 import {
   fetchDocumentsReviewStatus,
   submitDocumentsForReview,
-  accountantApproveDocuments,
-  accountantRejectDocuments,
   directorApproveDocuments,
   directorRejectDocuments,
   completeProjectOnBackend, // <-- ДОБАВЛЕН ИМПОРТ
@@ -31,9 +29,13 @@ export interface ProjectSummary {
   statusName: string;
 }
 
+// ИЗМЕНЕНО: шаг бухгалтера убран из цепочки согласования документов —
+// теперь единственный согласующий это директор (по аналогии с закупкой).
+// "pending_accountant" убран из типа; бэкенд больше никогда его не
+// возвращает. rejectedBy может ещё содержать "accountant" в исторических
+// данных, поэтому Rejector не трогаем.
 export type ReviewStage =
   | "none"
-  | "pending_accountant"
   | "pending_director"
   | "approved"
   | "rejected";
@@ -55,8 +57,8 @@ const EMPTY_REVIEW: ReviewState = {
   completed: false,
 };
 
-// Договор теперь генерирует и загружает бухгалтер (не PM) — см.
-// ContractPage (генерация) и DocumentsPage (загрузка финального файла).
+// Договор может сгенерировать и загрузить PM, бухгалтер или директор — см.
+// ContractPage (генерация) и DocumentsPage (загрузка/замена финального файла).
 // Доверенность и Накладные не сеются заранее: PM добавляет каждую отдельно.
 function seedProjectDocs(projectId: string): ProjectDocument[] {
   return [
@@ -143,16 +145,6 @@ class DocumentsStore {
 
   async submitForReview(projectId: string): Promise<void> {
     const response = await submitDocumentsForReview(projectId);
-    this.applyReviewResponse(projectId, response);
-  }
-
-  async accountantApprove(projectId: string): Promise<void> {
-    const response = await accountantApproveDocuments(projectId);
-    this.applyReviewResponse(projectId, response);
-  }
-
-  async accountantReject(projectId: string, reason?: string): Promise<void> {
-    const response = await accountantRejectDocuments(projectId, reason);
     this.applyReviewResponse(projectId, response);
   }
 

@@ -5,7 +5,7 @@ import type { Page, ProjectState, Role } from "../types";
 import {
   CheckCircle2, Clock, Download, Loader2, Upload, Check, FileCheck,
   FileText, Receipt as ReceiptIcon, ChevronDown, Search, Lock, X,
-  Send, AlertTriangle, Trash2, Handshake
+  Send, AlertTriangle, Trash2, Handshake, RefreshCw
 } from "lucide-react";
 import {
   documentsStore,
@@ -30,7 +30,9 @@ type ProjectApiItem = {
   status?: string | { status_name?: string };
 };
 
-const REVIEWER_ROLES: Role[] = ["accountant", "commercial_director"];
+// ИЗМЕНЕНО: шаг бухгалтера убран из цепочки согласования документов —
+// теперь единственный согласующий это директор.
+const REVIEWER_ROLES: Role[] = ["commercial_director"];
 
 const ROLE_LABEL: Record<Rejector, string> = {
   accountant: "бухгалтер",
@@ -76,10 +78,11 @@ export function DocumentsPage({
 
   const [uploadingPoa, setUploadingPoa] = useState(false);
   const [uploadingWaybill, setUploadingWaybill] = useState(false);
-  // Финальный (проверенный/исправленный бухгалтером) файл договора — теперь
-  // загружается здесь, а не на странице "Договор". Генерация происходит на
-  // странице "Договор" (только бухгалтер), а сюда бухгалтер приносит уже
-  // готовый, вычитанный файл.
+  // Финальный (проверенный/исправленный) файл договора загружается здесь, а
+  // не на странице "Договор". Генерация черновика происходит на странице
+  // "Договор" (PM, бухгалтер, директор), а сюда приносят уже готовый,
+  // вычитанный файл. Загрузить/заменить может любой, у кого есть доступ к
+  // сделке — PM, бухгалтер или директор.
   const [uploadingContract, setUploadingContract] = useState(false);
 
   useEffect(() => {
@@ -293,6 +296,14 @@ export function DocumentsPage({
   const allDocs = [...archivedKps, ...localDocs.filter((document) => document.category !== "kp")];
   const hasApprovedKp = archivedKps.some((document) => document.status === "approved");
 
+  // Загружать/заменять финальный файл договора может любой, у кого есть
+  // доступ к сделке — не только бухгалтер.
+  const canUploadContract =
+    role === "pm" ||
+    role === "accountant" ||
+    role === "director" ||
+    role === "commercial_director";
+
   const contractDoc = allDocs.find(d => d.category === "contract");
   const poaDocs     = allDocs.filter(d => d.category === "power_of_attorney");
   const waybillDocs = allDocs.filter(d => d.category === "waybill");
@@ -311,7 +322,7 @@ export function DocumentsPage({
     (selectedProject?.contractSigned ?? projectState.contractSigned);
   const uploadsLocked = !contractSigned;
 
-  const reviewInFlight = reviewStage === "pending_accountant" || reviewStage === "pending_director";
+  const reviewInFlight = reviewStage === "pending_director";
   // После полного согласования (approved) PM больше не может редактировать
   // документов — блокировка остаётся навсегда, а не только до завершения проекта.
   const docsLocked = completed || uploadsLocked || reviewInFlight || reviewStage === "approved";
@@ -461,12 +472,14 @@ export function DocumentsPage({
     if (waybillFileRef.current) waybillFileRef.current.value = "";
   };
 
-  // Бухгалтер загружает финальный (проверенный/отредактированный) файл
-  // договора сюда после того, как сгенерировал черновик на странице
-  // "Договор". После успешной загрузки переводим проект из "Ожидание
-  // подписания" в "Активный закуп" через markContractUploaded (мягко: если
-  // это не удастся, сам факт загрузки файла всё равно достаточен для
-  // contractSigned выше, а PM всегда может попробовать снова).
+  // Финальный (проверенный/отредактированный) файл договора загружается
+  // сюда после того, как черновик сгенерирован на странице "Договор".
+  // Повторный вызов с новым файлом работает как "заменить" — бэкенд просто
+  // перезаписывает документ категории "contract". После успешной загрузки
+  // переводим проект из "Ожидание подписания" в "Активный закуп" через
+  // markContractUploaded (мягко: если это не удастся, сам факт загрузки
+  // файла всё равно достаточен для contractSigned выше, а можно попробовать
+  // снова).
   const handleContractUpload = async (file: File | undefined) => {
     if (!file || !selectedProjectId) return;
     setUploadingContract(true);
@@ -502,32 +515,6 @@ export function DocumentsPage({
       alert("Не удалось отправить документы на проверку. Проверьте соединение с сервером.");
     } finally {
       setSubmittingReview(false);
-    }
-  };
-
-  const handleAccountantAccept = async () => {
-    setDecidingReview(true);
-    try {
-      await documentsStore.accountantApprove(selectedProjectId);
-    } catch (error) {
-      console.error(error);
-      alert("Не удалось подтвердить документы. Проверьте соединение с сервером.");
-    } finally {
-      setDecidingReview(false);
-    }
-  };
-
-  const handleAccountantReject = async () => {
-    setDecidingReview(true);
-    try {
-      await documentsStore.accountantReject(selectedProjectId, rejectDraft.trim() || undefined);
-      setRejectDraft("");
-      setShowRejectBox(false);
-    } catch (error) {
-      console.error(error);
-      alert("Не удалось отклонить документы. Проверьте соединение с сервером.");
-    } finally {
-      setDecidingReview(false);
     }
   };
 
@@ -735,14 +722,83 @@ export function DocumentsPage({
     </div>
   );
 
+  // Карточка загрузки/замены финального договора — общая для страницы
+  // ревьюера (бухгалтер/директор) и страницы PM. Кнопка меняет подпись в
+  // зависимости от того, загружен ли уже файл ("Загрузить" / "Заменить
+  // файл"), чтобы можно было исправить ошибочно загруженный договор без
+  // обращения к разработчику.
+  const renderContractCard = () => {
+    if (!canUploadContract) return null;
+
+    return (
+      <div className="bg-card rounded-lg border border-border p-5 mb-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
+            <Handshake size={16} className="text-emerald-500 dark:text-emerald-400 flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-foreground">Договор</p>
+              <p className="text-xs text-muted-foreground">
+                {contractUploaded
+                  ? `Загружен · ${contractDoc?.date || "—"}`
+                  : "Сгенерируйте на странице «Договор», проверьте и загрузите готовый файл сюда."}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {contractUploaded && (
+              <span className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 dark:bg-green-400/20 rounded-full">
+                <CheckCircle2 size={13} className="text-green-600 dark:text-green-400" />
+                <span className="text-xs font-medium text-green-700 dark:text-green-300">Загружен</span>
+              </span>
+            )}
+
+            {!completed && (
+              <button
+                onClick={() => !uploadingContract && contractFileRef.current?.click()}
+                disabled={uploadingContract}
+                className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex-shrink-0 ${
+                  uploadingContract
+                    ? "bg-muted text-muted-foreground cursor-wait"
+                    : contractUploaded
+                    ? "bg-card text-foreground border border-border hover:bg-background cursor-pointer"
+                    : "bg-primary hover:bg-primary/90 text-white cursor-pointer"
+                }`}
+              >
+                {uploadingContract ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : contractUploaded ? (
+                  <RefreshCw size={13} />
+                ) : (
+                  <Upload size={13} />
+                )}
+                {uploadingContract ? "Загрузка…" : contractUploaded ? "Заменить файл" : "Загрузить договор"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        <input
+          ref={contractFileRef}
+          type="file"
+          accept=".pdf,.doc,.docx"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            void handleContractUpload(file);
+            e.target.value = "";
+          }}
+        />
+      </div>
+    );
+  };
+
   if (REVIEWER_ROLES.includes(role)) {
     const myRole = role as Rejector;
-    const waitingOnMe =
-      (role === "accountant" && reviewStage === "pending_accountant") ||
-      (role === "commercial_director" && reviewStage === "pending_director");
+    const waitingOnMe = reviewStage === "pending_director";
 
-    const handleAccept = role === "accountant" ? handleAccountantAccept : handleDirectorAccept;
-    const handleReject = role === "accountant" ? handleAccountantReject : handleDirectorReject;
+    const handleAccept = handleDirectorAccept;
+    const handleReject = handleDirectorReject;
 
     return (
       <PageWrap title="Документы" subtitle={selectedProjectName}>
@@ -752,9 +808,7 @@ export function DocumentsPage({
             <div className="flex items-center gap-2 mb-1">
               <Clock size={15} className="text-primary" />
               <h3 className="text-sm font-semibold text-foreground">
-                {role === "accountant"
-                  ? "Менеджер запросил проверку файлов"
-                  : "Бухгалтер подтвердил файлы — требуется ваше решение"}
+                Менеджер запросил проверку файлов
               </h3>
             </div>
             <p className="text-xs text-muted-foreground mb-3">Проверьте документы ниже и примите решение.</p>
@@ -804,18 +858,6 @@ export function DocumentsPage({
             )}
           </div>
         )}
-        {!waitingOnMe && reviewStage === "pending_accountant" && role === "commercial_director" && (
-          <div className="flex items-center gap-2 px-4 py-3 bg-background rounded-lg border border-border mb-4">
-            <Clock size={16} className="text-muted-foreground flex-shrink-0" />
-            <p className="text-sm text-muted-foreground">Ожидается проверка бухгалтера, затем запрос поступит вам.</p>
-          </div>
-        )}
-        {!waitingOnMe && reviewStage === "pending_director" && role === "accountant" && (
-          <div className="flex items-center gap-2 px-4 py-3 bg-green-50 dark:bg-green-400/15 rounded-lg border border-green-200 dark:border-green-400/25 mb-4">
-            <CheckCircle2 size={16} className="text-green-600 dark:text-green-400 flex-shrink-0" />
-            <p className="text-sm font-medium text-green-700 dark:text-green-300">Вы подтвердили файлы. Сейчас на проверке у коммерческого директора.</p>
-          </div>
-        )}
         {reviewStage === "approved" && (
           <div className="flex items-center gap-2 px-4 py-3 bg-green-50 dark:bg-green-400/15 rounded-lg border border-green-200 dark:border-green-400/25 mb-4">
             <CheckCircle2 size={16} className="text-green-600 dark:text-green-400 flex-shrink-0" />
@@ -839,58 +881,10 @@ export function DocumentsPage({
           </div>
         )}
 
-        {/* Загрузка финального договора — только бухгалтер. Черновик
-            генерируется на странице "Договор"; сюда попадает уже
-            проверенный/исправленный файл. */}
-        {role === "accountant" && (
-          <div className="bg-card rounded-lg border border-border p-5 mb-4">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-2 min-w-0">
-                <Handshake size={16} className="text-emerald-500 dark:text-emerald-400 flex-shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-foreground">Договор</p>
-                  <p className="text-xs text-muted-foreground">
-                    {contractUploaded
-                      ? `Загружен · ${contractDoc?.date || "—"}`
-                      : "Сгенерируйте на странице «Договор», проверьте и загрузите готовый файл сюда."}
-                  </p>
-                </div>
-              </div>
-
-              {contractUploaded ? (
-                <span className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 dark:bg-green-400/20 rounded-full flex-shrink-0">
-                  <CheckCircle2 size={13} className="text-green-600 dark:text-green-400" />
-                  <span className="text-xs font-medium text-green-700 dark:text-green-300">Загружен</span>
-                </span>
-              ) : (
-                <button
-                  onClick={() => !uploadingContract && contractFileRef.current?.click()}
-                  disabled={uploadingContract}
-                  className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex-shrink-0 ${
-                    uploadingContract
-                      ? "bg-muted text-muted-foreground cursor-wait"
-                      : "bg-primary hover:bg-primary/90 text-white cursor-pointer"
-                  }`}
-                >
-                  {uploadingContract ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-                  {uploadingContract ? "Загрузка…" : "Загрузить договор"}
-                </button>
-              )}
-            </div>
-
-            <input
-              ref={contractFileRef}
-              type="file"
-              accept=".pdf,.doc,.docx"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                void handleContractUpload(file);
-                e.target.value = "";
-              }}
-            />
-          </div>
-        )}
+        {/* Загрузка/замена финального договора — доступна PM, бухгалтеру и
+            директору. Черновик генерируется на странице "Договор"; сюда
+            попадает уже проверенный/исправленный файл. */}
+        {renderContractCard()}
 
         {renderSharedDocumentList()}
       </PageWrap>
@@ -907,16 +901,10 @@ export function DocumentsPage({
       subtitle={`${selectedProjectName}${completed ? " · Архив (только чтение)" : ""}`}
     >
       {projectSelector}
-      {reviewStage === "pending_accountant" && (
-        <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 dark:bg-blue-400/15 rounded-lg border border-blue-100 dark:border-blue-400/20 mb-4">
-          <Clock size={16} className="text-primary flex-shrink-0" />
-          <p className="text-sm font-medium text-primary">Ожидается проверка бухгалтера</p>
-        </div>
-      )}
       {reviewStage === "pending_director" && (
         <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 dark:bg-blue-400/15 rounded-lg border border-blue-100 dark:border-blue-400/20 mb-4">
           <Clock size={16} className="text-primary flex-shrink-0" />
-          <p className="text-sm font-medium text-primary">Бухгалтер подтвердил — ожидается решение коммерческого директора</p>
+          <p className="text-sm font-medium text-primary">Ожидается решение коммерческого директора</p>
         </div>
       )}
       {reviewStage === "rejected" && (
@@ -936,6 +924,8 @@ export function DocumentsPage({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-4">
         <div className="col-span-2 space-y-5">
           {renderSharedDocumentList()}
+
+          {renderContractCard()}
 
           <div className="bg-card rounded-lg border border-border p-5">
             <div className="flex items-center justify-between mb-3">
@@ -1062,16 +1052,16 @@ export function DocumentsPage({
                 <CheckCircle2 size={16} className="text-green-600 dark:text-green-400 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-green-700 dark:text-green-300">Согласовано ✅</p>
-                  <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">Бухгалтер и директор подтвердили файлы</p>
+                  <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">Директор подтвердил файлы</p>
                 </div>
               </div>
             )}
-            {(reviewStage === "pending_accountant" || reviewStage === "pending_director") && (
+            {reviewStage === "pending_director" && (
               <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 dark:bg-blue-400/15 rounded-lg border border-blue-100 dark:border-blue-400/20">
                 <Clock size={16} className="text-primary flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-primary">
-                    {reviewStage === "pending_accountant" ? "На проверке у бухгалтера" : "На проверке у директора"}
+                    На проверке у директора
                   </p>
                   <p className="text-xs text-muted-foreground mt-0.5">Ожидаем решение</p>
                 </div>
@@ -1110,7 +1100,6 @@ export function DocumentsPage({
             <div className="space-y-2">
               {[
                 { label: "Документы загружены",  done: allUploaded },
-                { label: "Бухгалтер подтвердил", done: reviewStage === "pending_director" || reviewStage === "approved" },
                 { label: "Директор подтвердил",  done: reviewStage === "approved" },
                 { label: "Проект завершён",       done: completed },
               ].map(item => (
