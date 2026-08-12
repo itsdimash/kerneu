@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import type { Role, Page, Receipt, ContractStatus } from "../types";
 import { StatCard } from "../app/components/common/StatCard";
 import { SectionHeader } from "../app/components/common/SectionHeader";
@@ -231,6 +232,15 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
   const selectedClientData = clients.find((c) => c.id === Number(selectedClientId));
   const contractIcon = (s: ContractStatus) => s === "unsigned" ? "🔒" : s === "pending" ? "⏳" : "🔓";
   const [openMenu, setOpenMenu] = useState<number | null>(null);
+  // Координаты меню действий строки — считаем из getBoundingClientRect() кнопки
+  // "...", а само меню рендерим через портал в document.body. Раньше меню лежало
+  // absolute внутри <td>, но каждая <tr> имеет transform (из-за tailwindcss-animate
+  // классов animate-in/slide-in-from-top-1), а transform создаёт новый stacking
+  // context — из-за этого меню одной строки могло оказаться ПОД контентом строк
+  // ниже (z-50 внутри своего stacking context не спасает), и клик по "Удалить"
+  // проваливался в перекрывающую кнопку "..." следующей строки. Портал с fixed-
+  // позиционированием решает это раз и навсегда.
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   // Проект, ожидающий подтверждения удаления (для кастомного модального окна)
   const [projectToDelete, setProjectToDelete] = useState<{ id: number; name: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -522,6 +532,7 @@ const handleSave = async () => {
   // Открывает кастомное модальное окно подтверждения вместо window.confirm
   const handleDelete = (projectId: number, projectName: string) => {
     setOpenMenu(null);
+    setMenuPos(null);
     setProjectToDelete({ id: projectId, name: projectName });
   };
 
@@ -557,6 +568,7 @@ const handleSave = async () => {
   // Открывает кастомное модальное окно подтверждения архивации
   const handleArchive = (projectId: number, projectName: string) => {
     setOpenMenu(null);
+    setMenuPos(null);
     setProjectToArchive({ id: projectId, name: projectName });
   };
 
@@ -1024,54 +1036,77 @@ const handleSave = async () => {
 
                           <td className="px-4 py-3 relative">
                               <button
-                                  onClick={() =>
-                                      setOpenMenu(openMenu === p.id ? null : p.id)
-                                  }
+                                  onClick={(e) => {
+                                      if (openMenu === p.id) {
+                                          setOpenMenu(null);
+                                          setMenuPos(null);
+                                          return;
+                                      }
+                                      const rect = e.currentTarget.getBoundingClientRect();
+                                      setMenuPos({
+                                          top: rect.bottom + 6,
+                                          right: window.innerWidth - rect.right,
+                                      });
+                                      setOpenMenu(p.id);
+                                  }}
                                   className="w-7 h-7 flex items-center justify-center rounded hover:bg-muted text-muted-foreground"
                               >
                                   <MoreHorizontal size={14}/>
                               </button>
 
-                              {openMenu === p.id && (
-                                  <div
-                                      className="absolute right-0 top-full mt-2 w-56 overflow-hidden rounded-xl border border-border bg-card shadow-xl z-50">
-                                      <button
+                              {openMenu === p.id && menuPos && createPortal(
+                                  <>
+                                      {/* Клик вне меню закрывает его */}
+                                      <div
+                                          className="fixed inset-0 z-[100]"
                                           onClick={() => {
                                               setOpenMenu(null);
-                                              onOpenProject(p.id);
+                                              setMenuPos(null);
                                           }}
-                                          className="flex w-full items-center gap-3 px-4 py-3 text-sm text-foreground hover:bg-muted transition-colors"
-                                      >
-                                          <FolderOpen size={18} className="text-amber-500 dark:text-amber-400"/>
-                                          Открыть проект
-                                      </button>
+                                      />
+                                      <div
+                                          style={{ top: menuPos.top, right: menuPos.right }}
+                                          className="fixed w-56 overflow-hidden rounded-xl border border-border bg-card shadow-xl z-[101]">
+                                          <button
+                                              onClick={() => {
+                                                  setOpenMenu(null);
+                                                  setMenuPos(null);
+                                                  onOpenProject(p.id);
+                                              }}
+                                              className="flex w-full items-center gap-3 px-4 py-3 text-sm text-foreground hover:bg-muted transition-colors"
+                                          >
+                                              <FolderOpen size={18} className="text-amber-500 dark:text-amber-400"/>
+                                              Открыть проект
+                                          </button>
 
-                                      {isArchivableStatus(p.status?.status_name) ? (
-                                          role === "commercial_director" && (
+                                          {isArchivableStatus(p.status?.status_name) ? (
+                                              role === "commercial_director" && (
+                                                  <>
+                                                      <div className="h-px bg-muted"/>
+                                                      <button
+                                                          onClick={() => handleArchive(p.id, p.name ?? `Проект №${p.id}`)}
+                                                          className="flex w-full items-center gap-3 px-4 py-3 text-sm text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:bg-amber-400/15 transition-colors"
+                                                      >
+                                                          <Archive size={18}/>
+                                                          Отправить в архив
+                                                      </button>
+                                                  </>
+                                              )
+                                          ) : (
                                               <>
                                                   <div className="h-px bg-muted"/>
                                                   <button
-                                                      onClick={() => handleArchive(p.id, p.name ?? `Проект №${p.id}`)}
-                                                      className="flex w-full items-center gap-3 px-4 py-3 text-sm text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:bg-amber-400/15 transition-colors"
+                                                      onClick={() => handleDelete(p.id, p.name ?? `Проект №${p.id}`)}
+                                                      className="flex w-full items-center gap-3 px-4 py-3 text-sm text-destructive hover:bg-red-50 dark:bg-red-400/15 transition-colors"
                                                   >
-                                                      <Archive size={18}/>
-                                                      Отправить в архив
+                                                      <Trash2 size={19}/>
+                                                      Удалить
                                                   </button>
                                               </>
-                                          )
-                                      ) : (
-                                          <>
-                                              <div className="h-px bg-muted"/>
-                                              <button
-                                                  onClick={() => handleDelete(p.id, p.name ?? `Проект №${p.id}`)}
-                                                  className="flex w-full items-center gap-3 px-4 py-3 text-sm text-destructive hover:bg-red-50 dark:bg-red-400/15 transition-colors"
-                                              >
-                                                  <Trash2 size={19}/>
-                                                  Удалить
-                                              </button>
-                                          </>
-                                      )}
-                                  </div>
+                                          )}
+                                      </div>
+                                  </>,
+                                  document.body
                               )}
                           </td>
                       </tr>
