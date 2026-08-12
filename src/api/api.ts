@@ -266,12 +266,6 @@ export async function confirmMlImport(
 // ==========================================
 // СКЛАДЫ (справочник)
 // ==========================================
-// Реальный список складов отдаёт GET /warehouse/list (роут добавлен на бэке
-// поверх уже существовавшего get_all_warehouses в warehouse_service.py).
-// Остатки (/warehouse/stocks) по-прежнему дополнительно содержат
-// warehouse_id/warehouse_name вложенными в item.stocks[] — это используется
-// в WarehousePage.tsx (deriveWarehouses) как подстраховка на случай,
-// если склад окажется без остатков ни по одному товару.
 
 export interface WarehouseInfo {
   id: number;
@@ -948,13 +942,16 @@ export const downloadShipmentChecklist = async (projectId: number): Promise<void
 };
 
 // ==========================================
-// ФОТО ОТГРУЗКИ — прикладывается кладовщиком в момент завершения
-// отгрузки проекта (часть handleSendToShipment на фронте)
+// ФОТО ОТГРУЗКИ — прикладывается кладовщиком по КАЖДОЙ отгружаемой позиции
+// (частичная отгрузка: фото на позицию, не на весь проект). itemId
+// необязателен для обратной совместимости со старыми вызовами
+// (фото на весь проект целиком, project_item_id останется NULL).
 // ==========================================
 
 export interface ShipmentPhotoResponse {
   id: number;
   project_id: number;
+  project_item_id?: number | null;
   photo_path: string;
   comment: string | null;
   created_at: string;
@@ -963,10 +960,12 @@ export interface ShipmentPhotoResponse {
 export async function uploadShipmentPhoto(
   projectId: number,
   photo: File,
+  itemId?: number,
   comment?: string,
 ): Promise<ShipmentPhotoResponse> {
   const formData = new FormData();
   formData.append("photo", photo);
+  if (itemId !== undefined) formData.append("item_id", String(itemId));
   if (comment) formData.append("comment", comment);
 
   const { data } = await api.post<ShipmentPhotoResponse>(
