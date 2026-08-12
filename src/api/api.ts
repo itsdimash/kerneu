@@ -659,6 +659,49 @@ export async function fetchProjectItems(
 }
 
 // ==========================================
+// ПОСТАВЩИКИ (справочник + смена поставщика позиции в Закупках)
+// ==========================================
+
+export interface SupplierListItem {
+  id: number;
+  supplier_name: string;
+}
+
+export const fetchSuppliers = async (query?: string): Promise<SupplierListItem[]> => {
+  const { data } = await api.get<SupplierListItem[]>("/suppliers", {
+    params: query ? { query } : undefined,
+  });
+  return data;
+};
+
+export interface UpdateProjectItemSupplierPayload {
+  supplier_id?: number | null;
+  supplier_name?: string | null;
+}
+
+export async function updateProjectItemSupplier(
+  projectId: number | string,
+  itemId: number,
+  payload: UpdateProjectItemSupplierPayload,
+): Promise<ProjectItemResponse> {
+  try {
+    const { data } = await api.patch<ProjectItemResponse>(
+      `/project-items/${projectId}/${itemId}/supplier`,
+      payload,
+    );
+    return data;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const detail = error.response?.data?.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        throw new Error(detail);
+      }
+    }
+    throw error;
+  }
+}
+
+// ==========================================
 // DASHBOARD WIDGETS
 // ==========================================
 

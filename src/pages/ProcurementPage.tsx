@@ -7,7 +7,10 @@ import {
   uploadProjectDocument, 
   fetchProjectDocuments,
   fetchWarehouseList,
-  WarehouseInfo
+  WarehouseInfo,
+  fetchSuppliers,
+  updateProjectItemSupplier,
+  SupplierListItem
 } from "../api/api";
 import {
   Loader2,
@@ -24,7 +27,10 @@ import {
   AlertCircle,
   XCircle,
   Building2,
-  X
+  X,
+  Pencil,
+  Search,
+  Plus
 } from "lucide-react";
 
 type ProjectListItem = {
@@ -277,9 +283,24 @@ export function ProcurementPage({
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<number>(1);
   const [isSendingToIncome, setIsSendingToIncome] = useState(false);
 
+  // NEW: смена поставщика позиции прямо в таблице закупки (ПМ/Комдир/админ).
+  // knownSuppliers — справочник поставщиков для модалки выбора/создания.
+  const [knownSuppliers, setKnownSuppliers] = useState<SupplierListItem[]>([]);
+  const [supplierSaveError, setSupplierSaveError] = useState<string | null>(null);
+
   const isDirector = role === "director" || role === "commercial_director";
   const isAccountant = role === "accountant";
   const isPm = role === "pm";
+  const isAdmin = role === "admin";
+
+  // Менять поставщика можно только ПМ/Комдиру/админу и только пока
+  // проект в статусе "Активный закуп". Бэкенд проверяет то же самое —
+  // это только для UX.
+  const canChangeSupplier =
+    (isPm || isDirector || isAdmin) &&
+    normalizeText(
+      safeTrim(selectedProject?.status?.status_name) || safeTrim(selectedProject?.status_name)
+    ) === normalizeText("Активный закуп");
 
   useEffect(() => {
     let cancelled = false;
@@ -320,6 +341,15 @@ export function ProcurementPage({
 
     return () => { cancelled = true; };
   }, []);
+
+  // NEW: справочник поставщиков для автокомплита при смене поставщика —
+  // грузим только тем, кто вообще может редактировать (ПМ/Комдир/админ).
+  useEffect(() => {
+    if (!isPm && !isDirector && !isAdmin) return;
+    fetchSuppliers()
+      .then(setKnownSuppliers)
+      .catch(e => console.error("Ошибка загрузки списка поставщиков:", e));
+  }, [isPm, isDirector, isAdmin]);
 
   const loadProjectPurchases = async (project: ProjectListItem) => {
     try {
@@ -647,6 +677,92 @@ export function ProcurementPage({
     }
   };
 
+  // NEW: смена поставщика через модалку с подтверждением (ПМ/Комдир/админ).
+  // Шаги: 'confirm' ("точно хотите менять?") -> 'select' (поиск среди
+  // существующих поставщиков или создание нового). cost_price не
+  // трогаем — только supplier_id/supplier_raw_name.
+  const [supplierModalItem, setSupplierModalItem] = useState<ProcurementProjectItem | null>(null);
+  const [supplierModalStep, setSupplierModalStep] = useState<'confirm' | 'select'>('confirm');
+  const [supplierSearchQuery, setSupplierSearchQuery] = useState("");
+  const [newSupplierName, setNewSupplierName] = useState("");
+  const [supplierModalSaving, setSupplierModalSaving] = useState(false);
+
+  const openSupplierModal = (item: ProcurementProjectItem) => {
+    setSupplierModalItem(item);
+    setSupplierModalStep('confirm');
+    setSupplierSearchQuery("");
+    setNewSupplierName("");
+    setSupplierSaveError(null);
+  };
+
+  const closeSupplierModal = () => {
+    setSupplierModalItem(null);
+    setSupplierModalStep('confirm');
+    setSupplierSearchQuery("");
+    setNewSupplierName("");
+  };
+
+  const filteredKnownSuppliers = useMemo(() => {
+    const q = supplierSearchQuery.trim().toLocaleLowerCase("ru-RU");
+    if (!q) return knownSuppliers;
+    return knownSuppliers.filter(s => s.supplier_name.toLocaleLowerCase("ru-RU").includes(q));
+  }, [knownSuppliers, supplierSearchQuery]);
+
+  const applySupplierChange = async (
+    item: ProcurementProjectItem,
+    payload: { supplier_id?: number; supplier_name?: string }
+  ) => {
+    if (!selectedProject) return;
+
+    setSupplierModalSaving(true);
+    setSupplierSaveError(null);
+
+    try {
+      const updated = await updateProjectItemSupplier(selectedProject.id, item.id, payload);
+
+      setPurchaseItems(prev =>
+        prev.map(p =>
+          p.id === item.id
+            ? {
+                ...p,
+                supplier_id: updated.supplier_id ?? null,
+                supplier_raw_name: updated.supplier_raw_name ?? null,
+                supplier: updated.supplier
+                  ? { id: updated.supplier.id, name: updated.supplier.supplier_name }
+                  : null,
+              }
+            : p
+        )
+      );
+
+      // Если поставщика создали впервые — добавим его в локальный
+      // справочник, не дожидаясь повторной загрузки.
+      if (updated.supplier && !knownSuppliers.some(s => s.id === updated.supplier!.id)) {
+        setKnownSuppliers(prev => [...prev, { id: updated.supplier!.id, supplier_name: updated.supplier!.supplier_name }]);
+      }
+
+      closeSupplierModal();
+    } catch (error) {
+      console.error("Supplier update failed", error);
+      setSupplierSaveError(
+        error instanceof Error ? error.message : "Не удалось изменить поставщика"
+      );
+    } finally {
+      setSupplierModalSaving(false);
+    }
+  };
+
+  const handleSelectExistingSupplier = (supplier: SupplierListItem) => {
+    if (!supplierModalItem) return;
+    applySupplierChange(supplierModalItem, { supplier_id: supplier.id });
+  };
+
+  const handleCreateNewSupplier = () => {
+    const name = newSupplierName.trim();
+    if (!supplierModalItem || !name) return;
+    applySupplierChange(supplierModalItem, { supplier_name: name });
+  };
+
   const allSuppliersIncomed = useMemo(() => {
     if (supplierKeys.length === 0) return false;
     return supplierKeys.every(sup => supplierWorkflows[sup]?.status === 'income');
@@ -690,6 +806,12 @@ export function ProcurementPage({
       {purchaseError && (
         <div className="p-4 bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-400/25 rounded-lg mb-6 text-sm">
           {purchaseError}
+        </div>
+      )}
+
+      {supplierSaveError && (
+        <div className="p-4 bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-400/25 rounded-lg mb-6 text-sm">
+          {supplierSaveError}
         </div>
       )}
 
@@ -933,7 +1055,7 @@ export function ProcurementPage({
                   <table className="w-full border-collapse">
                     <thead>
                       <tr className="border-b border-border bg-background/40">
-                        {["Продукт", "Кол.", "Ед.", "Цена", "Сумма", "Маржа"].map((header) => (
+                        {["Продукт", "Поставщик", "Кол.", "Ед.", "Цена", "Сумма", "Маржа"].map((header) => (
                           <th key={header} className="px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">
                             {header}
                           </th>
@@ -954,6 +1076,20 @@ export function ProcurementPage({
                           <tr key={item.id} className="hover:bg-background/30 transition-colors">
                             <td className="px-5 py-3.5 text-sm font-medium text-foreground">
                               {getItemName(item)}
+                            </td>
+                            <td className="px-5 py-3.5">
+                              {canChangeSupplier ? (
+                                <button
+                                  onClick={() => openSupplierModal(item)}
+                                  className="group inline-flex items-center gap-1.5 text-sm text-foreground px-2 py-1.5 -mx-2 rounded-md hover:bg-muted transition-colors"
+                                  title="Изменить поставщика"
+                                >
+                                  {getSupplierName(item)}
+                                  <Pencil size={12} className="text-muted-foreground opacity-0 group-hover:opacity-70 transition-opacity" />
+                                </button>
+                              ) : (
+                                <span className="text-sm text-foreground px-2 py-1.5">{getSupplierName(item)}</span>
+                              )}
                             </td>
                             <td className="px-5 py-3.5 text-sm font-mono text-foreground">
                               {quantity}
@@ -1057,6 +1193,133 @@ export function ProcurementPage({
                 Подтвердить и отправить
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Модалка смены поставщика позиции (ПМ/Комдир/админ) — два шага:
+          1) подтверждение "точно хотите менять?"
+          2) поиск среди существующих поставщиков или создание нового. */}
+      {supplierModalItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md bg-card rounded-xl shadow-xl p-6 border border-border">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2 text-foreground font-bold">
+                <Building2 className="text-blue-600 dark:text-blue-400" size={20} />
+                <h3>{supplierModalStep === 'confirm' ? "Изменить поставщика?" : "Выбор поставщика"}</h3>
+              </div>
+              <button onClick={closeSupplierModal} className="text-muted-foreground hover:text-muted-foreground">
+                <X size={18} />
+              </button>
+            </div>
+
+            {supplierSaveError && (
+              <div className="mb-4 flex items-start gap-2 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 text-red-700 dark:text-red-300 px-3 py-2.5 rounded-lg text-sm">
+                <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                {supplierSaveError}
+              </div>
+            )}
+
+            {supplierModalStep === 'confirm' ? (
+              <>
+                <p className="text-sm text-muted-foreground mb-6">
+                  Товар <span className="font-semibold text-foreground">«{getItemName(supplierModalItem)}»</span> сейчас
+                  у поставщика <span className="font-semibold text-foreground">«{getSupplierName(supplierModalItem)}»</span>.
+                  Хотите выбрать другого поставщика?
+                </p>
+                <div className="flex justify-end gap-3">
+                  <button
+                    onClick={closeSupplierModal}
+                    className="px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted rounded-lg"
+                  >
+                    Нет
+                  </button>
+                  <button
+                    onClick={() => setSupplierModalStep('select')}
+                    className="px-5 py-2 text-xs font-semibold bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors"
+                  >
+                    Да, изменить
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="relative mb-3">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="text"
+                    autoFocus
+                    value={supplierSearchQuery}
+                    onChange={(e) => setSupplierSearchQuery(e.target.value)}
+                    placeholder="Поиск поставщика..."
+                    disabled={supplierModalSaving}
+                    className="w-full pl-9 pr-3 py-2 text-sm border border-border rounded-lg bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:opacity-50"
+                  />
+                </div>
+
+                <div className="max-h-48 overflow-y-auto border border-border rounded-lg divide-y divide-border mb-4">
+                  {filteredKnownSuppliers.length === 0 ? (
+                    <p className="px-3 py-3 text-xs text-muted-foreground text-center">
+                      Ничего не найдено — можно создать нового поставщика ниже.
+                    </p>
+                  ) : (
+                    filteredKnownSuppliers.map(supplier => (
+                      <button
+                        key={supplier.id}
+                        onClick={() => handleSelectExistingSupplier(supplier)}
+                        disabled={supplierModalSaving}
+                        className="w-full flex items-center justify-between px-3 py-2.5 text-sm text-left hover:bg-muted transition-colors disabled:opacity-50"
+                      >
+                        <span className="text-foreground">{supplier.supplier_name}</span>
+                        {getSupplierName(supplierModalItem) === supplier.supplier_name && (
+                          <span className="text-xs text-muted-foreground">текущий</span>
+                        )}
+                      </button>
+                    ))
+                  )}
+                </div>
+
+                <div className="border-t border-border pt-4">
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">
+                    Или создать нового поставщика
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      maxLength={255}
+                      value={newSupplierName}
+                      onChange={(e) => setNewSupplierName(e.target.value)}
+                      placeholder="Название нового поставщика"
+                      disabled={supplierModalSaving}
+                      className="flex-1 px-3 py-2 text-sm border border-border rounded-lg bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:opacity-50"
+                    />
+                    <button
+                      onClick={handleCreateNewSupplier}
+                      disabled={!newSupplierName.trim() || supplierModalSaving}
+                      className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-success hover:bg-success/90 text-success-foreground rounded-lg transition-colors disabled:opacity-50 shrink-0"
+                    >
+                      <Plus size={14} /> Создать
+                    </button>
+                  </div>
+                </div>
+
+                {supplierModalSaving && (
+                  <div className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 size={14} className="animate-spin text-primary" /> Сохраняем...
+                  </div>
+                )}
+
+                <div className="flex justify-start mt-4">
+                  <button
+                    onClick={() => setSupplierModalStep('confirm')}
+                    disabled={supplierModalSaving}
+                    className="text-xs text-muted-foreground hover:underline disabled:opacity-50"
+                  >
+                    ← Назад
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

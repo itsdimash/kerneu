@@ -70,6 +70,16 @@ const persisted = loadPersistedState();
 export default function App() {
     const [loggedIn, setLoggedIn] = useState(persisted?.loggedIn ?? false);
     const [role, setRole] = useState<Role>(persisted?.role ?? "pm");
+
+    // Настоящая роль из БД (то, что реально вернул /auth/me), а не то,
+    // что выбрали на экране логина. role выше — это "эффективная" роль,
+    // которую видит интерфейс: для всех, кроме admin, она всегда жёстко
+    // равна realRole (см. loadUser ниже). Для admin — разрешаем менять
+    // role отдельно (переключатель в AppShell), чтобы можно было
+    // тестировать интерфейс под любой ролью, не заводя кучу аккаунтов.
+    // Бэкенд при этом как проверял права по настоящей роли из cookie,
+    // так и продолжит — переключатель только меняет то, что видно в UI.
+    const [realRole, setRealRole] = useState<Role | null>(persisted?.realRole ?? null);
     const [page, setPage] = useState<Page>(persisted?.page ?? "dashboard");
     const [projectState, setProjectState] = useState<ProjectState>(persisted?.projectState ?? {
         kpSent: false,
@@ -89,17 +99,51 @@ export default function App() {
         localStorage.setItem(LS_KEY, JSON.stringify({
             loggedIn,
             role,
+            realRole,
             page,
             projectState,
             selectedProjectId,
         }));
-    }, [loggedIn, role, page, projectState, selectedProjectId]);
+    }, [loggedIn, role, realRole, page, projectState, selectedProjectId]);
 
     useEffect(() => {
         const loadUser = async () => {
             try {
                 const me = await getMe();
                 setUser(me);
+
+                // ВАЖНО: role-стейт раньше выставлялся только один раз при
+                // логине (из LoginPage.onLogin) и потом жил своей жизнью в
+                // localStorage — мог разъехаться с реальной ролью в БД
+                // (например, после смены тестового аккаунта или протухшего
+                // persisted-состояния). Именно role используется везде для
+                // прав на UI (isDirector/isPm/...), поэтому здесь
+                // принудительно синхронизируем его с тем, что реально
+                // вернул бэкенд — это единственный источник правды.
+                //
+                // Исключение — admin: ему разрешаем переопределять
+                // "эффективную" role через переключатель в AppShell (для
+                // теста интерфейса под другими ролями), поэтому здесь мы
+                // НЕ затираем role, если человек уже что-то выбрал —
+                // просто по умолчанию показываем как admin, если выбора
+                // ещё не было.
+                const backendRole = me.role as Role;
+                // Замечаем ДО перезаписи realRole — нужно, чтобы отличить
+                // "уже были admin в этой сессии, юзер мог выбрать другую
+                // role в переключателе" от "только что залогинились как
+                // admin впервые" (во втором случае role ещё содержит
+                // дефолт/чужую роль из предыдущей сессии и его надо сбросить).
+                const wasAlreadyAdmin = realRole === "admin";
+                setRealRole(backendRole);
+
+                if (backendRole !== "admin") {
+                    setRole(backendRole);
+                } else if (!wasAlreadyAdmin) {
+                    setRole(backendRole);
+                }
+                // иначе (admin, и уже был admin раньше в этой сессии) — не
+                // трогаем role, там может лежать осознанный выбор из
+                // переключателя "Роль для теста".
             } catch (err) {
                 console.error(err);
                 // Сессия невалидна/истекла на сервере — выкидываем на логин,
@@ -149,6 +193,8 @@ export default function App() {
     return (
         <AppShell
             role={role}
+            realRole={realRole}
+            onRoleChange={setRole}
             page={page}
             onPage={setPage}
             user={user}
