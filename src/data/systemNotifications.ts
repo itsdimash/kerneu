@@ -13,12 +13,10 @@ export type NotificationCategory =
   | "kp_approved"
   | "kp_pending"
   | "client_approved"
-  | "invoice_pending_accountant"
   | "invoice_pending_director"
   | "invoice_approved"
   | "invoice_rejected"
   | "invoice_sent_to_income"
-  | "docs_pending_accountant"
   | "docs_pending_director"
   | "docs_approved"
   | "docs_rejected"
@@ -98,7 +96,10 @@ export const MOCK_SYSTEM_NOTIFICATIONS: SystemNotification[] = [
   {
     id: "n-client-approved-1",
     category: "client_approved",
-    forRole: ["accountant", "admin"],
+    // ИЗМЕНЕНО: раньше только бухгалтер. Теперь генерировать/загружать
+    // договор может PM, бухгалтер и коммерческий директор — все трое
+    // должны увидеть, что проект перешёл в "Ожидание подписания".
+    forRole: ["pm", "accountant", "commercial_director", "admin"],
     projectId: 1039,
     projectName: "Android",
     actorName: "Admin",
@@ -115,9 +116,9 @@ export const MOCK_SYSTEM_NOTIFICATIONS: SystemNotification[] = [
     forRole: ["pm", "admin"],
     projectId: 1039,
     projectName: "Android",
-    actorName: "Айгуль С.",
-    actorRole: "Бухгалтер",
-    title: "Бухгалтер подтвердил документы по «Android»",
+    actorName: "Марат Ж.",
+    actorRole: "Директор",
+    title: "Директор подтвердил документы по «Android»",
     createdAt: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(),
     read: false,
     page: "documents",
@@ -178,12 +179,19 @@ export const MOCK_SYSTEM_NOTIFICATIONS: SystemNotification[] = [
   {
     id: "n-contract-signed-1",
     category: "contract_signed",
-    forRole: ["pm", "admin", "commercial_director"],
+    // ИЗМЕНЕНО: раньше только pm/admin/директор. Теперь загрузить финальный
+    // договор может любой из pm/бухгалтер/директор, поэтому все трое —
+    // потенциальные получатели. ВАЖНО: create_notifications_for_roles()
+    // сам по себе НЕ исключает актёра — нужно явно передать
+    // exclude_user_id=current_user.id в вызове на бэкенде (эндпоинт
+    // загрузки договора), иначе тот, кто загрузил файл, тоже получит
+    // уведомление о своём же действии.
+    forRole: ["pm", "accountant", "commercial_director", "admin"],
     projectId: 1039,
     projectName: "Android",
-    actorName: "Sulpak",
-    actorRole: "Клиент",
-    title: "Договор по проекту «Android» подписан",
+    actorName: "Айгуль С.",
+    actorRole: "Бухгалтер",
+    title: "Договор по проекту «Android» загружен",
     createdAt: new Date(Date.now() - 1000 * 60 * 60 * 30).toISOString(),
     read: true,
     page: "procurement",

@@ -395,7 +395,6 @@ export async function rejectProjectDirector(projectId: number, reason?: string):
 
 export type DocReviewStage =
   | "none"
-  | "pending_accountant"
   | "pending_director"
   | "approved"
   | "rejected";
@@ -423,28 +422,6 @@ export async function submitDocumentsForReview(
 ): Promise<DocumentReviewResponse> {
   const { data } = await api.post<DocumentReviewResponse>(
     `/projects/${projectId}/documents/submit-for-review`,
-  );
-  return data;
-}
-
-// Бухгалтер: принять.
-export async function accountantApproveDocuments(
-  projectId: number | string,
-): Promise<DocumentReviewResponse> {
-  const { data } = await api.post<DocumentReviewResponse>(
-    `/projects/${projectId}/documents/accountant-approve`,
-  );
-  return data;
-}
-
-// Бухгалтер: отклонить (с необязательным комментарием).
-export async function accountantRejectDocuments(
-  projectId: number | string,
-  reason?: string,
-): Promise<DocumentReviewResponse> {
-  const { data } = await api.post<DocumentReviewResponse>(
-    `/projects/${projectId}/documents/accountant-reject`,
-    { reason: reason || null },
   );
   return data;
 }
