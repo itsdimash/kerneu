@@ -8,7 +8,7 @@ import {
 } from "../api/api";
 
 export type DocCategory = "kp" | "contract" | "power_of_attorney" | "invoice" | "waybill";
-export type DocStatus = "pending" | "uploaded" | "generated" | "approved";
+export type DocStatus = "pending" | "uploaded" | "generated" | "approved" | "rejected";
 
 export interface ProjectDocument {
   id: string;
