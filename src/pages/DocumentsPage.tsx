@@ -176,7 +176,12 @@ export function DocumentsPage({
             projectId: String(item.project_id),
             name: item.name,
             category: item.category as DocCategory,
-            status: item.status === "approved" ? "approved" : "generated",
+            status:
+              item.status === "approved"
+                ? "approved"
+                : item.status === "rejected"
+                ? "rejected"
+                : "generated",
             date: new Date(item.created_at).toLocaleDateString("ru-RU"),
             fileName: item.file_name,
             backendDocument: item,
@@ -583,6 +588,7 @@ export function DocumentsPage({
 
   function statusLabel(status: DocStatus) {
     if (status === "approved")  return "Одобрено клиентом";
+    if (status === "rejected")  return "Отклонено клиентом";
     if (status === "generated") return "Сгенерирован";
     if (status === "uploaded")  return "Загружен";
     return "Ожидается";
@@ -594,6 +600,7 @@ export function DocumentsPage({
       approved:  "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 border-green-200 dark:border-green-400/25",
       uploaded:  "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 border-green-200 dark:border-green-400/25",
       pending:   "bg-orange-50 dark:bg-orange-400/15 text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-400/25",
+      rejected:  "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 border-red-200 dark:border-red-400/25",
     };
     return (
       <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${styles[status]}`}>
