@@ -31,6 +31,11 @@ type UserData = {
 
 type AppShellProps = {
   role: Role;
+  // Настоящая роль из БД (может отличаться от role, если это admin и он
+  // переключил "роль для теста" — см. ROLE_SWITCHER_OPTIONS ниже).
+  // null, пока /auth/me ещё не ответил.
+  realRole: Role | null;
+  onRoleChange: (role: Role) => void;
   page: Page;
   onPage: (p: Page) => void;
   onLogout: () => void;
@@ -52,8 +57,21 @@ type AppShellProps = {
   >;
 };
 
+// Роли, между которыми admin может переключаться для теста интерфейса.
+// Значения — те же строки, что и role_name в БД (см. app/models/roles.py
+// на бэке); подписи — то, что видит сам admin в выпадающем списке.
+const ROLE_SWITCHER_OPTIONS: { value: Role; label: string }[] = [
+  { value: "admin", label: "Админ (по умолчанию)" },
+  { value: "pm", label: "Менеджер проекта" },
+  { value: "commercial_director", label: "Коммерческий директор" },
+  { value: "accountant", label: "Бухгалтер" },
+  { value: "warehouse", label: "Кладовщик" },
+];
+
 export function AppShell({
   role,
+  realRole,
+  onRoleChange,
   page,
   onPage,
   user,
@@ -293,6 +311,32 @@ export function AppShell({
           {page === "suppliers" && <SupplierHistoryPage />}
         </main>
       </div>
+
+      {/* Переключатель "роли для теста" — виден только реальным admin'ам
+          (проверка по realRole, не по role — role сам может быть уже
+          переключён на что-то другое). Меняет только то, что видит
+          интерфейс (role, проброшенный во все страницы) — бэкенд
+          по-прежнему проверяет права по настоящей роли из cookie, так что
+          действия, которых admin реально не может делать, останутся
+          недоступны на сервере, даже если в UI показались кнопки. */}
+      {realRole === "admin" && (
+        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 bg-card border border-border rounded-lg shadow-lg px-3 py-2">
+          <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">
+            Роль для теста:
+          </span>
+          <select
+            value={role}
+            onChange={(e) => onRoleChange(e.target.value as Role)}
+            className="text-xs border border-border rounded-md px-2 py-1.5 bg-background focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+          >
+            {ROLE_SWITCHER_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
     </div>
   );
 }

@@ -20,7 +20,6 @@ export type NotificationCategory =
   | "docs_pending_director"
   | "docs_approved"
   | "docs_rejected"
-  | "contract_signed"
   | "stock_low"
   | "goods_arrived"
   | "goods_shipped"
@@ -175,27 +174,6 @@ export const MOCK_SYSTEM_NOTIFICATIONS: SystemNotification[] = [
     read: true,
     page: "dashboard",
     ctaLabel: "Открыть проект",
-  },
-  {
-    id: "n-contract-signed-1",
-    category: "contract_signed",
-    // ИЗМЕНЕНО: раньше только pm/admin/директор. Теперь загрузить финальный
-    // договор может любой из pm/бухгалтер/директор, поэтому все трое —
-    // потенциальные получатели. ВАЖНО: create_notifications_for_roles()
-    // сам по себе НЕ исключает актёра — нужно явно передать
-    // exclude_user_id=current_user.id в вызове на бэкенде (эндпоинт
-    // загрузки договора), иначе тот, кто загрузил файл, тоже получит
-    // уведомление о своём же действии.
-    forRole: ["pm", "accountant", "commercial_director", "admin"],
-    projectId: 1039,
-    projectName: "Android",
-    actorName: "Айгуль С.",
-    actorRole: "Бухгалтер",
-    title: "Договор по проекту «Android» загружен",
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 30).toISOString(),
-    read: true,
-    page: "procurement",
-    ctaLabel: "Перейти к закупкам",
   },
   ...uploadDerived,
 ];

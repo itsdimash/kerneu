@@ -8,7 +8,6 @@ import {
   PackageX,
   Clock3,
   ThumbsUp,
-  FileSignature,
   UploadCloud,
   Quote,
   ChevronRight,
@@ -56,7 +55,6 @@ const CATEGORY_META: Record<
   invoice_approved: { icon: ThumbsUp, ...SUCCESS, label: "Счёт одобрен" },
   invoice_rejected: { icon: FileX2, ...DESTRUCTIVE, label: "Счёт отклонён" },
   invoice_sent_to_income: { icon: PackagePlus, ...VIOLET, label: "Ожидается приход" },
-  contract_signed: { icon: FileSignature, ...INFO, label: "Договор" },
   stock_low: { icon: PackageX, ...WARNING, label: "Склад" },
   goods_arrived: { icon: PackageCheck, ...INFO, label: "Приход" },
   goods_shipped: { icon: Truck, ...SUCCESS, label: "Отгрузка" },
@@ -241,7 +239,21 @@ export function NotificationBell({ role, onNavigate, onSelectProject }: Props) {
           )}
 
           {visible.map((n) => {
-            const meta = CATEGORY_META[n.category];
+            // Backend category strings can drift from this frontend enum
+            // (renamed/removed workflow steps, typos, etc). Falling back to
+            // a neutral icon here beats an uncaught exception mid-render,
+            // which previously took down the entire app shell (the bell is
+            // mounted globally) for any recipient whose notifications
+            // included an unrecognized category.
+            const meta = CATEGORY_META[n.category] ?? {
+              icon: Bell,
+              fg: "var(--muted-foreground)",
+              bg: "var(--muted)",
+              label: n.category,
+            };
+            if (!CATEGORY_META[n.category]) {
+              console.warn(`Неизвестная категория уведомления: "${n.category}"`, n);
+            }
             const Icon = meta.icon;
             return (
               <div
