@@ -673,19 +673,6 @@ export function ProjectPagePM({
     const margin = Number(item.margin ?? 0);
     const normalizedStatus = normalizeMlStatus(item.ml_status);
 
-    // Готовность строки к подтверждению зависит от статуса:
-    // - "Нет в системе" — ML вообще не нашёл кандидатов, товар нужно
-    //   создать вручную через модалку (is_confirmed + selected_product_id).
-    // - "Нет в системе (похожие варианты)" — ML нашёл кандидатов, но
-    //   не уверен; PM должен либо выбрать один из similar_variants
-    //   (тогда selected_product_id проставляется через PATCH, без
-    //   is_confirmed), либо тоже создать новый товар вручную. В обоих
-    //   случаях требуем selected_product_id !== null — просто заполненной
-    //   цены/поставщика недостаточно, это и было причиной бага, когда
-    //   ML предлагал в качестве похожего варианта совершенно не
-    //   подходящий товар, а строка всё равно считалась готовой.
-    // - "Есть в системе (недостаточно)" / "На складе" — ML совпадение
-    //   уверенное, отдельного выбора со стороны PM не требуется.
     const mlStatusReady =
       normalizedStatus !== null &&
       (normalizedStatus === "Нет в системе"
@@ -915,9 +902,6 @@ export function ProjectPagePM({
         <div className="mt-2">
             <div className="flex items-center justify-end gap-4 mb-3">
                 <div className="flex items-center gap-3">
-                  {/* Бейдж "Подтверждено" нужен только пока КП ещё не решён Комдиром —
-                      после одобрения/отклонения это уже видно по статусу проекта
-                      сверху, и дублирующий зелёный бейдж только путает. */}
                   {mlImport && !isApproved && !isRejected && (
                     <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${mlImport.status === "confirmed" ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200"}`}>
                       {mlImport.status === "confirmed" ? "Подтверждено" : "Черновик"}
@@ -1000,10 +984,10 @@ export function ProjectPagePM({
                     <div className="px-4 py-2.5 text-xs text-muted-foreground border-b border-border bg-background/60">
                       Финальные значения по проекту, с учётом правок Комдира (если он их вносил).
                     </div>
-                    <table className="w-full min-w-[900px] border-collapse">
+                    <table className="w-full min-w-[950px] border-collapse">
                       <thead>
                         <tr className="border-b border-border bg-background/60">
-                          {["Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"].map(h => (
+                          {["№", "Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"].map(h => (
                               <th key={h}
                                   className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
                           ))}
@@ -1012,25 +996,25 @@ export function ProjectPagePM({
                       <tbody className="divide-y divide-border">
                         {liveItemsLoading ? (
                           <tr>
-                            <td colSpan={9} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                            <td colSpan={10} className="px-4 py-10 text-center text-sm text-muted-foreground">
                               <Loader2 size={16} className="inline-block animate-spin text-primary mr-2" />
                               Загружаем позиции проекта…
                             </td>
                           </tr>
                         ) : liveItemsError ? (
                           <tr>
-                            <td colSpan={9} className="px-4 py-10 text-center text-sm text-destructive">
+                            <td colSpan={10} className="px-4 py-10 text-center text-sm text-destructive">
                               {liveItemsError}
                             </td>
                           </tr>
                         ) : liveItems.length === 0 ? (
                           <tr>
-                            <td colSpan={9} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                            <td colSpan={10} className="px-4 py-10 text-center text-sm text-muted-foreground">
                               В проекте нет позиций
                             </td>
                           </tr>
                         ) : (
-                          liveItems.map(item => {
+                          liveItems.map((item, index) => {
                             const qty = Number(item.required_quantity ?? 0);
                             const price = Number(item.sale_price ?? 0);
                             const priceCost = Number(item.cost_price ?? 0);
@@ -1042,6 +1026,7 @@ export function ProjectPagePM({
 
                             return (
                                 <tr key={item.id} className="hover:bg-background/50">
+                                  <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
                                   <td className="px-4 py-3 text-sm text-foreground">{item.product?.name ?? "—"}</td>
                                   <td className="px-4 py-3 text-sm text-foreground">
                                     {item.supplier_raw_name ?? item.supplier?.supplier_name ?? "—"}
@@ -1687,19 +1672,8 @@ const [itemSaveError, setItemSaveError] =
     }
   };
 
-  // Комдир может править позиции только пока КП ещё не решено — как
-  // только он подтвердил или отклонил, поля блокируются (бэкенд это
-  // тоже проверяет, здесь только для UX).
   const canEditItems = decision === null;
 
-  // Базовый путь API. Если у тебя запросы в api/api.ts идут не через
-  // "/api/v1", а через другой префикс (например, полный URL из env) —
-  // поменяй только эту строку.
-  // Базовый URL API. Свагер у тебя на localhost:8000, а страница — на
-  // localhost:5173 (Vite), поэтому относительный путь "/api/v1/..."
-  // уходил на сам Vite и 404-ился. Если бэкенд слушает не на 8000 (или
-  // в проде это другой домен) — поменяй только эту строку, в идеале
-  // на ту же переменную окружения, что использует api/api.ts.
   const PROJECT_ITEMS_API_BASE = "http://localhost:8000/api/v1/project-items";
 
   const handleItemFieldUpdate = async (
@@ -1755,11 +1729,6 @@ const [itemSaveError, setItemSaveError] =
     }
   };
 
-  // Комдир может генерировать КП после того, как сам его одобрил (decision
-  // === true), и до тех пор, пока клиент не подписал — как только проект
-  // ушёл в "Ожидание подписания" (или дальше), кнопка больше не нужна.
-  // Одобрить/отклонить от имени клиента ("Одобрено клиентом" /
-  // "Клиент просит правки") у Комдира по-прежнему нет — это только у ПМ.
   const canGenerateKP = decision === true && currentStatus === "Ожидание клиента";
 
   const handleGenerateKP = async () => {
@@ -1876,10 +1845,10 @@ const [itemSaveError, setItemSaveError] =
             </div>
           )}
           <div className="bg-card rounded-lg border border-border overflow-x-auto">
-            <table className="w-full min-w-[1100px] border-collapse">
+            <table className="w-full min-w-[1150px] border-collapse">
               <thead>
               <tr className="border-b border-border bg-background/60">
-                {["Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"].map(h => (
+                {["№", "Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"].map(h => (
                     <th key={h}
                         className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
                 ))}
@@ -1888,25 +1857,25 @@ const [itemSaveError, setItemSaveError] =
               <tbody className="divide-y divide-border">
                 {projectItemsLoading ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    <td colSpan={10} className="px-4 py-10 text-center text-sm text-muted-foreground">
                       <Loader2 size={16} className="inline-block animate-spin text-primary mr-2" />
                       Загружаем позиции проекта…
                     </td>
                   </tr>
                 ) : projectItemsError ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-10 text-center text-sm text-destructive">
+                    <td colSpan={10} className="px-4 py-10 text-center text-sm text-destructive">
                       {projectItemsError}
                     </td>
                   </tr>
                 ) : projectItems.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    <td colSpan={10} className="px-4 py-10 text-center text-sm text-muted-foreground">
                       В проекте нет позиций
                     </td>
                   </tr>
                 ) : (
-                  projectItems.map(item => {
+                  projectItems.map((item, index) => {
                     const qty = Number(item.required_quantity ?? 0);
                     const price = Number(item.sale_price ?? 0);
                     const priceCost = Number(item.cost_price ?? 0);
@@ -1920,6 +1889,7 @@ const [itemSaveError, setItemSaveError] =
 
                     return (
                         <tr key={item.id} className="hover:bg-background/50">
+                          <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
                           <td className="px-4 py-3 text-sm text-foreground">{item.product?.name ?? "—"}</td>
                           <td className="px-4 py-3">
                             <input
