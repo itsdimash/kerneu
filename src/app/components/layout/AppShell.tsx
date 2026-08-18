@@ -60,8 +60,10 @@ type AppShellProps = {
 // Роли, между которыми admin может переключаться для теста интерфейса.
 // Значения — те же строки, что и role_name в БД (см. app/models/roles.py
 // на бэке); подписи — то, что видит сам admin в выпадающем списке.
+// "admin" намеренно исключён из списка — переключатель используется
+// только для просмотра интерфейса под другими ролями, дефолт — "pm"
+// (см. useState<Role> в App.tsx).
 const ROLE_SWITCHER_OPTIONS: { value: Role; label: string }[] = [
-  { value: "admin", label: "Админ (по умолчанию)" },
   { value: "pm", label: "Менеджер проекта" },
   { value: "commercial_director", label: "Коммерческий директор" },
   { value: "accountant", label: "Бухгалтер" },
