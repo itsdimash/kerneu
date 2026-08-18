@@ -1066,10 +1066,8 @@ export function ProjectPagePM({
                 <>
                 <div className="bg-card rounded-lg border border-border overflow-x-auto">
                   <table className="w-full min-w-[1950px] border-collapse">
-                  <table className="w-full min-w-[1950px] border-collapse">
                     <thead>
                       <tr className="border-b border-border bg-background/60">
-                        {["№", "Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Поставщик", "Себестоимость", "Цена", "Сумма", "Маржа", "Доступно", "Комментарий", "Статус"].map((heading) => (
                         {["№", "Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Поставщик", "Себестоимость", "Цена", "Сумма", "Маржа", "Доступно", "Комментарий", "Статус"].map((heading) => (
                           <th key={heading} className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{heading}</th>
                         ))}
@@ -1078,9 +1076,7 @@ export function ProjectPagePM({
                     <tbody className="divide-y divide-border">
                       {mlImport.items.length === 0 ? (
                         <tr><td colSpan={13} className="px-4 py-10 text-center text-sm text-muted-foreground">В ML-импорте нет товаров</td></tr>
-                        <tr><td colSpan={13} className="px-4 py-10 text-center text-sm text-muted-foreground">В ML-импорте нет товаров</td></tr>
                       ) : (
-                        mlImport.items.map((item, index) => {
                         mlImport.items.map((item, index) => {
                           const isUpdating = updatingItemId === item.id;
                           const priceCost = Number(item.price_cost ?? 0);
@@ -1107,7 +1103,6 @@ export function ProjectPagePM({
 
                           return (
                               <tr key={item.id} className={`transition-colors ${statusStyle.row}`}>
-                                <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
                                 <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
                                 <td className="px-4 py-3"><p
                                     className="text-sm font-medium text-foreground">{item.input_product}</p></td>
@@ -1679,7 +1674,7 @@ const [itemSaveError, setItemSaveError] =
 
   const canEditItems = decision === null;
 
-  const PROJECT_ITEMS_API_BASE = "http://localhost:8000/api/v1/project-items";
+  const PROJECT_ITEMS_API_BASE = "/api/v1/project-items";
 
   const handleItemFieldUpdate = async (
     itemId: number,
