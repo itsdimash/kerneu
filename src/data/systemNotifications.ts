@@ -24,7 +24,9 @@ export type NotificationCategory =
   | "goods_arrived"
   | "goods_shipped"
   | "upload_processed"
-  | "deadline";
+  | "deadline"
+  | "parse_job_done"
+  | "parse_job_failed";
 
 export type SystemNotification = {
   id: string;

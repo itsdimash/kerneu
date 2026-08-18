@@ -63,7 +63,17 @@ const CATEGORY_META: Record<
   docs_pending_director: { icon: FileCheck2, ...INFO, label: "Документы: директор" },
   docs_approved: { icon: ThumbsUp, ...SUCCESS, label: "Документы согласованы" },
   docs_rejected: { icon: FileX2, ...DESTRUCTIVE, label: "Документы отклонены" },
+  parse_job_done: { icon: FileCheck2, ...SUCCESS, label: "Файл обработан" },
+  parse_job_failed: { icon: FileX2, ...DESTRUCTIVE, label: "Ошибка обработки" },
 };
+
+// Fallback для категорий, которых ещё нет в CATEGORY_META (например,
+// бэкенд добавил новую категорию, а фронт ещё не обновили) — раньше
+// отсутствие ключа роняло весь компонент (и с ним всё приложение,
+// см. NotificationBell в дереве TopBar/AppShell) с "can't access
+// property on undefined". Теперь неизвестная категория просто рисуется
+// с дефолтной иконкой вместо краша.
+const DEFAULT_META = { icon: Bell, ...INFO, label: "Уведомление" };
 
 const FILTERS = [
   { id: "all", label: "Все" },
