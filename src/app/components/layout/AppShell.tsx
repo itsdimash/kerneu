@@ -127,7 +127,7 @@ export function AppShell({
         finalProjectId = Number(searchInput);
       } else {
         // 2. Если ввели текст, запрашиваем список всех проектов, чтобы найти нужный ID
-        const res = await fetch("http://localhost:8000/api/v1/projects/", {
+        const res = await fetch("/api/v1/projects/", {
           credentials: "include",
         });
 

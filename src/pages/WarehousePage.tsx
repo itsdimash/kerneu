@@ -152,7 +152,7 @@ function mapStock(item: WarehouseStockResponse): StockRow {
   };
 }
 
-const WAREHOUSE_API_BASE = "http://localhost:8000/api/v1";
+const WAREHOUSE_API_BASE = "/api/v1";
 
 async function sendProjectToShipment(projectId: number) {
   const response = await fetch(`${WAREHOUSE_API_BASE}/projects/${projectId}/send-to-shipment`, {
@@ -490,7 +490,7 @@ function ConfirmReceiptModal({
 // ==========================================
 // Модалка просмотра деталей уже подтверждённого прихода
 // ==========================================
-const RECEIPT_PHOTO_BASE = "http://localhost:8000";
+const RECEIPT_PHOTO_BASE = "";
 
 function ReceiptDetailsModal({
   receipt,

@@ -53,7 +53,7 @@ type PriceHistory = {
   }[];
 };
 const API = (
-  import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1"
+  import.meta.env.VITE_API_URL ?? "/api/v1"
 ).replace(/\/$/, "");
 const formatDate = (value: string) => new Date(value).toLocaleDateString("ru-RU");
 
@@ -323,4 +323,3 @@ export function SupplierHistoryPage() {
     </PageWrap>
   );
 }
-

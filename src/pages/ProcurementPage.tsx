@@ -138,7 +138,7 @@ const normalizeInvoiceStatus = (raw: unknown): InvoiceWorkflowStatus => {
 const isAwaitingSend = (st: InvoiceWorkflowStatus) =>
   st === 'draft' || st === 'rejected_by_accountant' || st === 'rejected_by_director';
 
-const API_BASE_URL = "http://localhost:8000/api/v1";
+const API_BASE_URL = "/api/v1";
 const PURCHASE_STATUS = "будет куплено";
 
 async function postInvoiceAction(documentId: number, action: string, body?: unknown) {
@@ -503,7 +503,7 @@ export function ProcurementPage({
     if (wfState.downloadUrl) {
       const fullUrl = wfState.downloadUrl.startsWith("http")
         ? wfState.downloadUrl
-        : `http://localhost:8000${wfState.downloadUrl}`;
+        : wfState.downloadUrl;
 
       window.open(fullUrl, '_blank');
       return;

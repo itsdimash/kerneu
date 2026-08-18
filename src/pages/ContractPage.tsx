@@ -71,7 +71,7 @@ interface ContractProject {
 
 const fmt = (n: number) => n.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
-const API_BASE = "http://localhost:8000/api/v1";
+const API_BASE = "/api/v1";
 
 function mapApiProject(p: ContractApiProject): ContractProject {
   return {

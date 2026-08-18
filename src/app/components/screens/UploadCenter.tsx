@@ -118,7 +118,7 @@ function FileStatusChip({ status }: { status: FileStatus }) {
     );
 
     const response = await fetch(
-        "http://localhost:8000/api/v1/kp/generate",
+        "/api/v1/kp/generate",
         {
             method: "POST",
             body: formData,

@@ -1,7 +1,7 @@
 import axios from "axios";
 
 export const api = axios.create({
-    baseURL: "http://localhost:8000/api/v1",
+    baseURL: "/api/v1",
     withCredentials: true, // очень важно для Cookie
 });
 
@@ -52,7 +52,7 @@ export interface DashboardStats {
 }
 
 export const fetchDashboardStats = async (): Promise<DashboardStats> => {
-  const response = await fetch("http://localhost:8000/api/v1/dashboard/stats", {
+  const response = await fetch("/api/v1/dashboard/stats", {
     credentials: "include",
   });
   if (!response.ok) {
@@ -74,7 +74,7 @@ export interface ProjectResponse {
   created_at?: string;
 }
 
-const API_BASE = "http://localhost:8000/api/v1"; // подставь свой базовый URL, если отличается
+const API_BASE = "/api/v1";
 
 export async function fetchProjectDetails(projectId: number): Promise<ProjectResponse> {
   const url = `${API_BASE}/projects/${projectId}`;

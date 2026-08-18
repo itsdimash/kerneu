@@ -1,6 +1,6 @@
 import type { SystemNotification } from "../data/systemNotifications";
 
-const API_BASE = "http://localhost:8000/api/v1"; // TODO: замените на общую константу, если она уже есть в api/api.ts
+const API_BASE = "/api/v1";
 
 export async function fetchNotifications(unreadOnly = false): Promise<SystemNotification[]> {
   const res = await fetch(`${API_BASE}/notifications/?unread_only=${unreadOnly}`, {
@@ -30,7 +30,7 @@ export async function markAllNotificationsRead(): Promise<void> {
 export function connectNotificationsSocket(
   onNotification: (n: SystemNotification) => void,
 ): () => void {
-  const wsUrl = API_BASE.replace(/^http/, "ws") + "/notifications/ws";
+  const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}${API_BASE}/notifications/ws`;
   const socket = new WebSocket(wsUrl);
 
   socket.onmessage = (event) => {

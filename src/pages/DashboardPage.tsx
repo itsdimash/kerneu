@@ -169,7 +169,7 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
     setClientsLoading(true);
     setClientsError(null);
 
-    fetch("http://localhost:8000/api/v1/clients/clients/select")
+    fetch("/api/v1/clients/clients/select")
       .then((res) => {
         if (!res.ok) throw new Error(`Ошибка загрузки клиентов: ${res.status}`);
         return res.json();
@@ -192,7 +192,7 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
   const loadProjects = async () => {
     try {
         const response = await fetch(
-            "http://localhost:8000/api/v1/projects/",
+            "/api/v1/projects/",
             {
                 credentials: "include",
             }
@@ -384,7 +384,7 @@ const handleSave = async () => {
 
     // 1. Создаём проект
     const projectResponse = await fetch(
-      "http://localhost:8000/api/v1/projects/create-base",
+      "/api/v1/projects/create-base",
       {
         method: "POST",
         credentials: "include",
@@ -459,7 +459,7 @@ const handleSave = async () => {
     setIsDeleting(true);
     try {
         const response = await fetch(
-            `http://localhost:8000/api/v1/projects/${projectToDelete.id}`,
+            `/api/v1/projects/${projectToDelete.id}`,
             {
                 method: "DELETE",
                 credentials: "include",
@@ -495,7 +495,7 @@ const handleSave = async () => {
     setIsArchiving(true);
     try {
         const response = await fetch(
-            `http://localhost:8000/api/v1/projects/${projectToArchive.id}/archive`,
+            `/api/v1/projects/${projectToArchive.id}/archive`,
             {
                 method: "PATCH",
                 credentials: "include",
