@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { Role, Page, Receipt, ContractStatus } from "../types";
 import { StatCard } from "../app/components/common/StatCard";
@@ -23,13 +23,13 @@ import {
 import {
   fetchDashboardStats,
   type DashboardStats,
-  createMlImport,
-  getMlImport,
+  startParseJob,
   fetchUpcomingDeadlines,
   type UpcomingDeadline,
   fetchRecentActivity,
   type RecentActivity,
 } from "../api/api";
+import { useBackgroundJobs } from "../app/context/BackgroundJobsContext";
 
 // Тип клиента, который приходит с бэкенда: только id и name используются для отображения
 type ClientDTO = {
@@ -139,8 +139,15 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
 
   // Файл КП, прикреплённый пользователем
   const [kpFile, setKpFile] = useState<File | null>(null);
+  // isSaving теперь блокирует только быстрые шаги (создание проекта +
+  // отправка файла в очередь) — не весь парсинг, который ушёл в фон.
   const [isSaving, setIsSaving] = useState(false);
   const [projects, setProjects] = useState<any[]>([]);
+
+  // Фоновые задачи обработки файлов — теперь живут в контексте на уровне
+  // App.tsx, а не локально здесь, чтобы тост не пропадал при переходе на
+  // другую страницу (Закупки, Склад и т.д.).
+  const { startBackgroundJob } = useBackgroundJobs();
 
   // Статистика дашборда (карточки сверху)
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -300,6 +307,7 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
     setProjectForm({ name: "", deadline: "" });
     setKpFile(null);
   };
+
 const handleSave = async () => {
   try {
     setIsSaving(true);
@@ -402,119 +410,27 @@ const handleSave = async () => {
 
     console.log("Проект создан:", projectId);
 
-    // 2. Отправляем исходный файл в парсер
-    const parserFormData = new FormData();
-    parserFormData.append("file", kpFile);
+    // 2. Ставим файл в очередь на обработку (парсинг + ML-матчинг —
+    // оба шага теперь выполняет воркер в фоне, не блокируя этот запрос).
+    const { job_id } = await startParseJob(projectId, kpFile);
 
-    const parserResponse = await fetch(
-      `http://localhost:8000/api/v1/parser/projects/${projectId}/parse`,
-      {
-        method: "POST",
-        credentials: "include",
-        body: parserFormData,
-      },
-    );
-
-    if (!parserResponse.ok) {
-      const errorText = await parserResponse.text();
-      throw new Error(errorText || "Ошибка парсинга файла");
-    }
-
-    // 3. Получаем Excel от парсера
-    const parserBlob = await parserResponse.blob();
-
-    const parserFile = new File(
-      [parserBlob],
-      "quotation.xlsx",
-      {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      },
-    );
-
-    console.log(
-      "Excel от парсера получен:",
-      parserFile.name,
-      parserFile.size,
-    );
-
-    // 4. Отправляем Excel в ML
-    const mlFormData = new FormData();
-    mlFormData.append("file", parserFile);
-
-    const mlResponse = await fetch(
-      "http://localhost:8000/api/v1/match-file",
-      {
-        method: "POST",
-        credentials: "include",
-        body: mlFormData,
-      },
-    );
-
-    if (!mlResponse.ok) {
-      const errorText = await mlResponse.text();
-      throw new Error(errorText || "Ошибка обработки файла в ML");
-    }
-
-    // 5. Получаем итоговый Excel от ML
-    const mlBlob = await mlResponse.blob();
-    const contentDisposition =
-      mlResponse.headers.get("content-disposition");
-
-    let mlFilename = "ml_result.xlsx";
-
-    if (contentDisposition) {
-      const utf8Match = contentDisposition.match(
-        /filename\*=UTF-8''([^;]+)/i,
-      );
-
-      const normalMatch = contentDisposition.match(
-        /filename="?([^";]+)"?/i,
-      );
-
-      if (utf8Match?.[1]) {
-        mlFilename = decodeURIComponent(utf8Match[1]);
-      } else if (normalMatch?.[1]) {
-        mlFilename = normalMatch[1].trim();
-      }
-    }
-
-    const mlFile = new File(
-      [mlBlob],
-      mlFilename,
-      {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      },
-    );
-
-    console.log(
-      "Excel от ML получен:",
-      mlFile.name,
-      mlFile.size,
-    );
-
-    // 6. Создаём ML-импорт
-    const createdImport = await createMlImport(projectId, mlFile);
-
-    console.log("ML import создан:", createdImport);
-
-    // 7. Загружаем строки ML-импорта
-    const importDetails = await getMlImport(createdImport.id);
-
-    console.log(
-      "Строки ML-импорта:",
-      importDetails.items,
-    );
-
-    localStorage.setItem(
-      `project:${projectId}:mlImportId`,
-      String(createdImport.id),
-    );
+    console.log("Файл поставлен в очередь, job_id:", job_id);
 
     await loadProjects();
     await loadStats();
 
+    // Модалка закрывается сразу — пользователь может продолжать работать,
+    // а прогресс обработки файла отслеживается отдельным тостом, который
+    // теперь живёт на уровне приложения и переживает переход на другие
+    // страницы.
     resetModal();
-    onOpenProject(projectId);
+
+    startBackgroundJob({
+      jobId: job_id,
+      projectId,
+      projectName,
+      fileName: kpFile.name,
+    });
   } catch (error) {
     console.error("Ошибка создания проекта:", error);
 
@@ -621,12 +537,13 @@ const handleSave = async () => {
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-card rounded-xl shadow-xl w-full max-w-md overflow-hidden max-h-[90vh] flex flex-col relative">
 
-            {/* ── Оверлей загрузки: парсинг + сопоставление товаров ── */}
+            {/* ── Оверлей загрузки: только создание проекта + отправка файла
+                в очередь — это быстро (секунды), не сам парсинг. ── */}
             {isSaving && (
               <div className="absolute inset-0 z-10 bg-card/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3 rounded-xl px-6 text-center">
                 <Loader2 size={28} className="text-primary animate-spin" />
-                <p className="text-sm font-medium text-foreground">Обработка файла...</p>
-                <p className="text-xs text-muted-foreground">Парсим документ и сопоставляем товары. Это может занять до пары минут — не закрывайте окно.</p>
+                <p className="text-sm font-medium text-foreground">Создание проекта...</p>
+                <p className="text-xs text-muted-foreground">Файл будет обработан в фоне — после закрытия окна вы сможете продолжить работу.</p>
               </div>
             )}
 

@@ -264,6 +264,53 @@ export async function confirmMlImport(
 }
 
 // ==========================================
+// ПАРСИНГ ЧЕРЕЗ ОЧЕРЕДЬ (RabbitMQ + Celery) — не блокирует UI. Ответ на
+// startParseJob приходит мгновенно (job поставлена в очередь), дальнейший
+// прогресс отслеживается через getParseJobStatus (polling), чтобы
+// пользователь мог закрыть модалку и заниматься другими вещами, пока файл
+// обрабатывается в фоне воркером.
+// ==========================================
+
+export interface StartParseJobResponse {
+  job_id: string;
+  status: "pending";
+}
+
+export async function startParseJob(
+  projectId: number,
+  file: File,
+): Promise<StartParseJobResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const { data } = await api.post<StartParseJobResponse>(
+    `/parser/projects/${projectId}/parse`,
+    formData,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
+
+  return data;
+}
+
+export type ParseJobStatusValue = "pending" | "processing" | "done" | "failed";
+
+export interface ParseJobStatusResponse {
+  job_id: string;
+  status: ParseJobStatusValue;
+  original_filename: string;
+  error_message: string | null;
+  ml_import_id: number | null;
+  project_id: number;
+}
+
+export async function getParseJobStatus(
+  jobId: string,
+): Promise<ParseJobStatusResponse> {
+  const { data } = await api.get<ParseJobStatusResponse>(`/parser/jobs/${jobId}`);
+  return data;
+}
+
+// ==========================================
 // СКЛАДЫ (справочник)
 // ==========================================
 

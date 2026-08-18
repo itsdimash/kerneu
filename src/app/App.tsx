@@ -42,6 +42,8 @@ import { AppShell } from "./components/layout/AppShell";
 import { LoginPage } from "../pages/LoginPage";
 import type { Receipt as ReceiptType } from "../types";
 import { getMe, logout } from "../api/user";
+import { BackgroundJobsProvider } from "./context/BackgroundJobsContext";
+import { BackgroundJobsToast } from "./components/common/BackgroundJobsToast";
 // ─── Root ──────────────────────────────────────────────────
 type UserData = {
     id: number;
@@ -170,6 +172,14 @@ export default function App() {
         }
     };
 
+    // Открывает проект из тоста фоновой обработки файла — тот же переход,
+    // что и обычный onOpenProject внутри DashboardPage, только доступен
+    // здесь, на уровне App.tsx, т.к. тост теперь живёт вне DashboardPM.
+    const openProjectFromToast = useCallback((projectId: number) => {
+        setSelectedProjectId(projectId);
+        setPage("project");
+    }, []);
+
     if (!loggedIn) {
         return (
             <LoginPage
@@ -191,20 +201,26 @@ export default function App() {
     }
 
     return (
-        <AppShell
-            role={role}
-            realRole={realRole}
-            onRoleChange={setRole}
-            page={page}
-            onPage={setPage}
-            user={user}
-            onLogout={handleLogout}
-            projectState={projectState}
-            selectedProjectId={selectedProjectId}
-            setSelectedProjectId={setSelectedProjectId}
-            setProjectState={setProjectState}
-            receipts={receipts}
-            setReceipts={setReceipts}
-        />
+        <BackgroundJobsProvider>
+            <AppShell
+                role={role}
+                realRole={realRole}
+                onRoleChange={setRole}
+                page={page}
+                onPage={setPage}
+                user={user}
+                onLogout={handleLogout}
+                projectState={projectState}
+                selectedProjectId={selectedProjectId}
+                setSelectedProjectId={setSelectedProjectId}
+                setProjectState={setProjectState}
+                receipts={receipts}
+                setReceipts={setReceipts}
+            />
+            {/* Живёт поверх всего приложения независимо от текущей страницы —
+                раньше тост пропадал при переключении со страницы дашборда,
+                т.к. был локальным состоянием DashboardPM. */}
+            <BackgroundJobsToast onOpenProject={openProjectFromToast} />
+        </BackgroundJobsProvider>
     );
 }
