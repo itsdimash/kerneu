@@ -37,6 +37,7 @@ import type {
 type MlStatus =
   | "Нет в системе"
   | "Нет в системе (похожие варианты)"
+  | "Возможное совпадение (требует проверки)"
   | "Есть в системе (недостаточно)"
   | "На складе";
 
@@ -54,6 +55,10 @@ const ML_STATUS_STYLES: Record<
   "Нет в системе (похожие варианты)": {
     badge: "bg-orange-100 dark:bg-orange-400/20 text-orange-800 dark:text-orange-200 border border-orange-300 dark:border-orange-400/30",
     row: "bg-orange-50 dark:bg-orange-400/15 hover:bg-orange-100/60 dark:bg-orange-400/30",
+  },
+  "Возможное совпадение (требует проверки)": {
+    badge: "bg-amber-100 dark:bg-amber-400/20 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-400/30",
+    row: "bg-amber-50 dark:bg-amber-400/15 hover:bg-amber-100/60 dark:bg-amber-400/30",
   },
   "Есть в системе (недостаточно)": {
     badge: "bg-yellow-100 dark:bg-yellow-400/20 text-yellow-800 dark:text-yellow-200 border border-yellow-300 dark:border-yellow-400/30",
@@ -73,6 +78,9 @@ const normalizeMlStatus = (
   if (normalized === "Нет в системе") return "Нет в системе";
   if (normalized === "Нет в системе (похожие варианты)") {
     return "Нет в системе (похожие варианты)";
+  }
+  if (normalized === "Возможное совпадение (требует проверки)") {
+    return "Возможное совпадение (требует проверки)";
   }
   if (normalized === "На складе") return "На складе";
   if (normalized === "Есть в системе (недостаточно)") {
@@ -1089,10 +1097,12 @@ export function ProjectPagePM({
                           const isNotInSystem = trimmedItemStatus === "Нет в системе";
                           const isSimilarVariants =
                             normalizedStatus === "Нет в системе (похожие варианты)";
+                          const isPossibleMatch =
+                            normalizedStatus === "Возможное совпадение (требует проверки)";
                           const needsProductResolution =
                             !item.is_confirmed &&
                             item.selected_product_id === null &&
-                            (isNotInSystem || isSimilarVariants);
+                            (isNotInSystem || isSimilarVariants || isPossibleMatch);
                           const displayedStatus =
                             normalizedStatus ??
                             item.ml_status?.trim() ??
@@ -1114,7 +1124,7 @@ export function ProjectPagePM({
                                   </span>
                                 </td>
                                 <td className="px-4 py-3">
-                                  {isSimilarVariants && !item.is_confirmed ? (() => {
+                                  {(isSimilarVariants || isPossibleMatch) && !item.is_confirmed ? (() => {
                                       const similarLabels = getSimilarVariantLabels(item);
                                       const matchedCatalogOptions = productCatalog.filter((p) => {
                                         const catalogName = p.name.trim().toLowerCase();
