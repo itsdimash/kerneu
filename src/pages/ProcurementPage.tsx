@@ -51,6 +51,11 @@ type ProcurementProjectItem = {
   item_name?: string | null;
   quantity?: number | string | null;
   required_quantity?: number | string | null;
+  // NEW: сколько реально нужно закупить (required_quantity минус то, что
+  // уже покрыто складом) — приходит из ProjectItemResponse.procurement_quantity.
+  // Если бэкенд ещё не обновлён (старое поле отсутствует), падаем обратно
+  // на required_quantity/quantity, как раньше.
+  procurement_quantity?: number | string | null;
   price?: number | string | null;
   price_cost?: number | string | null;
   cost_price?: number | string | null;
@@ -623,7 +628,7 @@ export function ProcurementPage({
     try {
       const items = (groupedItems[supplier] || []).map(item => ({
         product_id: Number(item.product_id ?? item.product?.id ?? item.id),
-        quantity: toNumber(item.required_quantity ?? item.quantity),
+        quantity: toNumber(item.procurement_quantity ?? item.required_quantity ?? item.quantity),
         purchase_price: getPurchasePrice(item),
       }));
 
@@ -1064,7 +1069,7 @@ export function ProcurementPage({
                     </thead>
                     <tbody className="divide-y divide-border">
                       {items.map((item) => {
-                        const quantity = toNumber(item.required_quantity ?? item.quantity);
+                        const quantity = toNumber(item.procurement_quantity ?? item.required_quantity ?? item.quantity);
                         const unit = safeTrim(item.product?.unit) || safeTrim(item.unit) || "шт";
                         const costPrice = getPurchasePrice(item);
                         const salePrice = getSalePrice(item);
