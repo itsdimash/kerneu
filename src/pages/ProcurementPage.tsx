@@ -287,6 +287,17 @@ export function ProcurementPage({
   const [incomeModalSupplier, setIncomeModalSupplier] = useState<string | null>(null);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<number>(1);
   const [isSendingToIncome, setIsSendingToIncome] = useState(false);
+  // NEW: склады, где уже физически есть хотя бы один товар из ТЕКУЩЕГО
+  // счёта (incomeModalSupplier) — сужают список в модалке, чтобы приход
+  // по умолчанию не создавал резерв позиции на ещё одном, новом складе.
+  // Пустой массив = либо ещё не загрузили, либо ни один товар счёта нигде
+  // не лежит (новые товары) — в обоих случаях показываем ВСЕ склады.
+  const [warehousesWithStock, setWarehousesWithStock] = useState<number[]>([]);
+  const [isLoadingWarehousesWithStock, setIsLoadingWarehousesWithStock] = useState(false);
+  // NEW: явный оверрайд — если ПМ всё же хочет выбрать склад, на котором
+  // ни одного из товаров счёта ещё нет, он может отжать этот флажок и
+  // увидеть полный список. Фильтр — подсказка по умолчанию, не хард-блок.
+  const [showAllWarehousesOverride, setShowAllWarehousesOverride] = useState(false);
 
   // NEW: смена поставщика позиции прямо в таблице закупки (ПМ/Комдир/админ).
   // knownSuppliers — справочник поставщиков для модалки выбора/создания.
@@ -455,6 +466,28 @@ export function ProcurementPage({
   const groupedItems = useMemo(() => groupBySupplier(purchaseItems), [purchaseItems]);
   const supplierKeys = Object.keys(groupedItems);
 
+  // NEW: список складов, показываемых в модалке "Отправить на приход" —
+  // по умолчанию только те, где уже есть хотя бы один товар из счёта
+  // (warehousesWithStock). Если ни один товар счёта нигде не лежит
+  // (новые товары) или ПМ явно нажал "показать все" — показываем полный
+  // список, иначе закупку станет некуда отправить.
+  const modalWarehouses = useMemo(() => {
+    if (showAllWarehousesOverride || warehousesWithStock.length === 0) {
+      return warehouses;
+    }
+    return warehouses.filter(wh => warehousesWithStock.includes(wh.id));
+  }, [warehouses, warehousesWithStock, showAllWarehousesOverride]);
+
+  // Если после сужения списка текущий выбранный склад в него не попадает —
+  // переключаемся на первый доступный, чтобы случайно не отправить приход
+  // на склад, который только что скрыли из вида.
+  useEffect(() => {
+    if (modalWarehouses.length === 0) return;
+    if (!modalWarehouses.some(wh => wh.id === selectedWarehouseId)) {
+      setSelectedWarehouseId(modalWarehouses[0].id);
+    }
+  }, [modalWarehouses, selectedWarehouseId]);
+
   const toggleSupplier = (sup: string) => {
     setExpandedSuppliers(p => ({ ...p, [sup]: !p[sup] }));
   };
@@ -606,11 +639,39 @@ export function ProcurementPage({
     if (!wf || wf.status !== 'approved') return;
     setIncomeModalSupplier(supplier);
     setIsIncomeModalOpen(true);
+
+    // NEW: подгружаем склады, где уже есть хотя бы один товар из этого
+    // счёта — чтобы список в модалке не предлагал плодить лишние резервы
+    // на новом складе. Если запрос упадёт или вернёт пусто — не страшно,
+    // рендер модалки просто покажет ВСЕ склады (см. availableWarehouses).
+    const productIds = Array.from(
+      new Set(
+        (groupedItems[supplier] || [])
+          .map(item => Number(item.product_id ?? item.product?.id ?? item.id))
+          .filter(id => Number.isFinite(id))
+      )
+    );
+
+    setWarehousesWithStock([]);
+    if (productIds.length > 0) {
+      setIsLoadingWarehousesWithStock(true);
+      const query = productIds.map(id => `product_ids=${id}`).join("&");
+      fetch(`${API_BASE_URL}/warehouse/stock-locations?${query}`, { credentials: "include" })
+        .then(res => (res.ok ? res.json() : { warehouse_ids: [] }))
+        .then(data => setWarehousesWithStock(data.warehouse_ids || []))
+        .catch(e => {
+          console.error("Не удалось загрузить склады с остатком:", e);
+          setWarehousesWithStock([]);
+        })
+        .finally(() => setIsLoadingWarehousesWithStock(false));
+    }
   };
 
   const closeIncomeModal = () => {
     setIsIncomeModalOpen(false);
     setIncomeModalSupplier(null);
+    setWarehousesWithStock([]);
+    setShowAllWarehousesOverride(false);
   };
 
   const handleConfirmSendToIncome = async () => {
@@ -1157,8 +1218,25 @@ export function ProcurementPage({
               <span className="font-semibold text-foreground">«{incomeModalSupplier}»</span>:
             </p>
 
+            {isLoadingWarehousesWithStock && (
+              <p className="text-xs text-muted-foreground mb-2">Проверяем, где уже есть эти товары…</p>
+            )}
+            {!isLoadingWarehousesWithStock && warehousesWithStock.length > 0 && !showAllWarehousesOverride && (
+              <p className="text-xs text-muted-foreground mb-2">
+                Показаны склады, где уже есть хотя бы один товар из этого счёта — так приход не создаст
+                резерв на новом складе.{" "}
+                <button
+                  type="button"
+                  onClick={() => setShowAllWarehousesOverride(true)}
+                  className="underline text-blue-600 dark:text-blue-400"
+                >
+                  Показать все склады
+                </button>
+              </p>
+            )}
+
             <div className="space-y-2 mb-6">
-              {warehouses.map(wh => (
+              {modalWarehouses.map(wh => (
                 <label
                   key={wh.id}
                   className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all ${
