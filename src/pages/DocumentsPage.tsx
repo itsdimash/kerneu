@@ -85,6 +85,42 @@ export function DocumentsPage({
   // сделке — PM, бухгалтер или директор.
   const [uploadingContract, setUploadingContract] = useState(false);
 
+  // NEW: если у проекта ВСЕ позиции полностью покрыты складом (procurement
+  // не требовался вообще) — счёт на оплату (category="invoice") физически
+  // неоткуда взяться, т.к. он создаётся только через закупку у поставщика.
+  // needsProcurement=null, пока не загрузили — в этом состоянии требуем
+  // документ по умолчанию (как раньше), чтобы не мигать UI.
+  const [needsProcurement, setNeedsProcurement] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadProcurementNeed = async () => {
+      if (!selectedProjectId) {
+        setNeedsProcurement(null);
+        return;
+      }
+      try {
+        const response = await fetch(`${API_BASE}/project-items/${selectedProjectId}`, {
+          credentials: "include",
+        });
+        if (!response.ok) throw new Error("Не удалось загрузить позиции проекта");
+        const items: Array<{ procurement_quantity?: number }> = await response.json();
+        if (!cancelled) {
+          setNeedsProcurement(items.some(item => (item.procurement_quantity ?? 0) > 0));
+        }
+      } catch (error) {
+        console.error("Не удалось определить, нужна ли закупка для проекта:", error);
+        // При ошибке безопаснее считать, что закупка нужна (не разблокируем
+        // завершение проекта по ошибке сети) — как было раньше.
+        if (!cancelled) setNeedsProcurement(true);
+      }
+    };
+
+    loadProcurementNeed();
+    return () => { cancelled = true; };
+  }, [selectedProjectId]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -314,6 +350,11 @@ export function DocumentsPage({
   const waybillDocs = allDocs.filter(d => d.category === "waybill");
   const invoiceDocs = allDocs.filter(d => d.category === "invoice");
 
+  // ИСПРАВЛЕНО: было ниже, но использовалось выше (displayDocs) — const не
+  // хостится в TS/JS, нужно объявить перед первым использованием.
+  const invoiceRequired = needsProcurement !== false;
+
+
   // Договор считается подписанным, если файл реально загружен и лежит в
   // архиве документов проекта (contractDoc.status === "uploaded") — это
   // надёжный локальный признак. Раньше здесь смотрели только на
@@ -362,7 +403,11 @@ export function DocumentsPage({
 
   const displayDocs = [...allDocs];
   if (poaDocs.length === 0) displayDocs.push(poaPlaceholder);
-  if (invoiceDocs.length === 0) displayDocs.push(invoicePlaceholder);
+  // ИСПРАВЛЕНО: не показываем "Счета на оплату" как ожидающий документ,
+  // если закупка для проекта вообще не нужна (весь товар со склада) —
+  // иначе PM видит вечно висящий "Ожидается" пункт, который в принципе
+  // никогда не закроется.
+  if (invoiceDocs.length === 0 && invoiceRequired) displayDocs.push(invoicePlaceholder);
   if (waybillDocs.length === 0) displayDocs.push(waybillPlaceholder);
 
   const contractUploaded = contractDoc?.status === "uploaded";
@@ -370,8 +415,20 @@ export function DocumentsPage({
   const hasWaybill       = waybillDocs.some(d => d.status === "uploaded");
   const hasInvoice       = invoiceDocs.some(d => d.status === "uploaded"); 
 
-  const requiredDocCount = 5;
-  const doneDocCount = [hasApprovedKp, contractUploaded, poaUploaded, hasInvoice, hasWaybill].filter(Boolean).length;
+  // ИСПРАВЛЕНО: requiredDocCount был всегда захардкожен в 5, включая
+  // "Счета на оплату" — но если у проекта ВСЕ позиции покрыты складом
+  // (needsProcurement === false), закупки не было и счёта неоткуда
+  // взяться, документ никогда не появится, и "Завершить проект" был бы
+  // заблокирован навсегда. Пока needsProcurement ещё не загружен (null),
+  // ведём себя как раньше — требуем 5 (безопасный дефолт).
+  const requiredDocCount = invoiceRequired ? 5 : 4;
+  const doneDocCount = [
+    hasApprovedKp,
+    contractUploaded,
+    poaUploaded,
+    ...(invoiceRequired ? [hasInvoice] : []),
+    hasWaybill,
+  ].filter(Boolean).length;
   const allUploaded = doneDocCount === requiredDocCount;
   const canComplete = allUploaded && reviewStage === "approved" && !completed;
 

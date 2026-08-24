@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import type { Role, Page, Receipt, ContractStatus } from "../types";
 import { StatCard } from "../app/components/common/StatCard";
@@ -128,6 +128,10 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
   const [isNewClient, setIsNewClient] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState("");
   const [newClientForm, setNewClientForm] = useState({ name: "", email: "", phone: "" });
+  // NEW: автокомплит "как в Google" для поля имени нового клиента — если
+  // ПМ вводит имя, совпадающее с уже существующим клиентом, показываем
+  // выпадающий список совпадений, чтобы не плодить дубликаты в базе.
+  const [showClientSuggestions, setShowClientSuggestions] = useState(false);
 
   // Поля проекта: название и дедлайн — видны в обоих режимах (новый/существующий клиент)
   const [projectForm, setProjectForm] = useState({ name: "", deadline: "" });
@@ -142,6 +146,11 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
   // isSaving теперь блокирует только быстрые шаги (создание проекта +
   // отправка файла в очередь) — не весь парсинг, который ушёл в фон.
   const [isSaving, setIsSaving] = useState(false);
+  // NEW: ошибка создания проекта показывается инлайн в модалке, а не через
+  // нативный window.alert() — так её видно прямо там, где ПМ и так
+  // смотрит (в частности, при клике "Создать проект" мимо подсказки
+  // автокомплита клиента), и это не выглядит как системный alert браузера.
+  const [createError, setCreateError] = useState<string | null>(null);
   const [projects, setProjects] = useState<any[]>([]);
 
   // Фоновые задачи обработки файлов — теперь живут в контексте на уровне
@@ -237,6 +246,41 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
   };
 
   const selectedClientData = clients.find((c) => c.id === Number(selectedClientId));
+
+  // NEW: совпадения по имени нового клиента с уже существующими в базе —
+  // регистронезависимо, по подстроке (как обычный поиск), максимум 6 штук,
+  // чтобы список не растягивался на весь экран.
+  const matchingClients = useMemo(() => {
+    const query = newClientForm.name.trim().toLowerCase();
+    if (!query) return [];
+    return clients
+      .filter((c) => (c.client_name || "").toLowerCase().includes(query))
+      .slice(0, 6);
+  }, [newClientForm.name, clients]);
+
+  // Подсвечивает совпадающую часть имени жирным — визуально как в Google.
+  const highlightMatch = (name: string, query: string) => {
+    const q = query.trim();
+    if (!q) return name;
+    const idx = name.toLowerCase().indexOf(q.toLowerCase());
+    if (idx === -1) return name;
+    return (
+      <>
+        {name.slice(0, idx)}
+        <span className="font-semibold text-foreground">{name.slice(idx, idx + q.length)}</span>
+        {name.slice(idx + q.length)}
+      </>
+    );
+  };
+
+  // Клик по подсказке — переключаемся на существующего клиента вместо
+  // создания нового, чтобы не плодить дубликаты.
+  const handlePickExistingClient = (client: ClientDTO) => {
+    setIsNewClient(false);
+    setSelectedClientId(String(client.id));
+    setNewClientForm({ name: "", email: "", phone: "" });
+    setShowClientSuggestions(false);
+  };
   const contractIcon = (s: ContractStatus) => s === "unsigned" ? "🔒" : s === "pending" ? "⏳" : "🔓";
   const [openMenu, setOpenMenu] = useState<number | null>(null);
   // Координаты меню действий строки — считаем из getBoundingClientRect() кнопки
@@ -306,11 +350,13 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
     setNewClientForm({ name: "", email: "", phone: "" });
     setProjectForm({ name: "", deadline: "" });
     setKpFile(null);
+    setCreateError(null);
   };
 
 const handleSave = async () => {
   try {
     setIsSaving(true);
+    setCreateError(null);
 
     const projectName = projectForm.name.trim();
 
@@ -397,7 +443,17 @@ const handleSave = async () => {
 
     if (!projectResponse.ok) {
       const errorText = await projectResponse.text();
-      throw new Error(errorText || "Ошибка создания проекта");
+      // Бэкенд отдаёт ошибку как JSON {"detail": "..."} — раньше сырой JSON
+      // просто прокидывался дальше как текст исключения и в итоге показывался
+      // пользователю как есть (фигурные скобки, кавычки). Разворачиваем.
+      let detail = errorText;
+      try {
+        const parsed = JSON.parse(errorText);
+        if (parsed && typeof parsed.detail === "string") detail = parsed.detail;
+      } catch {
+        // errorText не JSON — оставляем как есть
+      }
+      throw new Error(detail || "Ошибка создания проекта");
     }
 
     const projectData = await projectResponse.json();
@@ -439,7 +495,9 @@ const handleSave = async () => {
         ? error.message
         : "Неизвестная ошибка";
 
-    alert(`Ошибка создания проекта: ${message}`);
+    // ИЗМЕНЕНО: было alert() — теперь ошибка показывается инлайн-баннером
+    // в самой модалке (см. рендер ниже, перед кнопками "Назад"/"Создать").
+    setCreateError(message);
   } finally {
     setIsSaving(false);
   }
@@ -574,15 +632,48 @@ const handleSave = async () => {
               {/* ── Клиентский блок: виден всегда, сразу под чекбоксом ── */}
               {isNewClient ? (
                 <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
-                  <div>
+                  <div className="relative">
                     <label className="block text-xs font-medium text-muted-foreground mb-1.5">ФИО / Название компании</label>
                     <input
                       type="text"
                       value={newClientForm.name}
-                      onChange={(e) => setNewClientForm({...newClientForm, name: e.target.value})}
+                      onChange={(e) => {
+                        setNewClientForm({...newClientForm, name: e.target.value});
+                        setShowClientSuggestions(true);
+                        setCreateError(null);
+                      }}
+                      onFocus={() => setShowClientSuggestions(true)}
+                      // Небольшая задержка перед скрытием — иначе onBlur
+                      // срабатывает раньше onClick по подсказке, и клик не
+                      // успевает долететь (стандартная проблема для
+                      // выпадающих списков поверх input).
+                      onBlur={() => setTimeout(() => setShowClientSuggestions(false), 150)}
+                      autoComplete="off"
                       className="w-full px-3 py-2 border border-input rounded-lg text-sm text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                       placeholder="Например, ООО «Инновации»"
                     />
+                    {/* Автокомплит "как в Google" — если имя совпадает с уже
+                        существующим клиентом, предлагаем выбрать его вместо
+                        создания дубликата. */}
+                    {showClientSuggestions && matchingClients.length > 0 && (
+                      <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-card border border-border rounded-lg shadow-lg overflow-hidden">
+                        <div className="px-3 py-1.5 text-[11px] text-muted-foreground bg-background/60 border-b border-border">
+                          Уже есть в базе — возможно, вы имели в виду:
+                        </div>
+                        {matchingClients.map((c) => (
+                          <button
+                            type="button"
+                            key={c.id}
+                            onMouseDown={(e) => e.preventDefault()} // не даём инпуту потерять фокус раньше клика
+                            onClick={() => handlePickExistingClient(c)}
+                            className="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-background transition-colors flex items-center gap-2"
+                          >
+                            <Search size={13} className="text-muted-foreground flex-shrink-0" />
+                            <span className="truncate">{highlightMatch(c.client_name, newClientForm.name)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-muted-foreground mb-1.5">Email</label>
@@ -613,7 +704,7 @@ const handleSave = async () => {
                     <label className="block text-xs font-medium text-muted-foreground mb-1.5">Выберите клиента</label>
                     <select
                       value={selectedClientId}
-                      onChange={(e) => setSelectedClientId(e.target.value)}
+                      onChange={(e) => { setSelectedClientId(e.target.value); setCreateError(null); }}
                       disabled={clientsLoading || !!clientsError}
                       className="w-full px-3 py-2 border border-input rounded-lg text-sm text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary bg-card disabled:bg-background disabled:text-muted-foreground"
                     >
@@ -724,6 +815,16 @@ const handleSave = async () => {
               </>
               )}
             </div>
+
+            {/* NEW: инлайн-ошибка создания проекта — вместо window.alert().
+                Показывается прямо над кнопками, где ПМ и так смотрит перед
+                отправкой формы. */}
+            {createError && (
+              <div className="mx-5 mb-3 flex items-start gap-2 px-3 py-2.5 bg-destructive/10 border border-destructive/30 rounded-lg">
+                <AlertTriangle size={15} className="text-destructive flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-destructive">{createError}</p>
+              </div>
+            )}
 
             <div className="px-5 py-4 border-t border-border bg-background flex justify-end gap-3 flex-shrink-0">
               <button
