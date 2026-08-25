@@ -681,7 +681,6 @@ export function ProjectPagePM({
 
     const price = Number(item.price ?? 0);
     const priceCost = Number(item.price_cost ?? 0);
-    const margin = Number(item.margin ?? 0);
     const normalizedStatus = normalizeMlStatus(item.ml_status);
 
     const mlStatusReady =
@@ -696,7 +695,6 @@ export function ProjectPagePM({
       quantity > 0 &&
       price > 0 &&
       priceCost >= 0 &&
-      margin >= 0 &&
       Boolean(item.supplier_name?.trim()) &&
       mlStatusReady
     );
@@ -1318,7 +1316,6 @@ export function ProjectPagePM({
       На складе
     </span>
                                   ) : Number(item.price ?? 0) > 0 &&
-                                  Number(item.margin ?? 0) >= 0 &&
                                   Number(
                                       item.final_quantity ??
                                       item.input_quantity ??
