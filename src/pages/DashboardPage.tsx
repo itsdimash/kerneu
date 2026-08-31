@@ -14,6 +14,7 @@ import { STOCK_INIT } from "../data/stock";
 import { INVOICES_INIT } from "../data/invoices";
 import { ProjectStatusBreakdown } from "../app/components/common/ProjectStatusBreakdown";
 import { RevenueTrendWidget } from "../app/components/common/RevenueTrendWidget";
+import { NotesCard } from "../app/components/common/NotesCard";
 import {
   Plus, FolderOpen, Send, TrendingUp, AlertTriangle, Inbox, BarChart2, 
   Clock, Check, X, CheckCircle2, XCircle, ChevronRight, MoreHorizontal,
@@ -1134,7 +1135,7 @@ const handleSave = async () => {
           </table>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="bg-card rounded-lg border border-border p-5">
           <h3 className="text-sm font-semibold text-foreground mb-4">Ближайшие дедлайны</h3>
           <div className="space-y-3">
@@ -1178,6 +1179,8 @@ const handleSave = async () => {
             )}
           </div>
         </div>
+
+        <NotesCard projects={projects} />
       </div>
 
       {/* ── Модальное окно подтверждения удаления проекта ── */}

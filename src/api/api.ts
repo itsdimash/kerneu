@@ -1150,3 +1150,62 @@ export async function resolveDefectReplacement(
   );
   return data;
 }
+
+// ==========================================
+// ЗАМЕТКИ — приватные, видны только автору. Прикрепление к проекту/товару
+// необязательно: можно просто написать текст, без выбора сущности.
+// ==========================================
+
+export type NoteEntityType = "project" | "product";
+
+export interface NoteDTO {
+  id: string;
+  content: string;
+  entity_type: NoteEntityType | null;
+  entity_id: number | null;
+  created_at: string;
+}
+
+// Без параметров -> все заметки пользователя (прикреплённые и нет).
+// С обоими параметрами -> заметки только по конкретному проекту/товару.
+export async function fetchNotes(
+  entityType?: NoteEntityType,
+  entityId?: number,
+): Promise<NoteDTO[]> {
+  const { data } = await api.get<NoteDTO[]>("/notes/", {
+    params:
+      entityType !== undefined && entityId !== undefined
+        ? { entity_type: entityType, entity_id: entityId }
+        : undefined,
+  });
+  return data;
+}
+
+export async function createNote(
+  content: string,
+  entityType?: NoteEntityType,
+  entityId?: number,
+): Promise<NoteDTO> {
+  const { data } = await api.post<NoteDTO>("/notes/", {
+    content,
+    entity_type: entityType ?? null,
+    entity_id: entityId ?? null,
+  });
+  return data;
+}
+
+export async function deleteNote(noteId: string): Promise<void> {
+  await api.delete(`/notes/${noteId}`);
+}
+
+// ==========================================
+// СПИСОК ТОВАРОВ для прикрепления заметки к товару.
+// Реальный роутер (app/api/v1/routers/products.py) отдаёт GET /products/
+// весь список целиком, без поиска на бэкенде — фильтруем на фронте, как
+// и со списком проектов.
+// ==========================================
+
+export async function fetchProducts(): Promise<ProductInfo[]> {
+  const { data } = await api.get<ProductInfo[]>("/products/");
+  return data;
+}
