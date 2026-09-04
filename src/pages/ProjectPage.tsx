@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import type { Role, Page, ProjectState, Receipt } from "../types";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { Chip } from "../app/components/common/Chip";
@@ -6,7 +6,7 @@ import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
 import { fmt } from "../lib/format";
 import { INVOICES_INIT } from "../data/invoices";
 import { STOCK_INIT } from "../data/stock";
-import { AlertTriangle, Calculator, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText, ChevronDown, Plus, Pencil } from "lucide-react";
+import { AlertTriangle, Calculator, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText, ChevronDown, Plus, Pencil, Search } from "lucide-react";
 import {
   fetchProjectDetails,
   fetchProjectItems,
@@ -111,6 +111,76 @@ const getSimilarVariantLabels = (item: MlImportItemResponse): string[] =>
       return typeof label === "string" ? label.trim() : null;
     })
     .filter((label): label is string => Boolean(label));
+
+type CatalogProduct = {
+  id: number;
+  name: string;
+  unit?: string | null;
+  price?: number | string | null;
+};
+
+type MlRowState = {
+  // Строке требуется привязка к реальному товару из products.
+  // ВАЖНО: это единственный критерий — не ml_status. ML проставляет
+  // matched_product (текстом) даже там, где selected_product_id остался
+  // NULL, а backend при confirm требует именно selected_product_id.
+  needsProduct: boolean;
+  // Человекочитаемые причины, по которым строка не готова к импорту.
+  // Тот же набор правил, что и на backend в confirm_ml_import.
+  reasons: string[];
+  isReady: boolean;
+};
+
+// Единый источник правды о готовности строки ML-импорта.
+//
+// РАНЬШЕ правил было два и они противоречили друг другу:
+//   * needsProductResolution включал "Возможное совпадение (требует
+//     проверки)", а RESOLVABLE_ML_STATUSES — нет. Кнопка "Добавить товар"
+//     рисовалась, но openProductModal молча делал return, и модалка не
+//     открывалась.
+//   * canConfirmMlImport требовал selected_product_id только для двух
+//     статусов "Нет в системе*", а backend требует его для всех строк.
+//     Фронт разрешал нажать "Подтвердить импорт", backend отвечал 400.
+//
+// Теперь и кнопка в строке, и блокировка confirm, и текст подсказки
+// считаются здесь — рассинхрон между ними стал невозможен.
+const getMlRowState = (item: MlImportItemResponse): MlRowState => {
+  if (item.is_confirmed) {
+    return { needsProduct: false, reasons: [], isReady: true };
+  }
+
+  const quantity = Number(item.final_quantity ?? item.input_quantity ?? 0);
+  const price = Number(item.price ?? 0);
+  const priceCost = Number(item.price_cost ?? 0);
+  const needsProduct = item.selected_product_id == null;
+
+  const reasons: string[] = [];
+
+  if (needsProduct) {
+    reasons.push("не выбран товар из каталога");
+  }
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    reasons.push("количество должно быть больше нуля");
+  }
+  if (!Number.isFinite(price) || price <= 0) {
+    reasons.push("цена продажи должна быть больше нуля");
+  }
+  if (!Number.isFinite(priceCost) || priceCost < 0) {
+    reasons.push("себестоимость не может быть отрицательной");
+  }
+  if (!item.supplier_name?.trim()) {
+    reasons.push("не указан поставщик");
+  }
+
+  return { needsProduct, reasons, isReady: reasons.length === 0 };
+};
+
+const namesLooselyMatch = (catalogName: string, label: string): boolean => {
+  const left = catalogName.trim().toLowerCase();
+  const right = label.trim().toLowerCase();
+  if (!left || !right) return false;
+  return left.includes(right) || right.includes(left);
+};
 
 type EstimateRow = {
   id: number;
@@ -226,6 +296,7 @@ export function ProjectPagePM({
   const [mlImport, setMlImport] = useState<MlImportDetailResponse | null>(null);
   const [mlImportLoading, setMlImportLoading] = useState(false);
   const [mlImportError, setMlImportError] = useState<string | null>(null);
+  const mlImportErrorRef = useRef<HTMLDivElement | null>(null);
 
   // После confirm_ml_import черновик ml-импорта больше не отражает
   // реальность — Комдир может поправить поставщика/себестоимость/цену
@@ -252,20 +323,24 @@ export function ProjectPagePM({
     price: "",
   });
   const [productModalError, setProductModalError] = useState<string | null>(null);
+  // Строка уже привязана к товару, но пользователь хочет создать вместо него
+  // новый (ML мог сопоставить уверенно, но неверно). Backend запрещает
+  // create-product для привязанной строки, поэтому привязку снимаем сами,
+  // непосредственно перед созданием.
+  const [unlinkBeforeCreate, setUnlinkBeforeCreate] = useState(false);
   const [savingProduct, setSavingProduct] = useState(false);
   const [showEstimate, setShowEstimate] = useState(false);
 
-  // Каталог товаров нужен для строк ML-импорта со статусом «Нет в
-  // системе (похожие варианты)»: ML-варианты в similar_variants приходят
-  // из внешнего Excel-файла и НЕ содержат id из нашей таблицы products
-  // (иногда там вообще нет структурированных данных, только текст) —
-  // поэтому PM должен искать и выбирать реальный товар из каталога, а не
-  // из similar_variants напрямую.
-  const [productCatalog, setProductCatalog] = useState<
-    { id: number; name: string; unit?: string | null; price?: number | string | null }[]
-  >([]);
+  // Каталог товаров нужен для любой строки ML-импорта, у которой
+  // selected_product_id остался NULL. ML кладёт в similar_variants данные
+  // из внешнего Excel-файла БЕЗ id из нашей таблицы products (а для
+  // статусов "Возможное совпадение" и "Есть в системе (недостаточно)"
+  // similar_variants чаще всего вообще пустой) — поэтому PM обязан выбрать
+  // реальный товар из каталога либо создать новый.
+  const [productCatalog, setProductCatalog] = useState<CatalogProduct[]>([]);
   const [productCatalogLoading, setProductCatalogLoading] = useState(false);
   const [openVariantPickerId, setOpenVariantPickerId] = useState<number | null>(null);
+  const [productSearch, setProductSearch] = useState("");
 
   const resolvedProjectId = projectId; // Let it be a string or a number!
   const hasValidProjectId = Boolean(resolvedProjectId); // Just check that it's not empty
@@ -333,7 +408,20 @@ export function ProjectPagePM({
         if (!res.ok) throw new Error(`Ошибка загрузки каталога товаров: ${res.status}`);
         return res.json();
       })
-      .then((data) => { if (!cancelled) setProductCatalog(data); })
+      .then((data) => {
+        if (cancelled) return;
+        // Защита от смены контракта эндпоинта: если /products/ когда-нибудь
+        // начнёт отдавать пагинированный объект вместо массива, старый код
+        // падал бы на .filter внутри рендера таблицы.
+        const list: CatalogProduct[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.items)
+          ? data.items
+          : Array.isArray(data?.results)
+          ? data.results
+          : [];
+        setProductCatalog(list);
+      })
       .catch((error) => { console.error("Не удалось загрузить каталог товаров:", error); })
       .finally(() => { if (!cancelled) setProductCatalogLoading(false); });
     return () => { cancelled = true; };
@@ -352,6 +440,17 @@ export function ProjectPagePM({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [openVariantPickerId]);
+
+  // Баннер с ошибкой ML-импорта висит НАД таблицей, а таблица широкая
+  // (min-w-[1950px]) и длинная. Без этого скролла отказ выглядел как
+  // "кнопка не работает": текст ошибки менялся вне видимой области.
+  useEffect(() => {
+    if (!mlImportError) return;
+    mlImportErrorRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }, [mlImportError]);
 
   const refreshProject = async (): Promise<ProjectResponse> => {
     const updatedProject = await fetchProjectDetails(resolvedProjectId);
@@ -467,23 +566,43 @@ export function ProjectPagePM({
     }
   };
 
-  const RESOLVABLE_ML_STATUSES = new Set([
-    "Нет в системе",
-    "Нет в системе (похожие варианты)",
-  ]);
-
+  // УБРАНО: RESOLVABLE_ML_STATUSES — белый список статусов, который
+  // блокировал создание товара для "Возможное совпадение (требует
+  // проверки)" и "Есть в системе (недостаточно)". Кнопка "Добавить товар"
+  // при этом рисовалась (needsProductResolution включал эти статусы), но
+  // openProductModal делал молчаливый return — модалка не открывалась, а
+  // текст ошибки уходил в баннер за пределами экрана.
+  //
+  // Право создать товар определяется теперь одним фактом: строка не
+  // подтверждена и не привязана к товару (getMlRowState().needsProduct).
+  // Именно этого требует backend при confirm.
   const openProductModal = (item: MlImportItemResponse) => {
-    const trimmedStatus = item.ml_status?.trim() ?? "";
-    if (!RESOLVABLE_ML_STATUSES.has(trimmedStatus)) {
+    if (!mlImport || mlImport.status !== "draft") {
       setMlImportError(
-        `Товар можно добавить только для строк со статусом «Нет в системе» или «Нет в системе (похожие варианты)». Текущий статус: «${trimmedStatus || "не указан"}».`,
+        "Импорт уже подтверждён — создание товара из его строк недоступно.",
       );
       return;
     }
 
+    if (item.is_confirmed) {
+      setMlImportError(
+        `Строка «${item.input_product}» уже добавлена в проект — товар создавать не нужно.`,
+      );
+      return;
+    }
+
+    // Привязанную строку тоже можно перевести на новый товар: ML иногда
+    // сопоставляет уверенно, но неверно. Привязку снимем при сохранении.
+    setUnlinkBeforeCreate(item.selected_product_id != null);
     setProductModalItem(item);
     setProductModalForm({
-      product_name: item.input_product,
+      // Для привязанной строки в matched_product лежит название товара,
+      // который пользователь как раз считает неподходящим — подставляем
+      // исходное наименование из файла.
+      product_name:
+        item.selected_product_id != null
+          ? item.input_product
+          : item.matched_product?.trim() || item.input_product,
       supplier_name: item.supplier_name ?? "",
       unit: item.unit?.trim() || "шт",
       price_cost: Number(item.price_cost ?? 0) > 0
@@ -498,6 +617,7 @@ export function ProjectPagePM({
     if (savingProduct) return;
     setProductModalItem(null);
     setProductModalError(null);
+    setUnlinkBeforeCreate(false);
   };
 
   const handleCreateProduct = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -546,6 +666,15 @@ export function ProjectPagePM({
       setProductModalError(null);
       setMlImportError(null);
 
+      // Backend отклоняет create-product для строки с selected_product_id.
+      // Снимаем привязку первым запросом — форма уже заполнена значениями,
+      // снятыми до сброса, поэтому данные не потеряются.
+      if (unlinkBeforeCreate) {
+        await updateMlImportItem(mlImport.id, productModalItem.id, {
+          selected_product_id: null,
+        });
+      }
+
       const updatedItem = await createProductForMlImportItem(
         mlImport.id,
         productModalItem.id,
@@ -561,7 +690,30 @@ export function ProjectPagePM({
           ),
         };
       });
+
+      // Локально дописываем созданный товар в каталог: иначе селект
+      // "Совпавший товар" не сможет показать его название (каталог
+      // грузится один раз при монтировании) и строка будет выглядеть
+      // непривязанной, хотя selected_product_id уже проставлен.
+      const newProductId = updatedItem.selected_product_id;
+      if (newProductId != null) {
+        setProductCatalog((current) =>
+          current.some((product) => product.id === newProductId)
+            ? current
+            : [...current, { id: newProductId, name: productName, unit }],
+        );
+      } else {
+        // Диагностика вместо тихого провала: backend создал товар, но не
+        // привязал строку — confirm всё равно отклонит её.
+        setMlImportError(
+          `Товар «${productName}» создан, но строка не была привязана к нему ` +
+            "(backend не вернул selected_product_id). Выберите созданный " +
+            "товар вручную в колонке «Совпавший товар».",
+        );
+      }
+
       setProductModalItem(null);
+      setUnlinkBeforeCreate(false);
     } catch (error) {
       setProductModalError(
         error instanceof Error
@@ -605,6 +757,14 @@ export function ProjectPagePM({
       setMlImport(await getMlImport(mlImport.id));
     } catch (error) {
       setMlImportError(error instanceof Error ? error.message : "Не удалось подтвердить ML-импорт");
+      // Если backend отклонил confirm, локальное состояние строк могло
+      // разойтись с БД — перечитываем импорт, чтобы подсветка строк
+      // соответствовала тому, что реально сохранено.
+      try {
+        setMlImport(await getMlImport(mlImport.id));
+      } catch {
+        /* сообщение об исходной ошибке важнее */
+      }
     } finally {
       setConfirmingImport(false);
     }
@@ -670,35 +830,28 @@ export function ProjectPagePM({
     }
   };
 
+  // Строки, которые backend отвергнет при confirm. Считаются тем же
+  // getMlRowState, что рисует кнопки в таблице.
+  const unresolvedRows = (mlImport?.items ?? [])
+    .map((item, index) => ({ item, index, state: getMlRowState(item) }))
+    .filter((row) => !row.state.isReady);
+
   const canConfirmMlImport =
-  mlImport !== null &&
-  mlImport.status === "draft" &&
-  mlImport.items.length > 0 &&
-  mlImport.items.every((item) => {
-    const quantity = Number(
-      item.final_quantity ?? item.input_quantity ?? 0
-    );
+    mlImport !== null &&
+    mlImport.status === "draft" &&
+    mlImport.items.length > 0 &&
+    unresolvedRows.length === 0;
 
-    const price = Number(item.price ?? 0);
-    const priceCost = Number(item.price_cost ?? 0);
-    const normalizedStatus = normalizeMlStatus(item.ml_status);
+  const confirmBlockedHint =
+    mlImport === null || mlImport.status !== "draft" || unresolvedRows.length === 0
+      ? ""
+      : `Не готово строк: ${unresolvedRows.length}. ` +
+        unresolvedRows
+          .slice(0, 5)
+          .map((row) => `№${row.index + 1} — ${row.state.reasons.join(", ")}`)
+          .join("; ") +
+        (unresolvedRows.length > 5 ? "; …" : "");
 
-    const mlStatusReady =
-      normalizedStatus !== null &&
-      (normalizedStatus === "Нет в системе"
-        ? item.selected_product_id !== null
-        : normalizedStatus === "Нет в системе (похожие варианты)"
-        ? item.selected_product_id !== null
-        : true);
-
-    return (
-      quantity > 0 &&
-      price > 0 &&
-      priceCost >= 0 &&
-      Boolean(item.supplier_name?.trim()) &&
-      mlStatusReady
-    );
-  });
   const handleExportExcel = async () => {
     if (!project) return;
     try {
@@ -968,12 +1121,23 @@ export function ProjectPagePM({
             </div>
 
             {mlImportError && (
-              <div className="flex items-start gap-2.5 mb-3 px-4 py-3 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg">
+              <div
+                  ref={mlImportErrorRef}
+                  className="flex items-start gap-2.5 mb-3 px-4 py-3 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg"
+              >
                 <AlertTriangle size={15} className="text-destructive mt-0.5 flex-shrink-0" />
-                <div>
+                <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-red-700 dark:text-red-300">Ошибка ML-импорта</p>
-                  <p className="text-xs text-destructive mt-1">{mlImportError}</p>
+                  <p className="text-xs text-destructive mt-1 break-words">{mlImportError}</p>
                 </div>
+                <button
+                    type="button"
+                    onClick={() => setMlImportError(null)}
+                    className="flex-shrink-0 rounded p-0.5 text-destructive/70 hover:text-destructive"
+                    aria-label="Скрыть ошибку"
+                >
+                  <XCircle size={16}/>
+                </button>
               </div>
             )}
 
@@ -1094,16 +1258,16 @@ export function ProjectPagePM({
                           const margin = Number(item.margin ?? 0);
                           const marginPercent = margin * 100;
                           const normalizedStatus = normalizeMlStatus(item.ml_status);
-                          const trimmedItemStatus = item.ml_status?.trim() ?? "";
-                          const isNotInSystem = trimmedItemStatus === "Нет в системе";
-                          const isSimilarVariants =
-                            normalizedStatus === "Нет в системе (похожие варианты)";
-                          const isPossibleMatch =
-                            normalizedStatus === "Возможное совпадение (требует проверки)";
-                          const needsProductResolution =
-                            !item.is_confirmed &&
-                            item.selected_product_id === null &&
-                            (isNotInSystem || isSimilarVariants || isPossibleMatch);
+                          const rowState = getMlRowState(item);
+                          // Выбор товара доступен для ЛЮБОЙ неподтверждённой
+                          // строки черновика — включая "Возможное совпадение"
+                          // и "Есть в системе (недостаточно)", где ML заполнил
+                          // только текстовый matched_product, но оставил
+                          // selected_product_id пустым. Раньше такие строки
+                          // рендерились простым текстом без селекта, и
+                          // привязать их было физически нечем.
+                          const canPickProduct =
+                            mlImport.status === "draft" && !item.is_confirmed;
                           const displayedStatus =
                             normalizedStatus ??
                             item.ml_status?.trim() ??
@@ -1125,16 +1289,36 @@ export function ProjectPagePM({
                                   </span>
                                 </td>
                                 <td className="px-4 py-3">
-                                  {(isSimilarVariants || isPossibleMatch) && !item.is_confirmed ? (() => {
-                                      const similarLabels = getSimilarVariantLabels(item);
-                                      const matchedCatalogOptions = productCatalog.filter((p) => {
-                                        const catalogName = p.name.trim().toLowerCase();
-                                        return similarLabels.some((label) => {
-                                          const labelLower = label.toLowerCase();
-                                          return catalogName.includes(labelLower) || labelLower.includes(catalogName);
-                                        });
-                                      });
+                                  {canPickProduct ? (() => {
                                       const isPickerOpen = openVariantPickerId === item.id;
+                                      const query = productSearch.trim().toLowerCase();
+
+                                      // Подсказки ML: similar_variants + текстовый
+                                      // matched_product. Раньше каталог жёстко
+                                      // фильтровался ТОЛЬКО по similar_variants —
+                                      // а он пуст у "Возможное совпадение", отчего
+                                      // список всегда был пустым.
+                                      const suggestionLabels = [
+                                        ...getSimilarVariantLabels(item),
+                                        item.matched_product?.trim() ?? "",
+                                      ].filter(Boolean);
+
+                                      const suggested = productCatalog.filter((product) =>
+                                        suggestionLabels.some((label) =>
+                                          namesLooselyMatch(product.name, label),
+                                        ),
+                                      );
+                                      const suggestedIds = new Set(suggested.map((p) => p.id));
+
+                                      const matchesQuery = (product: CatalogProduct) =>
+                                        !query || product.name.toLowerCase().includes(query);
+
+                                      const shownSuggested = suggested.filter(matchesQuery);
+                                      const shownRest = productCatalog
+                                        .filter((product) => !suggestedIds.has(product.id))
+                                        .filter(matchesQuery)
+                                        .slice(0, 50);
+
                                       const selectedProductName =
                                         item.selected_product_id != null
                                           ? productCatalog.find((p) => p.id === item.selected_product_id)?.name
@@ -1146,16 +1330,24 @@ export function ProjectPagePM({
                                         <div className="relative" data-variant-picker={item.id}>
                                           <button
                                               type="button"
-                                              disabled={mlImport.status !== "draft" || isUpdating}
-                                              onClick={() =>
-                                                setOpenVariantPickerId((current) => (current === item.id ? null : item.id))
-                                              }
+                                              disabled={isUpdating}
+                                              onClick={() => {
+                                                setProductSearch("");
+                                                setOpenVariantPickerId((current) =>
+                                                  current === item.id ? null : item.id,
+                                                );
+                                              }}
                                               className={`w-56 flex items-center justify-between gap-2 px-2 py-1.5 text-sm border rounded-md bg-card text-left disabled:bg-muted disabled:cursor-not-allowed ${
                                                 item.selected_product_id != null ? "border-border" : "border-orange-300 dark:border-orange-400/30"
                                               }`}
                                           >
                                             <span className={`truncate ${selectedProductName ? "text-foreground" : "text-muted-foreground"}`}>
-                                              {selectedProductName ?? (productCatalogLoading ? "Загрузка каталога…" : "Выберите товар")}
+                                              {selectedProductName ??
+                                                (productCatalogLoading
+                                                  ? "Загрузка каталога…"
+                                                  : item.matched_product?.trim()
+                                                  ? `Подтвердите: ${item.matched_product.trim()}`
+                                                  : "Выберите товар")}
                                             </span>
                                             <ChevronDown
                                                 size={14}
@@ -1164,13 +1356,64 @@ export function ProjectPagePM({
                                           </button>
 
                                           {isPickerOpen && (
-                                            <div className="absolute z-20 mt-1 w-64 max-h-64 overflow-y-auto bg-card border border-border rounded-lg shadow-lg py-1">
-                                              {matchedCatalogOptions.length === 0 ? (
-                                                <p className="px-3 py-2 text-xs text-muted-foreground">Похожих товаров в каталоге не найдено</p>
+                                            <div className="absolute z-20 mt-1 w-72 max-h-80 overflow-y-auto bg-card border border-border rounded-lg shadow-lg py-1">
+                                              <div className="sticky top-0 bg-card px-2 pb-1.5 pt-1">
+                                                <div className="relative">
+                                                  <Search
+                                                      size={13}
+                                                      className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                                                  />
+                                                  <input
+                                                      type="text"
+                                                      autoFocus
+                                                      value={productSearch}
+                                                      onChange={(event) => setProductSearch(event.target.value)}
+                                                      placeholder="Поиск по каталогу…"
+                                                      className="w-full rounded-md border border-border bg-card py-1.5 pl-7 pr-2 text-sm outline-none focus:border-primary"
+                                                  />
+                                                </div>
+                                              </div>
+
+                                              {shownSuggested.length > 0 && (
+                                                <>
+                                                  <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                                    Похожие по данным ML
+                                                  </p>
+                                                  {shownSuggested.map((product) => (
+                                                    <button
+                                                        key={`suggested-${product.id}`}
+                                                        type="button"
+                                                        onClick={() => {
+                                                          handleMlItemUpdate(item.id, { selected_product_id: product.id });
+                                                          setOpenVariantPickerId(null);
+                                                        }}
+                                                        className={`w-full text-left px-3 py-2 text-sm hover:bg-background transition-colors ${
+                                                          item.selected_product_id === product.id
+                                                            ? "bg-blue-50 dark:bg-blue-400/15 text-primary font-medium"
+                                                            : "text-foreground"
+                                                        }`}
+                                                    >
+                                                      {product.name}
+                                                    </button>
+                                                  ))}
+                                                </>
+                                              )}
+
+                                              <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                                {query ? "Найдено в каталоге" : "Весь каталог"}
+                                              </p>
+                                              {shownRest.length === 0 ? (
+                                                <p className="px-3 py-2 text-xs text-muted-foreground">
+                                                  {productCatalogLoading
+                                                    ? "Загрузка каталога…"
+                                                    : query
+                                                    ? "Ничего не найдено — уточните запрос"
+                                                    : "Каталог пуст"}
+                                                </p>
                                               ) : (
-                                                matchedCatalogOptions.map((product) => (
+                                                shownRest.map((product) => (
                                                   <button
-                                                      key={product.id}
+                                                      key={`catalog-${product.id}`}
                                                       type="button"
                                                       onClick={() => {
                                                         handleMlItemUpdate(item.id, { selected_product_id: product.id });
@@ -1186,7 +1429,8 @@ export function ProjectPagePM({
                                                   </button>
                                                 ))
                                               )}
-                                              <div className="border-t border-border mt-1 pt-1">
+
+                                              <div className="sticky bottom-0 border-t border-border bg-card mt-1 pt-1">
                                                 <button
                                                     type="button"
                                                     onClick={() => {
@@ -1197,6 +1441,20 @@ export function ProjectPagePM({
                                                 >
                                                   <Plus size={14} /> Это новый товар
                                                 </button>
+                                                {item.selected_product_id != null && (
+                                                  <button
+                                                      type="button"
+                                                      onClick={() => {
+                                                        handleMlItemUpdate(item.id, {
+                                                          selected_product_id: null,
+                                                        });
+                                                        setOpenVariantPickerId(null);
+                                                      }}
+                                                      className="w-full flex items-center gap-1.5 text-left px-3 py-2 text-sm font-medium text-destructive hover:bg-accent transition-colors"
+                                                  >
+                                                    <XCircle size={14} /> Снять привязку
+                                                  </button>
+                                                )}
                                               </div>
                                             </div>
                                           )}
@@ -1261,7 +1519,9 @@ export function ProjectPagePM({
                                         }
                                         if (newPrice !== price) handleMlItemUpdate(item.id, {price: newPrice});
                                       }}
-                                      className="w-32 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
+                                      className={`w-32 px-2 py-1.5 text-sm font-mono border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted ${
+                                        price > 0 ? "border-border" : "border-red-300 dark:border-red-400/30"
+                                      }`}
                                   />
                                 </td>
                                 <td className="px-4 py-3 whitespace-nowrap"><span
@@ -1300,36 +1560,46 @@ export function ProjectPagePM({
       <CheckCircle2 size={14}/>
       Добавлен
     </span>
-                                  ) : needsProductResolution ? (
-                                      <button
-                                          type="button"
-                                          onClick={() => openProductModal(item)}
-                                          disabled={mlImport.status !== "draft"}
-                                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-red-600 rounded-md hover:bg-red-700 transition-colors disabled:bg-slate-200 disabled:text-muted-foreground disabled:cursor-not-allowed"
-                                      >
-                                        Добавить товар
-                                      </button>
-                                  ) : normalizedStatus === "На складе" ? (
-                                      <span
-                                          className="inline-flex items-center gap-1 text-xs font-medium text-green-700 dark:text-green-300">
-      <CheckCircle2 size={14}/>
-      На складе
-    </span>
-                                  ) : Number(item.price ?? 0) > 0 &&
-                                  Number(
-                                      item.final_quantity ??
-                                      item.input_quantity ??
-                                      0
-                                  ) > 0 ? (
-                                      <span
-                                          className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300">
-      <CheckCircle2 size={14}/>
-      Будет куплено
-    </span>
-                                  ) : (
+                                  ) : rowState.needsProduct ? (
+                                      <AppTooltip text="Строку нельзя импортировать без товара из каталога. Выберите товар в колонке «Совпавший товар» или создайте новый.">
+                                        <button
+                                            type="button"
+                                            onClick={() => openProductModal(item)}
+                                            disabled={mlImport.status !== "draft"}
+                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-red-600 rounded-md hover:bg-red-700 transition-colors disabled:bg-slate-200 disabled:text-muted-foreground disabled:cursor-not-allowed"
+                                        >
+                                          <Plus size={13}/>
+                                          Добавить товар
+                                        </button>
+                                      </AppTooltip>
+                                  ) : !rowState.isReady ? (
                                       <span className="text-xs font-medium text-red-700 dark:text-red-300">
-      Требуется указать цену
-    </span>
+                                        {rowState.reasons.join("; ")}
+                                      </span>
+                                  ) : (
+                                      <div className="flex flex-col items-start gap-1">
+                                        {normalizedStatus === "На складе" ? (
+                                          <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 dark:text-green-300">
+                                            <CheckCircle2 size={14}/>
+                                            На складе
+                                          </span>
+                                        ) : (
+                                          <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+                                            <CheckCircle2 size={14}/>
+                                            Будет куплено
+                                          </span>
+                                        )}
+                                        {mlImport.status === "draft" && (
+                                          <button
+                                              type="button"
+                                              onClick={() => openProductModal(item)}
+                                              className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                                          >
+                                            <Plus size={12}/>
+                                            Другой товар
+                                          </button>
+                                        )}
+                                      </div>
                                   )}
                                 </td>
                               </tr>
@@ -1341,36 +1611,50 @@ export function ProjectPagePM({
                 </div>
 
                 <div className="flex items-center justify-between gap-4 mt-4">
-                  <p className="text-xs text-muted-foreground">
-                    Для строк «Нет в системе» создайте товар через кнопку в строке.
-                    Для строк «Нет в системе (похожие варианты)» выберите товар из
-                    предложенного списка либо нажмите «Это новый товар», если
-                    подходящего нет. У остальных строк должны быть указаны поставщик,
-                    цена и количество.
-                  </p>
-                  <button
-                      type="button"
-                      onClick={handleConfirmMlImport}
-                      disabled={!canConfirmMlImport || confirmingImport}
-                      className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-colors disabled:bg-slate-200 disabled:text-muted-foreground disabled:cursor-not-allowed enabled:bg-primary enabled:text-white enabled:hover:bg-primary/90 enabled:cursor-pointer"
-                  >
-                    {confirmingImport ? (
-                        <>
-                          <Loader2 size={15} className="animate-spin"/>
-                          Подтверждение…
-                        </>
-                    ) : mlImport.status === "confirmed" ? (
-                        <>
-                          <CheckCircle2 size={15}/>
-                          Импорт подтверждён
-                        </>
-                    ) : (
-                        <>
-                          <Check size={15}/>
-                          Подтвердить импорт
-                        </>
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">
+                      Каждая строка должна быть привязана к товару из каталога — выберите его
+                      в колонке «Совпавший товар» либо нажмите «Это новый товар», если
+                      подходящего нет. Также у каждой строки должны быть указаны поставщик,
+                      цена продажи больше нуля и количество.
+                    </p>
+                    {mlImport.status === "draft" && unresolvedRows.length > 0 && (
+                      <p className="mt-1.5 text-xs font-medium text-red-700 dark:text-red-300">
+                        Не готово строк: {unresolvedRows.length} из {mlImport.items.length}
+                        {" — "}
+                        {unresolvedRows
+                          .slice(0, 8)
+                          .map((row) => `№${row.index + 1}`)
+                          .join(", ")}
+                        {unresolvedRows.length > 8 ? " и др." : ""}
+                      </p>
                     )}
-                  </button>
+                  </div>
+                  <AppTooltip text={confirmBlockedHint}>
+                    <button
+                        type="button"
+                        onClick={handleConfirmMlImport}
+                        disabled={!canConfirmMlImport || confirmingImport}
+                        className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-colors disabled:bg-slate-200 disabled:text-muted-foreground disabled:cursor-not-allowed enabled:bg-primary enabled:text-white enabled:hover:bg-primary/90 enabled:cursor-pointer"
+                    >
+                      {confirmingImport ? (
+                          <>
+                            <Loader2 size={15} className="animate-spin"/>
+                            Подтверждение…
+                          </>
+                      ) : mlImport.status === "confirmed" ? (
+                          <>
+                            <CheckCircle2 size={15}/>
+                            Импорт подтверждён
+                          </>
+                      ) : (
+                          <>
+                            <Check size={15}/>
+                            Подтвердить импорт
+                          </>
+                      )}
+                    </button>
+                  </AppTooltip>
                 </div>
                 </>
                 )}
@@ -1395,7 +1679,7 @@ export function ProjectPagePM({
                     Добавить товар в систему
                   </h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Статус ML-строки не изменится, но после создания товара строка будет готова к подтверждению.
+                    Статус ML-строки не изменится, но после создания товара строка будет привязана к нему и готова к подтверждению.
                   </p>
                 </div>
                 <button
@@ -1410,6 +1694,24 @@ export function ProjectPagePM({
               </div>
 
               <form onSubmit={handleCreateProduct} className="space-y-4 px-6 py-5">
+                {unlinkBeforeCreate && (
+                  <div className="rounded-lg border border-amber-200 dark:border-amber-400/25 bg-amber-50 dark:bg-amber-400/15 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+                    Строка сейчас привязана к товару{" "}
+                    <span className="font-medium">«{productModalItem.matched_product ?? "—"}»</span>.
+                    После сохранения она будет переведена на новый товар.
+                  </div>
+                )}
+
+                <div className="rounded-lg border border-border bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+                  Строка из файла: <span className="font-medium text-foreground">{productModalItem.input_product}</span>
+                  {productModalItem.matched_product && (
+                    <>
+                      {" · "}ML предложил:{" "}
+                      <span className="font-medium text-foreground">{productModalItem.matched_product}</span>
+                    </>
+                  )}
+                </div>
+
                 <label className="block">
                   <span className="mb-1.5 block text-sm font-medium text-foreground">
                     Название товара
