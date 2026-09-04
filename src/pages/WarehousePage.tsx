@@ -14,6 +14,8 @@ import {
   Clock,
   Inbox,
   FileText,
+  ArrowUpDown,
+  Check,
 } from "lucide-react";
 import type { ProjectState, Role } from "../types";
 import {
@@ -37,6 +39,15 @@ import {
   WarehouseInfo,
   ShipmentPendingProject,
 } from "../api/api";
+
+type StockQuantityField = "total" | "reserved" | "defective" | "available";
+
+const STOCK_SORT_OPTIONS: { field: StockQuantityField; label: string }[] = [
+  { field: "total", label: "Всего" },
+  { field: "reserved", label: "В резерве" },
+  { field: "defective", label: "Брак" },
+  { field: "available", label: "Доступно" },
+];
 
 const DEFAULT_WAREHOUSES: WarehouseInfo[] = [
   { id: 1, name: "Карабулак", code: "Кар" },
@@ -680,6 +691,9 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   const [stockError, setStockError] = useState<string | null>(null);
   const [stockFilter, setStockFilter] = useState<"all" | "low" | "reserved" | "brak">("all");
   const [stockSearch, setStockSearch] = useState("");
+  const [stockSortField, setStockSortField] = useState<StockQuantityField | null>("available");
+  const [stockSortDir, setStockSortDir] = useState<"asc" | "desc">("desc");
+  const [isStockSortMenuOpen, setIsStockSortMenuOpen] = useState(false);
 
   const [arrivals, setArrivals] = useState<ArrivalRow[]>([]);
   const [arrivalsLoading, setArrivalsLoading] = useState(false);
@@ -996,8 +1010,14 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
           ? true
           : item.name.toLowerCase().includes(stockSearch.trim().toLowerCase()) ||
             item.sku.toLowerCase().includes(stockSearch.trim().toLowerCase())
-      );
-  }, [stock, selectedWarehouseId, stockFilter, stockSearch]);
+      )
+      .slice()
+      .sort((a, b) => {
+        if (!stockSortField) return 0;
+        const diff = a[stockSortField] - b[stockSortField];
+        return stockSortDir === "asc" ? diff : -diff;
+      });
+  }, [stock, selectedWarehouseId, stockFilter, stockSearch, stockSortField, stockSortDir]);
 
   return (
     <PageWrap title="Склад" subtitle={`Управление остатками, резервом и отгрузками по ${warehouses.length} складам`}>
@@ -1067,6 +1087,70 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                   {wh.code || wh.name}
                 </button>
               ))}
+            </div>
+
+            <div className="relative">
+              <button
+                onClick={() => setIsStockSortMenuOpen((v) => !v)}
+                className={`text-xs flex items-center gap-1.5 whitespace-nowrap px-2.5 py-1.5 rounded-lg border transition-all duration-150 active:scale-95 ${
+                  stockSortField
+                    ? "border-primary text-primary bg-primary/5"
+                    : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
+                }`}
+              >
+                <ArrowUpDown
+                  size={12}
+                  className={`transition-transform duration-200 ${isStockSortMenuOpen ? "rotate-180" : ""}`}
+                />
+                {stockSortField
+                  ? `${STOCK_SORT_OPTIONS.find((o) => o.field === stockSortField)?.label} ${stockSortDir === "asc" ? "↑" : "↓"}`
+                  : "Сортировать"}
+              </button>
+
+              {isStockSortMenuOpen && (
+                <>
+                  {/* Клик вне меню закрывает его */}
+                  <div className="fixed inset-0 z-10" onClick={() => setIsStockSortMenuOpen(false)} />
+                  <div className="absolute right-0 top-full mt-2 w-56 overflow-hidden rounded-xl border border-border bg-card shadow-xl z-20 py-1 animate-in fade-in zoom-in-95 slide-in-from-top-1 duration-150 origin-top-right">
+                    <button
+                      onClick={() => {
+                        setStockSortField(null);
+                        setIsStockSortMenuOpen(false);
+                      }}
+                      className="w-full flex items-center justify-between px-3 py-2 text-xs text-left hover:bg-muted transition-colors text-muted-foreground"
+                    >
+                      Без сортировки
+                      {!stockSortField && <Check size={12} className="text-primary animate-in fade-in zoom-in duration-150" />}
+                    </button>
+                    <div className="h-px bg-muted my-1" />
+                    {STOCK_SORT_OPTIONS.map((opt, i) => (
+                      <button
+                        key={opt.field}
+                        onClick={() => {
+                          if (stockSortField === opt.field) {
+                            // Повторный клик по тому же типу количества — меняем направление
+                            setStockSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                          } else {
+                            setStockSortField(opt.field);
+                            setStockSortDir("desc");
+                          }
+                          setIsStockSortMenuOpen(false);
+                        }}
+                        style={{ animationDelay: `${i * 20}ms` }}
+                        className="w-full flex items-center justify-between px-3 py-2 text-xs text-left hover:bg-muted transition-colors text-foreground animate-in fade-in slide-in-from-top-1 duration-150 fill-mode-both"
+                      >
+                        <span>
+                          {opt.label}
+                          {stockSortField === opt.field && (
+                            <span className="text-muted-foreground ml-1">{stockSortDir === "asc" ? "↑" : "↓"}</span>
+                          )}
+                        </span>
+                        {stockSortField === opt.field && <Check size={12} className="text-primary animate-in fade-in zoom-in duration-150" />}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
