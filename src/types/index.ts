@@ -1,5 +1,5 @@
 export type Role = "admin" | "commercial_director" | "pm" | "accountant" | "warehouse";
-export type Page = "dashboard" | "project" | "contract" | "procurement" | "warehouse" | "documents" | "upload" | "suppliers";
+export type Page = "dashboard" | "project" | "contract" | "procurement" | "warehouse" | "documents" | "upload" | "suppliers" | "onec";
 export type ContractStatus = "unsigned" | "pending" | "signed";
 export type KPItemStatus = "found" | "history" | "not_found";
 
