@@ -20,6 +20,7 @@ import { ProcurementPage } from "../../../pages/ProcurementPage";
 import { WarehousePage } from "../../../pages/WarehousePage";
 import { DocumentsPage } from "../../../pages/DocumentsPage";
 import { SupplierHistoryPage } from "../../../pages/SupplierHistoryPage";
+import { OneCPage } from "../../../pages/OneCPage";
 
 type UserData = {
   id: number;
@@ -298,7 +299,7 @@ export function AppShell({
             <WarehousePage
             role={role}
             projectState={projectState}
-          />  
+          />
         )}
 
           {page === "documents" && (
@@ -311,6 +312,12 @@ export function AppShell({
           )}
 
           {page === "suppliers" && <SupplierHistoryPage />}
+
+          {/* Данные 1С — бэкенд отдаёт их только бухгалтеру, комдиру и
+              админу (ALLOWED_ROLES в routers/onec.py). Страницу же прячем
+              на уровне NAV в Sidebar: сюда попадают только те, у кого
+              пункт меню виден. */}
+          {page === "onec" && <OneCPage />}
         </main>
       </div>
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FolderOpen, FileText, ShoppingCart, Package, CheckSquare, Receipt, LayoutDashboard, X, Search, History } from "lucide-react";
+import { FolderOpen, FileText, ShoppingCart, Package, CheckSquare, Receipt, LayoutDashboard, X, Search, History, Landmark } from "lucide-react";
 import type { Page, Role, ProjectState } from "../../../types";
 import { KerneuLogo } from "../common/KerneuLogo";
 import ProductsCatalog from "../common/ProductsCatalog";
@@ -12,6 +12,10 @@ export const NAV: { id: Page; label: string; icon: React.ElementType; badge?: nu
   { id: "warehouse",   label: "Склад",      icon: Package,         roles: ["commercial_director", "pm", "warehouse"] },
   { id: "documents",   label: "Документы",  icon: CheckSquare,     roles: ["commercial_director", "pm", "accountant"] },
   { id: "suppliers",   label: "Поставщики", icon: History, roles: ["commercial_director", "pm", "warehouse"] },
+  // Данные тянутся напрямую из 1С:Бухгалтерия. Список ролей должен совпадать
+  // с ALLOWED_ROLES в app/api/v1/routers/onec.py на бэке — иначе пункт меню
+  // будет виден, а запросы будут падать с 403.
+  { id: "onec",        label: "1С",         icon: Landmark, roles: ["commercial_director", "accountant"] },
 ];
 
 export function Sidebar({ page, onPage, role, projectState, onFindProject, mobileOpen = false, onCloseMobile }: {
