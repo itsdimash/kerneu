@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import type {
   Role,
   Page,
@@ -13,6 +13,7 @@ import {
 
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
+import { AiChatPage } from "../../../pages/AiChatPage";
 import { DashboardPage } from "../../../pages/DashboardPage";
 import { ProjectPage } from "../../../pages/ProjectPage";
 import { ContractPage } from "../../../pages/ContractPage";
@@ -87,6 +88,17 @@ export function AppShell({
   setReceipts,
 }: AppShellProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  // Свёрнутое состояние Sidebar (только иконки) — сохраняем между
+  // сессиями, чтобы не приходилось сворачивать заново при каждом заходе.
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("erp.sidebarCollapsed") === "1";
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem("erp.sidebarCollapsed", isSidebarCollapsed ? "1" : "0");
+  }, [isSidebarCollapsed]);
 
   const [projectItems, setProjectItems] =
     useState<ProjectItem[]>([]);
@@ -200,6 +212,8 @@ export function AppShell({
         onFindProject={handleFindProject}
         mobileOpen={mobileNavOpen}
         onCloseMobile={() => setMobileNavOpen(false)}
+        collapsed={isSidebarCollapsed}
+        onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
       />
 
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -318,6 +332,11 @@ export function AppShell({
               на уровне NAV в Sidebar: сюда попадают только те, у кого
               пункт меню виден. */}
           {page === "onec" && <OneCPage />}
+
+          {/* AI-ассистент — отдельная страница (не Drawer), стучится в
+              прокси-роут ERP_Bakend (/api/v1/ai/...), а не напрямую в
+              ai-platform — см. app/api/v1/routers/ai_chat.py на бэке. */}
+          {page === "ai-chat" && <AiChatPage role={role} />}
         </main>
       </div>
 
