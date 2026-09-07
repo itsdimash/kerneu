@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FolderOpen, FileText, ShoppingCart, Package, CheckSquare, Receipt, LayoutDashboard, X, Search, History, Landmark } from "lucide-react";
+import { FolderOpen, FileText, ShoppingCart, Package, CheckSquare, Receipt, LayoutDashboard, X, Search, History, Landmark, Sparkles, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import type { Page, Role, ProjectState } from "../../../types";
 import { KerneuLogo } from "../common/KerneuLogo";
 import ProductsCatalog from "../common/ProductsCatalog";
@@ -16,18 +16,27 @@ export const NAV: { id: Page; label: string; icon: React.ElementType; badge?: nu
   // с ALLOWED_ROLES в app/api/v1/routers/onec.py на бэке — иначе пункт меню
   // будет виден, а запросы будут падать с 403.
   { id: "onec",        label: "1С",         icon: Landmark, roles: ["commercial_director", "accountant"] },
+  { id: "ai-chat",     label: "AI-ассистент", icon: Sparkles, roles: ["commercial_director", "pm", "accountant", "warehouse"] },
 ];
 
-export function Sidebar({ page, onPage, role, projectState, onFindProject, mobileOpen = false, onCloseMobile }: {
+export function Sidebar({ page, onPage, role, projectState, onFindProject, mobileOpen = false, onCloseMobile, collapsed = false, onToggleCollapse }: {
   page: Page; onPage: (p: Page) => void; role: Role; projectState: ProjectState;
   onFindProject?: (id: string) => void;
   /** Off-canvas drawer state on narrow screens — ignored at lg: and up,
    *  where the sidebar is always visible as a static column. */
   mobileOpen?: boolean;
   onCloseMobile?: () => void;
+  /** Свёрнутое (только иконки) состояние на lg+ экранах. */
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }) {
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [projectIdInput, setProjectIdInput] = useState("");
+
+  // Свёрнутость — это desktop-only концепция (как в VS Code/Notion). Пока
+  // открыт мобильный drawer, всегда показываем полную версию с подписями —
+  // иначе пользователь на телефоне увидит бесполезное меню из одних иконок.
+  const effectiveCollapsed = collapsed && !mobileOpen;
 
   const handleNavClick = (id: Page) => {
     if (id === "project") {
@@ -56,15 +65,39 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject, mobil
       )}
 
       <aside
-        className={`w-[232px] flex-shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col h-screen fixed lg:sticky top-0 left-0 z-50 transition-transform duration-300 ease-out ${
+        className={`${collapsed ? "lg:w-[76px]" : "lg:w-[232px]"} w-[232px] flex-shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col h-screen fixed lg:sticky top-0 left-0 z-50 transition-all duration-300 ease-out ${
           mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         }`}
       >
-        <div className="px-5 h-16 flex items-center justify-between border-b border-sidebar-border flex-shrink-0">
-          <div className="flex items-center gap-2.5">
-            <KerneuLogo size={28} animated />
-            <div><p className="font-semibold text-sidebar-foreground text-xs leading-tight">Kerneu Group</p><p className="text-muted-foreground text-[10px] leading-tight tracking-wide">ERP PLATFORM</p></div>
-          </div>
+        <div className={`h-16 flex-shrink-0 border-b border-sidebar-border flex items-center ${effectiveCollapsed ? "justify-center px-2" : "justify-between px-5"}`}>
+          {effectiveCollapsed ? (
+            <button
+              onClick={onToggleCollapse}
+              aria-label="Развернуть меню"
+              title="Развернуть меню"
+              className="hidden lg:flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors"
+            >
+              <PanelLeftOpen size={18} />
+            </button>
+          ) : (
+            <>
+              <div className="flex items-center gap-2.5 min-w-0">
+                <KerneuLogo size={28} animated />
+                <div className="min-w-0">
+                  <p className="font-semibold text-sidebar-foreground text-xs leading-tight truncate">Kerneu Group</p>
+                  <p className="text-muted-foreground text-[10px] leading-tight tracking-wide">ERP PLATFORM</p>
+                </div>
+              </div>
+              <button
+                onClick={onToggleCollapse}
+                aria-label="Свернуть меню"
+                title="Свернуть меню"
+                className="hidden lg:flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors"
+              >
+                <PanelLeftClose size={16} />
+              </button>
+            </>
+          )}
           <button
             onClick={onCloseMobile}
             aria-label="Закрыть меню"
@@ -80,13 +113,16 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject, mobil
             return (
               <button key={id} onClick={() => handleNavClick(id)}
                 style={{ animationDelay: `${i * 40}ms` }}
-                className={`group animate-in fade-in slide-in-from-left-1 fill-mode-both relative w-full flex items-center gap-2.5 pl-3.5 pr-3 py-2.5 lg:py-2 rounded-md text-sm transition-all duration-200 ${
+                title={effectiveCollapsed ? label : undefined}
+                className={`group animate-in fade-in slide-in-from-left-1 fill-mode-both relative w-full flex items-center gap-2.5 py-2.5 lg:py-2 rounded-md text-sm transition-all duration-200 ${
+                  effectiveCollapsed ? "justify-center px-0" : "pl-3.5 pr-3"
+                } ${
                   active ? "bg-sidebar-accent text-sidebar-primary font-medium" : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
                 }`}>
                 {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-sidebar-primary shadow-[0_0_8px_var(--sidebar-primary)]" />}
                 <Icon size={16} className={`transition-transform duration-200 ${active ? "text-sidebar-primary" : "text-muted-foreground group-hover:scale-110"}`} />
-                <span className="flex-1 text-left">{label}</span>
-                {badge && badge > 0 && (
+                {!effectiveCollapsed && <span className="flex-1 text-left">{label}</span>}
+                {!effectiveCollapsed && badge && badge > 0 && (
                   <span className="flex-shrink-0 w-4 h-4 bg-warning text-warning-foreground text-[10px] font-bold rounded-full flex items-center justify-center">
                     {badge}
                   </span>
@@ -96,9 +132,11 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject, mobil
           })}
         </nav>
 
-        <div className="px-3 py-3 border-t border-sidebar-border flex-shrink-0">
-          <ProductsCatalog />
-        </div>
+        {!effectiveCollapsed && (
+          <div className="px-3 py-3 border-t border-sidebar-border flex-shrink-0">
+            <ProductsCatalog />
+          </div>
+        )}
       </aside>
 
       {showProjectModal && (
