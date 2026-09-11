@@ -19,12 +19,13 @@ import {
   Plus, FolderOpen, Send, TrendingUp, AlertTriangle, Inbox, BarChart2, 
   Clock, Check, X, CheckCircle2, XCircle, ChevronRight, MoreHorizontal,
   Archive, Package, Truck, DollarSign, UploadCloud, FileText, Trash2, Loader2, Search,
-  ArrowUpDown
+  ArrowUpDown, FileSignature, FilePlus
 } from "lucide-react";
 import {
   fetchDashboardStats,
   type DashboardStats,
   startParseJob,
+  startContractParseJob,
   fetchUpcomingDeadlines,
   type UpcomingDeadline,
   fetchRecentActivity,
@@ -144,6 +145,18 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
 
   // Файл КП, прикреплённый пользователем
   const [kpFile, setKpFile] = useState<File | null>(null);
+  // NEW: режим модалки. "kp" — обычный поток (заявка клиента -> КП ->
+  // согласование). "contract" — экспресс: договор уже подписан, согласовывать
+  // не с кем, проект после подтверждения позиций уходит сразу в закуп.
+  // Форма и логика создания у режимов общие — различаются тексты, список
+  // допустимых расширений файла и флаг is_express в payload.
+  // NEW: "manual" — ручной режим. Файла нет вообще: проект создаётся
+  // пустым, без парсинга и без фоновой задачи. ПМ сам добавляет позиции на
+  // странице проекта кнопкой «Создать позицию». Поток дальше обычный
+  // (В редактировании -> Комдир -> клиент), is_express не выставляется.
+  const [modalMode, setModalMode] = useState<"kp" | "contract" | "manual">("kp");
+  const isContractMode = modalMode === "contract";
+  const isManualMode = modalMode === "manual";
   // isSaving теперь блокирует только быстрые шаги (создание проекта +
   // отправка файла в очередь) — не весь парсинг, который ушёл в фон.
   const [isSaving, setIsSaving] = useState(false);
@@ -299,7 +312,7 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
   // Проект, ожидающий подтверждения архивации (для кастомного модального окна)
   const [projectToArchive, setProjectToArchive] = useState<{ id: number; name: string } | null>(null);
   const [isArchiving, setIsArchiving] = useState(false);
-  
+
   // Клиент "выбран", когда либо указан существующий клиент, либо введено имя нового
   const isClientChosen = isNewClient ? newClientForm.name.trim().length > 0 : !!selectedClientId;
 
@@ -352,6 +365,7 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
     setProjectForm({ name: "", deadline: "" });
     setKpFile(null);
     setCreateError(null);
+    setModalMode("kp");
   };
 
 const handleSave = async () => {
@@ -383,8 +397,9 @@ const handleSave = async () => {
       return;
     }
 
-    if (!kpFile) {
-      alert("Выберите файл КП");
+    // В ручном режиме файл не требуется — спецификацию ПМ заполняет сам.
+    if (!isManualMode && !kpFile) {
+      alert(isContractMode ? "Выберите файл договора" : "Выберите файл КП");
       return;
     }
 
@@ -398,7 +413,8 @@ const handleSave = async () => {
       return;
     }
 
-    const uploadedFileUrl = `/uploads/${kpFile.name}`;
+    // В ручном режиме файла нет — отправляем пустую строку.
+    const uploadedFileUrl = kpFile ? `/uploads/${kpFile.name}` : "";
 
     const payload = isNewClient
       ? {
@@ -413,6 +429,7 @@ const handleSave = async () => {
           project_status_id: 2, // "В редактировании" — PM сразу начинает редактировать проект после создания
           planned_margin: 0,
           deadline: projectForm.deadline,
+          is_express: isContractMode,
         }
       : {
           is_new_client: false,
@@ -425,6 +442,7 @@ const handleSave = async () => {
           pm_id: 1,
           planned_margin: 0,
           deadline: projectForm.deadline,
+          is_express: isContractMode,
         };
 
     console.log("Создание проекта, payload:", payload);
@@ -467,9 +485,31 @@ const handleSave = async () => {
 
     console.log("Проект создан:", projectId);
 
-    // 2. Ставим файл в очередь на обработку (парсинг + ML-матчинг —
+    // 2a. Ручной режим: парсить нечего — проект остаётся пустым. Просто
+    // обновляем списки, закрываем модалку и сразу открываем страницу
+    // проекта, где ПМ добавляет позиции кнопкой «Создать позицию».
+    if (isManualMode) {
+      await loadProjects();
+      await loadStats();
+      resetModal();
+      onOpenProject(projectId);
+      return;
+    }
+
+    if (!kpFile) {
+      // Недостижимо: проверка выше уже отсекла отсутствие файла в файловых
+      // режимах. Нужно только для сужения типа File | null -> File.
+      throw new Error("Файл не выбран");
+    }
+
+    // 2b. Ставим файл в очередь на обработку (парсинг + ML-матчинг —
     // оба шага теперь выполняет воркер в фоне, не блокируя этот запрос).
-    const { job_id } = await startParseJob(projectId, kpFile);
+    // Экспресс-проект разбирает отдельный парсер договоров: он достаёт из
+    // Приложения №1 зафиксированную цену продажи, поэтому позиции приходят
+    // с уже заполненными ценами и ПМ остаётся вписать только себестоимость.
+    const { job_id } = isContractMode
+      ? await startContractParseJob(projectId, kpFile)
+      : await startParseJob(projectId, kpFile);
 
     console.log("Файл поставлен в очередь, job_id:", job_id);
 
@@ -577,17 +617,36 @@ const handleSave = async () => {
   };
 
   return (
-    <PageWrap 
-      title={role === "commercial_director" ? "Дашборд Директора" : "Дашборд PM"} 
+    <PageWrap
+      title={role === "commercial_director" ? "Дашборд Директора" : "Дашборд PM"}
       subtitle="Управление проектами и коммерческими предложениями"
       actions={
         role !== "commercial_director" && (
-          <button 
-            onClick={() => setIsKpModalOpen(true)}
-            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors"
-          >
-            <Plus size={14} /> Новый проект 
-          </button>
+          <div className="flex items-center gap-2">
+            {/* NEW: ручной поток. Ни КП, ни договора — проект создаётся
+                пустым, позиции ПМ вбивает руками на странице проекта. */}
+            <button
+              onClick={() => { setModalMode("manual"); setIsKpModalOpen(true); }}
+              className="flex items-center gap-1.5 px-4 py-2 bg-card border border-border text-foreground text-sm font-medium rounded-lg hover:bg-muted transition-colors"
+            >
+              <FilePlus size={14} /> Пустой проект
+            </button>
+            {/* NEW: экспресс-поток. Договор уже подписан и согласован —
+                проект минует КП, Комдира и клиента и после подтверждения
+                позиций уходит сразу в закуп. */}
+            <button
+              onClick={() => { setModalMode("contract"); setIsKpModalOpen(true); }}
+              className="flex items-center gap-1.5 px-4 py-2 bg-card border border-border text-foreground text-sm font-medium rounded-lg hover:bg-muted transition-colors"
+            >
+              <FileSignature size={14} /> Загрузить договор
+            </button>
+            <button
+              onClick={() => { setModalMode("kp"); setIsKpModalOpen(true); }}
+              className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors"
+            >
+              <Plus size={14} /> Новый проект
+            </button>
+          </div>
         )
       }
     >
@@ -602,12 +661,22 @@ const handleSave = async () => {
               <div className="absolute inset-0 z-10 bg-card/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3 rounded-xl px-6 text-center">
                 <Loader2 size={28} className="text-primary animate-spin" />
                 <p className="text-sm font-medium text-foreground">Создание проекта...</p>
-                <p className="text-xs text-muted-foreground">Файл будет обработан в фоне — после закрытия окна вы сможете продолжить работу.</p>
+                <p className="text-xs text-muted-foreground">
+                  {isManualMode
+                    ? "Проект создаётся пустым — позиции добавите на странице проекта."
+                    : "Файл будет обработан в фоне — после закрытия окна вы сможете продолжить работу."}
+                </p>
               </div>
             )}
 
             <div className="flex items-center justify-between px-5 py-4 border-b border-border bg-background flex-shrink-0">
-              <h3 className="font-semibold text-foreground">Создание нового КП</h3>
+              <h3 className="font-semibold text-foreground">
+                {isContractMode
+                  ? "Загрузка подписанного договора"
+                  : isManualMode
+                    ? "Новый проект вручную"
+                    : "Создание нового КП"}
+              </h3>
               <button
                 onClick={resetModal}
                 disabled={isSaving}
@@ -771,13 +840,36 @@ const handleSave = async () => {
                 </>
               )}
 
+              {/* NEW: ручной режим — вместо блока загрузки короткое
+                  пояснение, что позиции заполняются вручную. */}
+              {isClientChosen && isManualMode && (
+                <>
+                  <div className="h-px w-full bg-muted" />
+                  <div className="flex items-start gap-2 px-3 py-2.5 bg-background/80 border border-border rounded-lg animate-in fade-in slide-in-from-bottom-2 duration-200">
+                    <FilePlus size={15} className="text-primary flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-muted-foreground">
+                      Файл не нужен — проект создастся пустым. Позиции добавите вручную
+                      на странице проекта кнопкой «Создать позицию».
+                    </p>
+                  </div>
+                </>
+              )}
+
               {/* ── Загрузка файла: показывается только после выбора/ввода клиента ── */}
-              {isClientChosen && (
+              {isClientChosen && !isManualMode && (
               <>
               <div className="h-px w-full bg-muted" />
 
               <div className="animate-in fade-in slide-in-from-bottom-2 duration-200">
-                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Файл КП</label>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">
+                  {isContractMode ? "Файл договора" : "Файл КП"}
+                </label>
+                {isContractMode && (
+                  <p className="mb-2 text-xs text-muted-foreground">
+                    Спецификация берётся из Приложения №1. Количество и цена продажи
+                    подставятся автоматически — себестоимость вы заполните на странице проекта.
+                  </p>
+                )}
                 {!kpFile ? (
                   <label
                     htmlFor="kp-file-upload"
@@ -785,11 +877,13 @@ const handleSave = async () => {
                   >
                     <UploadCloud size={20} className="text-muted-foreground" />
                     <span className="text-sm text-muted-foreground">Нажмите, чтобы выбрать файл</span>
-                    <span className="text-xs text-muted-foreground">PDF, DOCX, XLSX до 10 МБ</span>
+                    <span className="text-xs text-muted-foreground">
+                      {isContractMode ? "PDF или DOCX до 10 МБ" : "PDF, DOCX, XLSX до 10 МБ"}
+                    </span>
                     <input
                       id="kp-file-upload"
                       type="file"
-                      accept=".pdf,.doc,.docx,.xls,.xlsx"
+                      accept={isContractMode ? ".pdf,.docx" : ".pdf,.doc,.docx,.xls,.xlsx"}
                       onChange={handleFileChange}
                       className="hidden"
                     />

@@ -28,6 +28,7 @@ type ProjectApiItem = {
   contract_signed?: boolean;
   status_name?: string;
   status?: string | { status_name?: string };
+  is_express?: boolean;
 };
 
 // ИЗМЕНЕНО: шаг бухгалтера убран из цепочки согласования документов —
@@ -68,7 +69,7 @@ export function DocumentsPage({
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [projectQuery, setProjectQuery] = useState("");
-  
+
   // НОВОЕ СОСТОЯНИЕ: Показывать ли завершенные проекты
   const [showAllProjects, setShowAllProjects] = useState(false);
 
@@ -154,6 +155,7 @@ export function DocumentsPage({
             contractSigned:
               item.contract_signed === true ||
               SIGNED_STATUSES.includes(statusName),
+            isExpress: item.is_express === true,
           };
         });
 
@@ -164,7 +166,7 @@ export function DocumentsPage({
           const requestedId = projectId ? String(projectId) : "";
           if (requestedId && normalizedProjects.some((project) => project.id === requestedId)) return requestedId;
           if (currentId && normalizedProjects.some((project) => project.id === currentId)) return currentId;
-          
+
           // При начальной загрузке выбираем первый попавшийся активный проект (если есть).
           // "Договор расторгнут" пропускаем — такие проекты не должны попадать
           // на страницу документов вообще.
@@ -202,9 +204,9 @@ export function DocumentsPage({
           setArchivedKps([]);
           setArchiveError(null);
         }
-        
+
         const data = await fetchProjectDocuments(selectedProjectId);
-        
+
         const kpDocs = data
           .filter((item) => item.category === "kp")
           .map<ProjectDocument>((item) => ({
@@ -236,15 +238,15 @@ export function DocumentsPage({
               backendDocument: apiContract,
             });
           }
-          
+
           const localDocs = documentsStore.getSnapshot(selectedProjectId);
           const otherDocs = data.filter(
-            item => 
-              item.category === "power_of_attorney" || 
+            item =>
+              item.category === "power_of_attorney" ||
               item.category === "waybill" ||
               (item.category === "invoice" && (item.status === "approved" || item.status === "income"))
           );
-          
+
           otherDocs.forEach(apiDoc => {
             const storeId = `backend-${apiDoc.id}`;
             if (!localDocs.some(d => d.id === storeId)) {
@@ -337,6 +339,19 @@ export function DocumentsPage({
   const allDocs = [...archivedKps, ...localDocs.filter((document) => document.category !== "kp")];
   const hasApprovedKp = archivedKps.some((document) => document.status === "approved");
 
+  // ИСПРАВЛЕНО: КП требовалось всегда. У экспресс-проекта («Загрузить
+  // договор») коммерческого предложения не существует: договор подписан
+  // до создания проекта, КП не генерируется и загрузить его на этой
+  // странице неоткуда. Прогресс навсегда застревал на 4/5, а «Завершить
+  // проект» оставалась заблокированной.
+  //
+  // Сделано по образцу invoiceRequired ниже: документ не выбрасывается из
+  // логики, а исключается из обязательных для тех проектов, где его
+  // физически не может быть. Пока список проектов ещё не загружен,
+  // selectedProject === undefined, и КП считается обязательным —
+  // безопасный дефолт, как и у invoiceRequired.
+  const kpRequired = selectedProject?.isExpress !== true;
+
   // Загружать/заменять финальный файл договора может любой, у кого есть
   // доступ к сделке — не только бухгалтер.
   const canUploadContract =
@@ -413,7 +428,7 @@ export function DocumentsPage({
   const contractUploaded = contractDoc?.status === "uploaded";
   const poaUploaded      = poaDocs.some(d => d.status === "uploaded");
   const hasWaybill       = waybillDocs.some(d => d.status === "uploaded");
-  const hasInvoice       = invoiceDocs.some(d => d.status === "uploaded"); 
+  const hasInvoice       = invoiceDocs.some(d => d.status === "uploaded");
 
   // ИСПРАВЛЕНО: requiredDocCount был всегда захардкожен в 5, включая
   // "Счета на оплату" — но если у проекта ВСЕ позиции покрыты складом
@@ -421,9 +436,10 @@ export function DocumentsPage({
   // взяться, документ никогда не появится, и "Завершить проект" был бы
   // заблокирован навсегда. Пока needsProcurement ещё не загружен (null),
   // ведём себя как раньше — требуем 5 (безопасный дефолт).
-  const requiredDocCount = invoiceRequired ? 5 : 4;
+  const requiredDocCount =
+    3 + (invoiceRequired ? 1 : 0) + (kpRequired ? 1 : 0);
   const doneDocCount = [
-    hasApprovedKp,
+    ...(kpRequired ? [hasApprovedKp] : []),
     contractUploaded,
     poaUploaded,
     ...(invoiceRequired ? [hasInvoice] : []),
@@ -446,7 +462,7 @@ export function DocumentsPage({
   const [completing,       setCompleting]       = useState(false);
   const [rejectDraft,      setRejectDraft]      = useState("");
   const [showRejectBox,    setShowRejectBox]    = useState(false);
-  
+
   const poaFileRef = useRef<HTMLInputElement>(null);
   const waybillFileRef = useRef<HTMLInputElement>(null);
   const contractFileRef = useRef<HTMLInputElement>(null);
@@ -480,17 +496,17 @@ export function DocumentsPage({
   };
 
   const handleDocUpload = async (
-    file: File, 
-    category: DocCategory, 
-    prefix: string, 
-    count: number, 
+    file: File,
+    category: DocCategory,
+    prefix: string,
+    count: number,
     setLoading: (v: boolean) => void
   ) => {
     setLoading(true);
     try {
       const docName = `${prefix} ${count + 1}`;
       const uploadedDoc = await uploadProjectDocument(selectedProjectId, category, file, docName);
-      
+
       documentsStore.addDocument(selectedProjectId, {
         id: `backend-${uploadedDoc.id}`,
         name: docName,
@@ -634,11 +650,11 @@ export function DocumentsPage({
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
-    a.href = url; 
+    a.href = url;
     const safeProjectName = selectedProjectName.replace(/[^a-zA-Z0-9а-яА-ЯёЁ _-]/g, "").trim();
     a.download = `${doc.name}_${safeProjectName}.txt`;
-    document.body.appendChild(a); 
-    a.click(); 
+    document.body.appendChild(a);
+    a.click();
     a.remove();
     URL.revokeObjectURL(url);
   };
@@ -702,7 +718,7 @@ export function DocumentsPage({
               className="w-full text-sm outline-none text-foreground placeholder:text-muted-foreground"
             />
           </div>
-          
+
           {/* НОВЫЙ БЛОК С ЧЕКБОКСОМ */}
           <div className="px-3 py-2 border-b border-border bg-background">
             <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
@@ -1138,7 +1154,7 @@ export function DocumentsPage({
                     Отклонено{rejectedBy ? ` (${ROLE_LABEL[rejectedBy]})` : ""}{rejectReason ? `: ${rejectReason}` : ""}. Обновите файлы и отправьте повторно.
                   </p>
                 )}
-                
+
                 {/* ОБНОВЛЕНО: Используем новый тултип и блокируем кнопку */}
                 <AppTooltip text={tooltipReview}>
                   <button

@@ -74,6 +74,7 @@ type ArrivalRow = {
   date: string;
   warehouseName: string;
   supplier: string;
+  sku: string;
   item: string;
   qty: number;
   unit: string;
@@ -202,6 +203,7 @@ function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
     date: item.date ? new Date(item.date).toLocaleDateString("ru-RU") : "—",
     warehouseName: item.warehouse?.name || (item.warehouse_id ? `Склад №${item.warehouse_id}` : "—"),
     supplier: item.supplier?.supplier_name || item.supplier?.name || `Поставщик #${item.supplier_id}`,
+    sku: (item as any).product?.sku || `P-${item.product_id ?? item.id}`,
     item: item.product?.name || `Товар #${item.product_id}`,
     qty: item.quantity,
     unit: item.product?.unit || "шт",
@@ -467,9 +469,28 @@ function ConfirmReceiptModal({
           </div>
 
           <div>
-            <label className="flex items-center gap-2 px-3 py-2 text-sm border border-dashed border-border rounded-lg cursor-pointer hover:bg-background text-muted-foreground">
-              <Camera size={15} className="text-primary" />
-              {photo ? photo.name : "Прикрепить фото товара"}
+            <label className="flex items-center justify-between gap-2 px-3 py-2 text-sm border border-dashed border-border rounded-lg cursor-pointer hover:bg-background text-muted-foreground">
+              <span className="flex items-center gap-2">
+                <Camera size={15} className="text-primary" />
+                {photo ? photo.name : "Прикрепить фото товара"}
+              </span>
+              <span className="flex items-center gap-1.5 shrink-0">
+                <span className="text-[11px] text-muted-foreground/70 italic">необязательно</span>
+                {photo && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setPhoto(null);
+                    }}
+                    title="Убрать фото"
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </span>
               <input
                 type="file"
                 accept="image/*"
@@ -865,11 +886,11 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
 
     if (checkedItems.length === 0) return;
 
-    if (!checkedItems.every((it) => it.warehouseId && it.photo)) {
+    if (!checkedItems.every((it) => it.warehouseId)) {
       setPendingShipments((prev) =>
         prev.map((p) =>
           p.projectId === projectId
-            ? { ...p, error: "Выберите склад и приложите фото для каждой отмеченной позиции" }
+            ? { ...p, error: "Выберите склад для каждой отмеченной позиции" }
             : p
         )
       );
@@ -886,16 +907,19 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
         checkedItems.map((it) => ({ item_id: it.id, warehouse_id: it.warehouseId as number }))
       );
 
-      // Фото — отдельно на каждую отгружаемую позицию.
+      // Фото — отдельно на каждую отгружаемую позицию, но необязательно:
+      // грузим только те позиции, для которых кладовщик реально прикрепил файл.
       // NOTE: uploadShipmentPhoto нужно расширить в api.ts третьим необязательным
       // параметром itemId, чтобы фото сохранялось в shipment_photos с привязкой
       // к project_item_id, а не только к проекту.
       await Promise.all(
-        checkedItems.map((it) =>
-          uploadShipmentPhoto(projectId, it.photo as File, it.id).catch((photoErr) => {
-            console.error(`Не удалось загрузить фото для позиции ${it.id}`, photoErr);
-          })
-        )
+        checkedItems
+          .filter((it) => it.photo)
+          .map((it) =>
+            uploadShipmentPhoto(projectId, it.photo as File, it.id).catch((photoErr) => {
+              console.error(`Не удалось загрузить фото для позиции ${it.id}`, photoErr);
+            })
+          )
       );
 
       const remainingCount = proj.items.length - checkedItems.length;
@@ -978,6 +1002,78 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     } finally {
       setDownloadingChecklistId(null);
     }
+  };
+
+  const handlePrintArrivals = () => {
+    const rows = arrivals
+      .map(
+        (a) => `
+          <tr>
+            <td>${a.project}</td>
+            <td>${a.receiptNumber}</td>
+            <td>${a.date}</td>
+            <td>${a.warehouseName}</td>
+            <td>${a.supplier}</td>
+            <td>${a.sku}</td>
+            <td>${a.item}</td>
+            <td style="text-align:center">${a.qty}</td>
+            <td>${a.unit}</td>
+            <td style="text-align:center">${
+              a.status === "cancelled" ? "Отклонено" : a.status === "arrived" ? "Принято" : "В пути"
+            }</td>
+          </tr>`
+      )
+      .join("");
+
+    const html = `
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Список приходов</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
+            h1 { font-size: 18px; margin-bottom: 4px; }
+            p.meta { font-size: 12px; color: #555; margin-bottom: 16px; }
+            table { width: 100%; border-collapse: collapse; font-size: 12px; }
+            th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
+            th { background: #f2f2f2; text-transform: uppercase; font-size: 10px; }
+          </style>
+        </head>
+        <body>
+          <h1>Список приходов</h1>
+          <p class="meta">Сформировано: ${new Date().toLocaleString("ru-RU")}</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Проект</th>
+                <th>№ Прихода</th>
+                <th>Дата</th>
+                <th>Склад</th>
+                <th>Поставщик</th>
+                <th>Артикул</th>
+                <th>Товар</th>
+                <th>Кол-во</th>
+                <th>Ед.</th>
+                <th>Статус</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </body>
+      </html>`;
+
+    const printWindow = window.open("", "_blank", "width=1000,height=700");
+    if (!printWindow) {
+      alert("Не удалось открыть окно печати. Проверьте, что всплывающие окна разрешены.");
+      return;
+    }
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.onload = () => {
+      printWindow.print();
+    };
   };
 
   const handleToggleCancel = async (receipt: ArrivalRow) => {
@@ -1217,6 +1313,18 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
       )}
 
       {tab === "arrivals" && (
+        <>
+          <div className="flex items-center justify-end mb-4">
+            <button
+              onClick={handlePrintArrivals}
+              disabled={arrivalsLoading || arrivals.length === 0}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-lg border border-border text-foreground hover:bg-background disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <FileText size={14} />
+              Распечатать список
+            </button>
+          </div>
+
         <div className="bg-card rounded-lg border border-border overflow-hidden">
           {arrivalsError && (
             <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-400/15 border-b border-red-200 dark:border-red-400/25">
@@ -1242,6 +1350,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                     <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Когда придет товар</th>
                     <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Склад</th>
                     <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Поставщик</th>
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">Артикул</th>
                     <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Название товара</th>
                     <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Количество</th>
                     <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Ед. изм.</th>
@@ -1277,6 +1386,10 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
 
                         <td className="px-4 py-3.5 text-sm font-medium text-foreground">
                           {a.supplier}
+                        </td>
+
+                        <td className="px-4 py-3.5 text-xs font-mono text-muted-foreground whitespace-nowrap">
+                          {a.sku}
                         </td>
 
                         <td className="px-4 py-3.5 text-sm text-foreground font-medium">
@@ -1374,6 +1487,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
             </div>
           )}
         </div>
+        </>
       )}
 
       {tab === "shipments" && (
@@ -1400,7 +1514,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                 const checkedItems = proj.items.filter((it) => it.checked);
                 const canSubmit =
                   checkedItems.length > 0 &&
-                  checkedItems.every((it) => it.warehouseId && it.photo) &&
+                  checkedItems.every((it) => it.warehouseId) &&
                   !proj.submitting;
 
                 let helperText = "";
@@ -1409,8 +1523,6 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                     helperText = "Отметьте хотя бы одну позицию для отгрузки";
                   } else if (!checkedItems.every((it) => it.warehouseId)) {
                     helperText = "Выберите склад для каждой отмеченной позиции";
-                  } else if (!checkedItems.every((it) => it.photo)) {
-                    helperText = "Прикрепите фото для каждой отмеченной позиции";
                   }
                 }
 
@@ -1503,23 +1615,38 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                               </td>
                               <td className="px-5 py-3">
                                 {isWarehouseUser && it.checked ? (
-                                  <label
-                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-lg cursor-pointer transition-colors ${
-                                      it.photo
-                                        ? "border-green-300 dark:border-green-400/40 bg-green-50 dark:bg-green-400/10 text-green-700 dark:text-green-300"
-                                        : "border-dashed border-border text-muted-foreground hover:bg-background"
-                                    }`}
-                                  >
-                                    {it.photo ? <CheckCircle2 size={13} /> : <Camera size={13} className="text-primary" />}
-                                    <span className="truncate max-w-[110px]">{it.photo ? it.photo.name : "Приложить фото"}</span>
-                                    <input
-                                      type="file"
-                                      accept="image/*"
-                                      className="hidden"
-                                      disabled={proj.submitting}
-                                      onChange={(e) => setShipmentItemPhoto(proj.projectId, it.id, e.target.files?.[0] || null)}
-                                    />
-                                  </label>
+                                  <div className="flex items-center gap-1.5">
+                                    <label
+                                      className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-lg cursor-pointer transition-colors ${
+                                        it.photo
+                                          ? "border-green-300 dark:border-green-400/40 bg-green-50 dark:bg-green-400/10 text-green-700 dark:text-green-300"
+                                          : "border-dashed border-border text-muted-foreground hover:bg-background"
+                                      }`}
+                                    >
+                                      {it.photo ? <CheckCircle2 size={13} /> : <Camera size={13} className="text-primary" />}
+                                      <span className="truncate max-w-[110px]">{it.photo ? it.photo.name : "Приложить фото"}</span>
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        className="hidden"
+                                        disabled={proj.submitting}
+                                        onChange={(e) => setShipmentItemPhoto(proj.projectId, it.id, e.target.files?.[0] || null)}
+                                      />
+                                    </label>
+                                    {it.photo ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => setShipmentItemPhoto(proj.projectId, it.id, null)}
+                                        disabled={proj.submitting}
+                                        title="Убрать фото"
+                                        className="text-muted-foreground hover:text-destructive"
+                                      >
+                                        <X size={13} />
+                                      </button>
+                                    ) : (
+                                      <span className="text-[11px] text-muted-foreground/70 italic whitespace-nowrap">необязательно</span>
+                                    )}
+                                  </div>
                                 ) : (
                                   <span className="text-xs text-muted-foreground/60 italic">—</span>
                                 )}
