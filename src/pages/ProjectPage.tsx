@@ -6,12 +6,15 @@ import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
 import { fmt } from "../lib/format";
 import { INVOICES_INIT } from "../data/invoices";
 import { STOCK_INIT } from "../data/stock";
-import { AlertTriangle, Calculator, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText, ChevronDown, Plus, Pencil, Search } from "lucide-react";
+import { AlertTriangle, Calculator, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText, ChevronDown, Plus, Pencil, Search, Trash2 } from "lucide-react";
 import {
   fetchProjectDetails,
   fetchProjectItems,
   getMlImport,
+  createEmptyMlImport,
   updateMlImportItem,
+  createMlImportItem,
+  deleteMlImportItem,
   createProductForMlImportItem,
   confirmMlImport,
   startProjectEditing,
@@ -30,6 +33,7 @@ import type {
   ProjectItemResponse,
   MlImportDetailResponse,
   MlImportItemResponse,
+  MlImportItemCreate,
   MlImportItemCreateProduct,
   MlImportItemUpdate,
 } from "../api/api";
@@ -307,6 +311,20 @@ export function ProjectPagePM({
   const [liveItemsLoading, setLiveItemsLoading] = useState(false);
   const [liveItemsError, setLiveItemsError] = useState<string | null>(null);
   const [updatingItemId, setUpdatingItemId] = useState<number | null>(null);
+  const [deletingItemId, setDeletingItemId] = useState<number | null>(null);
+  // Ручное добавление позиции в черновик: форма живёт последней строкой
+  // таблицы, дальше строка дозаполняется теми же инлайн-полями, что и
+  // распарсенные — отдельная модалка дублировала бы их без пользы.
+  const [isAddingRow, setIsAddingRow] = useState(false);
+  const [savingNewRow, setSavingNewRow] = useState(false);
+  // Проект, созданный вручную («Пустой проект» на дашборде), приходит без
+  // ML-импорта — файла не было, парсить нечего. Черновик импорта создаётся
+  // лениво, по первому клику «Добавить позицию».
+  const [creatingEmptyImport, setCreatingEmptyImport] = useState(false);
+  const [newRowForm, setNewRowForm] = useState({
+    input_product: "",
+    input_quantity: "1",
+  });
   const [confirmingImport, setConfirmingImport] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isGeneratingKP, setIsGeneratingKP] = useState(false);
@@ -508,6 +526,12 @@ export function ProjectPagePM({
     "Завершен": 9,
   };
 
+  // NEW: экспресс-проект («Загрузить договор» на дашборде). Договор уже
+  // подписан, согласовывать не с кем: этапы КП, Комдира, клиента и
+  // подписания к нему не относятся и в степпере не показываются, а
+  // подтверждение импорта уводит проект сразу в «Активный закуп».
+  const isExpress = project?.is_express === true;
+
   const currentIndex = statusToIndex[currentStatus] ?? 0;
   const isKpApproved = project ? currentIndex >= 3 : projectState.kpApproved;
   const isPendingDirector = currentStatus === "На согласовании у Комдира";
@@ -519,7 +543,7 @@ export function ProjectPagePM({
   // «Ожидание подписания» (index 4), поэтому кнопка больше не нужна.
   const isPastApprovalWindow = project ? currentIndex >= 4 : false;
 
-  const STAGES = [
+  const FULL_STAGES = [
     { label: "Новый", done: currentIndex > 0, active: currentIndex === 0 },
     { label: "В редактировании", done: currentIndex > 1, active: currentIndex === 1 },
     { label: "На согласовании", done: currentIndex > 2, active: currentIndex === 2 },
@@ -531,6 +555,21 @@ export function ProjectPagePM({
     { label: "Ожидание документов", done: currentIndex > 8, active: currentIndex === 8 },
     { label: "Завершен", done: currentIndex === 9, active: currentIndex === 9 },
   ];
+
+  // Экспресс-проект физически не может оказаться в статусах 2-4
+  // (согласование/клиент/подписание): из «В редактировании» переход
+  // EXPRESS_ACTIVATE ведёт сразу в «Активный закуп». Поэтому эти три этапа
+  // из степпера убираются целиком, а не показываются вечно пустыми.
+  const EXPRESS_STAGES = [
+    { label: "Договор загружен", done: currentIndex > 1, active: currentIndex <= 1 },
+    { label: "Активный закуп", done: currentIndex > 5, active: currentIndex === 5 },
+    { label: "На приходе", done: currentIndex > 6, active: currentIndex === 6 },
+    { label: "На отгрузке", done: currentIndex > 7, active: currentIndex === 7 },
+    { label: "Ожидание документов", done: currentIndex > 8, active: currentIndex === 8 },
+    { label: "Завершен", done: currentIndex === 9, active: currentIndex === 9 },
+  ];
+
+  const STAGES = isExpress ? EXPRESS_STAGES : FULL_STAGES;
 
   const title = project?.name ?? "Офисный комплекс «Башня»";
   const subtitle = project
@@ -563,6 +602,122 @@ export function ProjectPagePM({
       setMlImportError(error instanceof Error ? error.message : "Не удалось изменить строку");
     } finally {
       setUpdatingItemId(null);
+    }
+  };
+
+  // Удаление строки черновика. ProjectItem при этом не затрагиваются:
+  // позиции проекта создаются только при подтверждении импорта.
+  const handleMlItemDelete = async (item: MlImportItemResponse) => {
+    if (!mlImport || mlImport.status !== "draft" || item.is_confirmed) return;
+
+    const confirmed = window.confirm(
+      `Удалить строку «${item.input_product}»? Действие нельзя отменить.`,
+    );
+    if (!confirmed) return;
+
+    try {
+      setDeletingItemId(item.id);
+      setMlImportError(null);
+      await deleteMlImportItem(mlImport.id, item.id);
+      setMlImport((current) => {
+        if (!current) return current;
+        return { ...current, items: current.items.filter((row) => row.id !== item.id) };
+      });
+      setOpenVariantPickerId((current) => (current === item.id ? null : current));
+    } catch (error) {
+      setMlImportError(error instanceof Error ? error.message : "Не удалось удалить строку");
+    } finally {
+      setDeletingItemId(null);
+    }
+  };
+
+  // Гарантирует, что у проекта есть черновик ML-импорта: возвращает
+  // существующий либо создаёт пустой. Нужен для проектов, созданных
+  // вручную — у них импорта нет вообще, а вся таблица позиций (включая
+  // подтверждение и перенос в project_items) работает только через него.
+  //
+  // Эндпоинт /ml-imports/empty идемпотентный: повторный вызов вернёт тот
+  // же черновик, поэтому пустой localStorage в другом браузере не приведёт
+  // к появлению второго импорта.
+  const ensureMlImport = async (): Promise<MlImportDetailResponse | null> => {
+    if (mlImport) return mlImport;
+    if (!hasValidProjectId) return null;
+
+    try {
+      setCreatingEmptyImport(true);
+      setMlImportError(null);
+
+      const created = await createEmptyMlImport(Number(resolvedProjectId));
+      const detail = await getMlImport(created.id);
+
+      localStorage.setItem(
+        `project:${resolvedProjectId}:mlImportId`,
+        String(created.id),
+      );
+      setMlImport(detail);
+
+      return detail;
+    } catch (error) {
+      setMlImportError(
+        error instanceof Error
+          ? error.message
+          : "Не удалось создать черновик импорта",
+      );
+      return null;
+    } finally {
+      setCreatingEmptyImport(false);
+    }
+  };
+
+  // Единая точка входа для кнопки «Добавить позицию» — и под таблицей, и в
+  // пустом состоянии. Если импорта ещё нет, он создаётся здесь же.
+  const handleStartAddingRow = async () => {
+    const target = mlImport ?? (await ensureMlImport());
+    if (!target || target.status !== "draft") return;
+
+    setMlImportError(null);
+    setNewRowForm({ input_product: "", input_quantity: "1" });
+    setIsAddingRow(true);
+  };
+
+  // Ручное добавление позиции: backend требует только наименование и
+  // количество, остальное (товар из каталога, поставщик, цены) заполняется
+  // прямо в таблице теми же контролами, что и у распарсенных строк.
+  const handleCreateMlItem = async () => {
+    if (!mlImport || mlImport.status !== "draft") return;
+
+    const inputProduct = newRowForm.input_product.trim();
+    const inputQuantity = Number(newRowForm.input_quantity);
+
+    if (!inputProduct) {
+      setMlImportError("Укажите наименование новой позиции");
+      return;
+    }
+
+    if (!Number.isFinite(inputQuantity) || inputQuantity <= 0) {
+      setMlImportError("Количество новой позиции должно быть больше нуля");
+      return;
+    }
+
+    const payload: MlImportItemCreate = {
+      input_product: inputProduct,
+      input_quantity: Math.trunc(inputQuantity),
+    };
+
+    try {
+      setSavingNewRow(true);
+      setMlImportError(null);
+      const createdItem = await createMlImportItem(mlImport.id, payload);
+      setMlImport((current) => {
+        if (!current) return current;
+        return { ...current, items: [...current.items, createdItem] };
+      });
+      // Форму оставляем открытой: позиции обычно добавляют пачкой.
+      setNewRowForm({ input_product: "", input_quantity: "1" });
+    } catch (error) {
+      setMlImportError(error instanceof Error ? error.message : "Не удалось добавить позицию");
+    } finally {
+      setSavingNewRow(false);
     }
   };
 
@@ -746,11 +901,17 @@ export function ProjectPagePM({
         updatedProject = await refreshProject();
       }
 
-      if (updatedProject.status?.status_name !== "В редактировании") {
+      // Экспресс-проект уходит дальше обычного: confirm на бэкенде помимо
+      // создания позиций выполняет переход EXPRESS_ACTIVATE и оставляет
+      // проект в «Активный закуп». Для него «В редактировании» —
+      // наоборот, признак того, что переход НЕ сработал.
+      const expectedStatus = isExpress ? "Активный закуп" : "В редактировании";
+
+      if (updatedProject.status?.status_name !== expectedStatus) {
         throw new Error(
           `Импорт подтверждён, но проект остался в статусе «${
             updatedProject.status?.status_name || "не задан"
-          }»`,
+          }» вместо «${expectedStatus}»`,
         );
       }
 
@@ -1000,7 +1161,7 @@ export function ProjectPagePM({
           </div>
         </div>
 
-        {showEstimate && <EstimateTable rows={estimateRows}/>} 
+        {showEstimate && <EstimateTable rows={estimateRows}/>}
 
         {sent && !isApproved && (
             <div className="mb-6 rounded-lg border p-5 bg-background border-border">
@@ -1064,13 +1225,23 @@ export function ProjectPagePM({
         <div className="mt-2">
             <div className="flex items-center justify-end gap-4 mb-3">
                 <div className="flex items-center gap-3">
+                  {/* Экспресс-проект: КП генерировать не нужно и согласовывать
+                      не с кем — договор подписан до создания проекта. Вместо
+                      двух кнопок показываем пояснение, чтобы ПМ не искал
+                      привычную «Отправить Комдиру». */}
+                  {isExpress && (
+                    <span className="text-xs text-muted-foreground">
+                      Договор подписан — согласование не требуется
+                    </span>
+                  )}
+
                   {mlImport && !isApproved && !isRejected && (
                     <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${mlImport.status === "confirmed" ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200"}`}>
                       {mlImport.status === "confirmed" ? "Подтверждено" : "Черновик"}
                     </span>
                   )}
 
-                  {!isPastApprovalWindow && (
+                  {!isPastApprovalWindow && !isExpress && (
                     <AppTooltip text={
                       !mlImport || mlImport.status !== "confirmed"
                         ? "Сначала подтвердите импорт товаров"
@@ -1093,6 +1264,7 @@ export function ProjectPagePM({
                     </AppTooltip>
                   )}
 
+                  {!isExpress && (
                   <AppTooltip text={
                     !mlImport ? "Сначала подтвердите импорт товаров" :
                     mlImport.status !== "confirmed" ? (isRejected ? "Сначала подтвердите изменённый импорт товаров" : "Сначала подтвердите импорт товаров") :
@@ -1117,6 +1289,7 @@ export function ProjectPagePM({
                               <><Send size={14}/>Отправить Комдиру</>}
                     </button>
                   </AppTooltip>
+                  )}
                 </div>
             </div>
 
@@ -1147,8 +1320,26 @@ export function ProjectPagePM({
                 <p className="text-sm text-muted-foreground">Загружаем результаты ML…</p>
               </div>
             ) : !mlImport ? (
+              // Проект создан вручную либо импорт ещё не заводился —
+              // вместо тупика даём сразу добавить позицию: черновик
+              // импорта создастся по клику.
               <div className="bg-card rounded-lg border border-border px-4 py-10 text-center">
-                <p className="text-sm text-muted-foreground">Для этого проекта ML-импорт пока не найден</p>
+                <p className="text-sm text-muted-foreground">
+                  В проекте пока нет позиций — добавьте их вручную.
+                </p>
+                <button
+                    type="button"
+                    onClick={handleStartAddingRow}
+                    disabled={creatingEmptyImport}
+                    className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-primary border border-dashed border-input rounded-lg hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {creatingEmptyImport ? (
+                    <Loader2 size={15} className="animate-spin"/>
+                  ) : (
+                    <Plus size={15}/>
+                  )}
+                  {creatingEmptyImport ? "Подготовка…" : "Добавить позицию"}
+                </button>
               </div>
             ) : (
               <>
@@ -1241,17 +1432,20 @@ export function ProjectPagePM({
                   <table className="w-full min-w-[1950px] border-collapse">
                     <thead>
                       <tr className="border-b border-border bg-background/60">
-                        {["№", "Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Поставщик", "Себестоимость", "Цена", "Сумма", "Маржа", "Доступно", "Комментарий", "Статус"].map((heading) => (
-                          <th key={heading} className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{heading}</th>
+                        {["№", "Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Поставщик", "Себестоимость", "Цена", "Сумма", "Маржа", "Доступно", "Комментарий", "Статус", ""].map((heading, headingIndex) => (
+                          <th key={heading || `actions-${headingIndex}`} className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{heading}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {mlImport.items.length === 0 ? (
-                        <tr><td colSpan={13} className="px-4 py-10 text-center text-sm text-muted-foreground">В ML-импорте нет товаров</td></tr>
-                      ) : (
-                        mlImport.items.map((item, index) => {
+                      {mlImport.items.length === 0 && !isAddingRow && (
+                        <tr><td colSpan={14} className="px-4 py-10 text-center text-sm text-muted-foreground">В ML-импорте нет товаров</td></tr>
+                      )}
+                      {mlImport.items.map((item, index) => {
                           const isUpdating = updatingItemId === item.id;
+                          const isDeleting = deletingItemId === item.id;
+                          const canDeleteRow =
+                            mlImport.status === "draft" && !item.is_confirmed;
                           const priceCost = Number(item.price_cost ?? 0);
                           const price = Number(item.price ?? 0);
                           const totalAmount = Number(item.total_amount ?? 0);
@@ -1277,7 +1471,7 @@ export function ProjectPagePM({
                             : UNKNOWN_ML_STATUS_STYLE;
 
                           return (
-                              <tr key={item.id} className={`transition-colors ${statusStyle.row}`}>
+                              <tr key={item.id} className={`transition-colors ${statusStyle.row} ${isDeleting ? "opacity-50" : ""}`}>
                                 <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
                                 <td className="px-4 py-3"><p
                                     className="text-sm font-medium text-foreground">{item.input_product}</p></td>
@@ -1602,13 +1796,129 @@ export function ProjectPagePM({
                                       </div>
                                   )}
                                 </td>
+                                <td className="px-4 py-3">
+                                  {canDeleteRow && (
+                                    <AppTooltip text="Удалить строку из импорта">
+                                      <button
+                                          type="button"
+                                          onClick={() => handleMlItemDelete(item)}
+                                          disabled={isDeleting || isUpdating}
+                                          aria-label={`Удалить строку ${item.input_product}`}
+                                          className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground hover:bg-red-50 dark:hover:bg-red-400/15 hover:text-red-700 dark:hover:text-red-300 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                                      >
+                                        {isDeleting ? (
+                                          <Loader2 size={15} className="animate-spin"/>
+                                        ) : (
+                                          <Trash2 size={15}/>
+                                        )}
+                                      </button>
+                                    </AppTooltip>
+                                  )}
+                                </td>
                               </tr>
                           );
-                        })
+                        })}
+
+                      {isAddingRow && mlImport.status === "draft" && (
+                        <tr className="bg-blue-50/60 dark:bg-blue-400/10">
+                          <td className="px-4 py-3 text-sm font-mono text-muted-foreground">
+                            {mlImport.items.length + 1}
+                          </td>
+                          <td className="px-4 py-3">
+                            <input
+                                type="text"
+                                autoFocus
+                                maxLength={1000}
+                                disabled={savingNewRow}
+                                value={newRowForm.input_product}
+                                placeholder="Наименование позиции"
+                                onChange={(event) => setNewRowForm((current) => ({
+                                  ...current,
+                                  input_product: event.target.value,
+                                }))}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    handleCreateMlItem();
+                                  }
+                                  if (event.key === "Escape") setIsAddingRow(false);
+                                }}
+                                className="w-64 px-2 py-1.5 text-sm border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <input
+                                type="number"
+                                min={1}
+                                step="1"
+                                disabled={savingNewRow}
+                                value={newRowForm.input_quantity}
+                                onChange={(event) => setNewRowForm((current) => ({
+                                  ...current,
+                                  input_quantity: event.target.value,
+                                }))}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    handleCreateMlItem();
+                                  }
+                                  if (event.key === "Escape") setIsAddingRow(false);
+                                }}
+                                className="w-24 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
+                            />
+                          </td>
+                          <td colSpan={10} className="px-4 py-3 text-xs text-muted-foreground">
+                            Товар из каталога, поставщика и цены укажите в самой строке
+                            после её создания.
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                  type="button"
+                                  onClick={handleCreateMlItem}
+                                  disabled={savingNewRow}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:bg-slate-200 disabled:text-muted-foreground disabled:cursor-not-allowed"
+                              >
+                                {savingNewRow ? (
+                                  <>
+                                    <Loader2 size={13} className="animate-spin"/>
+                                    Сохранение…
+                                  </>
+                                ) : (
+                                  <>
+                                    <Check size={13}/>
+                                    Сохранить
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                  type="button"
+                                  onClick={() => setIsAddingRow(false)}
+                                  disabled={savingNewRow}
+                                  className="rounded-md p-1.5 text-muted-foreground hover:bg-muted transition-colors disabled:cursor-not-allowed"
+                                  aria-label="Отменить добавление позиции"
+                              >
+                                <XCircle size={16}/>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
                       )}
                     </tbody>
                   </table>
                 </div>
+
+                {mlImport.status === "draft" && !isAddingRow && (
+                  <button
+                      type="button"
+                      onClick={handleStartAddingRow}
+                      disabled={creatingEmptyImport}
+                      className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-primary border border-dashed border-input rounded-lg hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Plus size={15}/>
+                    Добавить позицию
+                  </button>
+                )}
 
                 <div className="flex items-center justify-between gap-4 mt-4">
                   <div className="min-w-0">
@@ -1645,12 +1955,12 @@ export function ProjectPagePM({
                       ) : mlImport.status === "confirmed" ? (
                           <>
                             <CheckCircle2 size={15}/>
-                            Импорт подтверждён
+                            {isExpress ? "Отправлено в закуп" : "Импорт подтверждён"}
                           </>
                       ) : (
                           <>
                             <Check size={15}/>
-                            Подтвердить импорт
+                            {isExpress ? "Подтвердить и отправить в закуп" : "Подтвердить импорт"}
                           </>
                       )}
                     </button>

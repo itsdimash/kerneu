@@ -72,6 +72,12 @@ export interface ProjectResponse {
   deadline?: string;
   contract_number?: string;
   created_at?: string;
+  /**
+   * Экспресс-проект, созданный кнопкой «Загрузить договор» на дашборде:
+   * договор уже подписан, согласовывать не с кем. По этому флагу ProjectPage
+   * прячет блоки КП и согласования и показывает короткий степпер.
+   */
+  is_express?: boolean;
 }
 
 const API_BASE = "/api/v1";
@@ -184,6 +190,21 @@ export interface MlImportItemCreateProduct {
   price: number;
 }
 
+// Ручное добавление строки в черновик импорта. Обязательны только
+// наименование и количество — остальное дозаполняется инлайн-полями
+// таблицы, как у распарсенных строк.
+export interface MlImportItemCreate {
+  input_product: string;
+  input_quantity: number;
+
+  selected_product_id?: number | null;
+  unit?: string | null;
+  supplier_name?: string | null;
+  price_cost?: number | null;
+  price?: number | null;
+  user_comment?: string | null;
+}
+
 export async function createMlImport(
   projectId: number,
   file: File,
@@ -204,6 +225,29 @@ export async function createMlImport(
   );
 
   return data;
+}
+
+// Пустой черновик импорта для проекта, созданного вручную (кнопка
+// «Пустой проект» на дашборде): файла не было, парсер не отрабатывал,
+// поэтому ML-импорта не существует. Создаётся лениво — в момент, когда ПМ
+// впервые жмёт «Добавить позицию» на странице проекта.
+//
+// Эндпоинт идемпотентный: если у проекта уже есть черновик импорта,
+// backend возвращает его, а не создаёт второй (иначе открытие проекта в
+// другом браузере, где localStorage пуст, плодило бы дубликаты).
+export async function createEmptyMlImport(
+  projectId: number,
+): Promise<MlImportCreateResponse> {
+  try {
+    const { data } = await api.post<MlImportCreateResponse>(
+      "/ml-imports/empty",
+      { project_id: projectId },
+    );
+
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось создать черновик импорта");
+  }
 }
 
 export async function getMlImport(
@@ -229,6 +273,21 @@ export async function updateMlImportItem(
   return data;
 }
 
+// Backend отдаёт понятную человеку причину в detail (строкой). Без этой
+// распаковки пользователь видел бы "Request failed with status code 409".
+function throwWithDetail(error: unknown, fallback: string): never {
+  if (axios.isAxiosError(error)) {
+    const detail = error.response?.data?.detail;
+    if (typeof detail === "string" && detail.trim()) {
+      throw new Error(detail);
+    }
+  }
+
+  if (error instanceof Error) throw error;
+
+  throw new Error(fallback);
+}
+
 export async function createProductForMlImportItem(
   importId: number,
   itemId: number,
@@ -242,14 +301,34 @@ export async function createProductForMlImportItem(
 
     return data;
   } catch (error) {
-    if (axios.isAxiosError(error)) {
-      const detail = error.response?.data?.detail;
-      if (typeof detail === "string" && detail.trim()) {
-        throw new Error(detail);
-      }
-    }
+    throwWithDetail(error, "Не удалось создать товар");
+  }
+}
 
-    throw error;
+export async function createMlImportItem(
+  importId: number,
+  payload: MlImportItemCreate,
+): Promise<MlImportItemResponse> {
+  try {
+    const { data } = await api.post<MlImportItemResponse>(
+      `/ml-imports/${importId}/items`,
+      payload,
+    );
+
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось добавить позицию");
+  }
+}
+
+export async function deleteMlImportItem(
+  importId: number,
+  itemId: number,
+): Promise<void> {
+  try {
+    await api.delete(`/ml-imports/${importId}/items/${itemId}`);
+  } catch (error) {
+    throwWithDetail(error, "Не удалось удалить позицию");
   }
 }
 
@@ -285,6 +364,34 @@ export async function startParseJob(
 
   const { data } = await api.post<StartParseJobResponse>(
     `/parser/projects/${projectId}/parse`,
+    formData,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
+
+  return data;
+}
+
+/**
+ * Экспресс-поток: загрузка подписанного договора.
+ *
+ * Отличается от startParseJob не только адресом: договор разбирает отдельный
+ * парсер, который достаёт из Приложения №1 зафиксированную цену продажи,
+ * поэтому позиции приходят с уже заполненными ценами. Промежуточный Excel не
+ * создаётся, так что у такой задачи нет result_path и скачать результат
+ * файлом (downloadParseResult) нельзя.
+ *
+ * Принимаются только .pdf и .docx — .xlsx среди подписанных договоров
+ * не встречается.
+ */
+export async function startContractParseJob(
+  projectId: number,
+  file: File,
+): Promise<StartParseJobResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const { data } = await api.post<StartParseJobResponse>(
+    `/parser/projects/${projectId}/parse-contract`,
     formData,
     { headers: { "Content-Type": "multipart/form-data" } },
   );
@@ -601,10 +708,10 @@ export const downloadProjectExcel = async (projectId: number): Promise<void> => 
     responseType: 'blob',
   });
 
-  const blob = new Blob([response.data], { 
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+  const blob = new Blob([response.data], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
   });
-  
+
   const url = window.URL.createObjectURL(blob);
 
   let filename = `Утверждено_Проект_${projectId}.xlsx`;
@@ -618,7 +725,7 @@ export const downloadProjectExcel = async (projectId: number): Promise<void> => 
   link.setAttribute('download', filename);
   document.body.appendChild(link);
   link.click();
-  
+
   link.remove();
   window.URL.revokeObjectURL(url);
 };
@@ -629,10 +736,10 @@ export const downloadKpDocument = async (projectId: number): Promise<void> => {
     responseType: 'blob',
   });
 
-  const blob = new Blob([response.data], { 
-    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
+  const blob = new Blob([response.data], {
+    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
   });
-  
+
   const url = window.URL.createObjectURL(blob);
 
   let filename = `KP_Project_${projectId}.docx`;
@@ -651,7 +758,7 @@ export const downloadKpDocument = async (projectId: number): Promise<void> => {
   link.setAttribute('download', filename);
   document.body.appendChild(link);
   link.click();
-  
+
   link.remove();
   window.URL.revokeObjectURL(url);
 };
@@ -1057,7 +1164,7 @@ export interface ContractGenerateRequest {
   shipment_method?: "pickup" | "delivery";
   pickup_address?: string;
 }
- 
+
 const FIELD_LABELS: Record<string, string> = {
   contract_number: "Номер договора",
   buyer_company_name: "Название компании",
@@ -1070,10 +1177,10 @@ const FIELD_LABELS: Record<string, string> = {
   contract_valid_until: "Действует до",
   project_id: "Проект",
 };
- 
+
 function friendlyErrorFromDetail(detail: unknown): string | null {
   if (typeof detail === "string") return detail;
- 
+
   if (Array.isArray(detail) && detail.length > 0) {
     const fieldNames = detail
       .map((item) => {
@@ -1082,20 +1189,20 @@ function friendlyErrorFromDetail(detail: unknown): string | null {
         return (fieldKey && FIELD_LABELS[fieldKey]) || fieldKey;
       })
       .filter(Boolean);
- 
+
     return fieldNames.length > 0
       ? `Заполните все обязательные поля: ${[...new Set(fieldNames)].join(", ")}`
       : "Заполните все обязательные поля корректно";
   }
- 
+
   return null;
 }
- 
+
 export const generateContract = async (
   payload: ContractGenerateRequest,
 ): Promise<void> => {
   let response;
- 
+
   try {
     response = await api.post("/contracts/generate", payload, {
       responseType: "blob",
@@ -1115,17 +1222,17 @@ export const generateContract = async (
     }
     throw error instanceof Error ? error : new Error("Не удалось сгенерировать договор");
   }
- 
+
   const blob = new Blob([response.data], {
     type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   });
- 
+
   let filename = `Договор_${payload.contract_number}.docx`;
   const disposition = response.headers["content-disposition"];
   if (disposition && disposition.includes("filename*=UTF-8''")) {
     filename = decodeURIComponent(disposition.split("filename*=UTF-8''")[1]);
   }
- 
+
   const url = window.URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -1135,7 +1242,7 @@ export const generateContract = async (
   link.remove();
   window.URL.revokeObjectURL(url);
 };
- 
+
 export const markContractUploaded = async (
   projectId: string | number,
 ): Promise<void> => {
