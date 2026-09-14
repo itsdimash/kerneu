@@ -1492,9 +1492,22 @@ export function ProjectPagePM({
                                       // фильтровался ТОЛЬКО по similar_variants —
                                       // а он пуст у "Возможное совпадение", отчего
                                       // список всегда был пустым.
+                                      //
+                                      // ДОБАВЛЕНО: item.input_product. Для строк,
+                                      // добавленных вручную кнопкой «Добавить
+                                      // позицию», ML не запускался — matched_product
+                                      // и similar_variants всегда пустые
+                                      // (add_ml_import_item на бэкенде не делает
+                                      // сопоставление, если selected_product_id не
+                                      // передан). Введённое пользователем название —
+                                      // единственный доступный текст для сравнения
+                                      // с каталогом, а раньше он в suggestionLabels
+                                      // не попадал вовсе, поэтому список подсказок
+                                      // для новых строк был всегда пуст.
                                       const suggestionLabels = [
                                         ...getSimilarVariantLabels(item),
                                         item.matched_product?.trim() ?? "",
+                                        item.input_product?.trim() ?? "",
                                       ].filter(Boolean);
 
                                       const suggested = productCatalog.filter((product) =>
