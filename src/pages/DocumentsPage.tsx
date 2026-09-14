@@ -584,6 +584,45 @@ export function DocumentsPage({
     }
   };
 
+  // «Без договора» — для сделок, где договора физически не будет (или он не
+  // нужен), но процесс не должен вечно стоять на месте из-за
+  // uploadsLocked/doneDocCount, которые смотрят на contractDoc.status ===
+  // "uploaded". Вместо отдельной ветки на бэкенде (нового статуса документа,
+  // нового флага у проекта и т.д.) переиспользуем ровно тот же путь, что и
+  // handleContractUpload — с синтетическим текстовым файлом вместо
+  // выбранного пользователем. Для всей остальной системы (архив документов,
+  // прогресс, разблокировка загрузок) это неотличимо от настоящей загрузки.
+  const handleSkipContract = async () => {
+    if (!selectedProjectId) return;
+    setUploadingContract(true);
+    try {
+      const placeholderFile = new File(
+        ["Договор не требуется — отмечено вручную, без загрузки файла."],
+        "bez-dogovora.txt",
+        { type: "text/plain" },
+      );
+      const uploadedDoc = await uploadProjectDocument(selectedProjectId, "contract", placeholderFile, "Без договора");
+
+      documentsStore.updateDocument(selectedProjectId, `${selectedProjectId}-contract`, {
+        status: "uploaded",
+        date: today(),
+        fileName: uploadedDoc.file_name ?? placeholderFile.name,
+        backendDocument: uploadedDoc,
+      });
+
+      try {
+        await markContractUploaded(selectedProjectId);
+      } catch (statusError) {
+        console.error("Не удалось обновить статус проекта после отметки «без договора»:", statusError);
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Не удалось отметить проект как «без договора». Попробуйте еще раз.");
+    } finally {
+      setUploadingContract(false);
+    }
+  };
+
   const handleSubmitForReview = async () => {
     setSubmittingReview(true);
     try {
@@ -820,7 +859,7 @@ export function DocumentsPage({
               <p className="text-xs text-muted-foreground">
                 {contractUploaded
                   ? `Загружен · ${contractDoc?.date || "—"}`
-                  : "Сгенерируйте на странице «Договор», проверьте и загрузите готовый файл сюда."}
+                  : "Сгенерируйте на странице «Договор», проверьте и загрузите готовый файл сюда — либо отметьте «Без договора», если файла не будет."}
               </p>
             </div>
           </div>
@@ -831,6 +870,22 @@ export function DocumentsPage({
                 <CheckCircle2 size={13} className="text-green-600 dark:text-green-400" />
                 <span className="text-xs font-medium text-green-700 dark:text-green-300">Загружен</span>
               </span>
+            )}
+
+            {/* «Без договора» — только пока договора ещё нет и его вообще
+                можно пропустить. После загрузки (настоящей или через эту же
+                кнопку) остаётся один путь — «Заменить файл». */}
+            {!completed && !contractUploaded && (
+              <button
+                onClick={() => !uploadingContract && handleSkipContract()}
+                disabled={uploadingContract}
+                className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex-shrink-0 bg-card text-foreground border border-border hover:bg-background cursor-pointer ${
+                  uploadingContract ? "opacity-60 cursor-wait" : ""
+                }`}
+              >
+                <X size={13} />
+                Без договора
+              </button>
             )}
 
             {!completed && (
