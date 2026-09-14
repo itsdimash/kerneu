@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as XLSX from "xlsx";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Sparkles,
   Search,
@@ -96,6 +98,21 @@ interface AiSession {
 
 const TYPEWRITER_TICK_MS = 15;
 const TYPEWRITER_TOTAL_TICKS = 120;
+// Потолок высоты поля ввода (px) — после него появляется внутренний скролл,
+// как в textarea Claude/ChatGPT, чтобы длинный текст не растягивал поле
+// на весь экран.
+const INPUT_MAX_HEIGHT_PX = 200;
+// Диапазон ширины колонки чата (px). Раньше она была захардкожена через
+// Tailwind-класс max-w-3xl (= 768px всегда) — при сворачивании ЛЮБОГО
+// сайдбара (истории чата или общего меню приложения) освобождалось место,
+// но колонка просто перецентровывалась в той же ширине вместо того, чтобы
+// её занять. MIN — комфортная ширина для чтения на узком экране,
+// MAX — потолок, чтобы строки не становились нечитаемо длинными на широком.
+const CHAT_COLUMN_MIN_WIDTH_PX = 640;
+const CHAT_COLUMN_MAX_WIDTH_PX = 1100;
+// Отступы по бокам колонки (px-6 с каждой стороны у родителя) — вычитаем
+// их из измеренной ширины, чтобы max-width не упирался вплотную в край.
+const CHAT_COLUMN_SIDE_PADDING_PX = 48;
 
 const ROLE_LABELS: Record<Role, string> = {
   admin: "Администратор",
@@ -194,6 +211,81 @@ function AiResultTable({ rows, role }: { rows: AiTableRow[]; role: Role }) {
   );
 }
 
+// Ответы ассистента приходят как markdown (заголовки, **жирный**, списки,
+// таблицы) — модели пишут именно в этом формате естественно, обрезать это
+// в промпте ненадёжно (см. историю с колонками в _strip_hidden_columns).
+// Проще и правильнее отрендерить markdown на фронте, чем бороться с
+// форматированием на бэкенде. Стили — вручную под существующие CSS-токены
+// приложения (text-foreground/bg-muted/border-border), а не библиотечный
+// @tailwindcss/typography, который не знает про эти переменные.
+function AiMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        p: ({ children }) => (
+          <p className="mb-2 text-[13.5px] leading-relaxed text-foreground last:mb-0">{children}</p>
+        ),
+        h1: ({ children }) => (
+          <h1 className="mb-2 mt-3 text-[15px] font-semibold text-foreground first:mt-0">{children}</h1>
+        ),
+        h2: ({ children }) => (
+          <h2 className="mb-2 mt-3 text-[14px] font-semibold text-foreground first:mt-0">{children}</h2>
+        ),
+        h3: ({ children }) => (
+          <h3 className="mb-1.5 mt-2.5 text-[13.5px] font-semibold text-foreground first:mt-0">{children}</h3>
+        ),
+        strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+        em: ({ children }) => <em className="italic">{children}</em>,
+        ul: ({ children }) => (
+          <ul className="mb-2 ml-4 list-disc space-y-1 text-[13.5px] text-foreground">{children}</ul>
+        ),
+        ol: ({ children }) => (
+          <ol className="mb-2 ml-4 list-decimal space-y-1 text-[13.5px] text-foreground">{children}</ol>
+        ),
+        li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+        a: ({ children, href }) => (
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary underline underline-offset-2 hover:opacity-80"
+          >
+            {children}
+          </a>
+        ),
+        code: ({ children, className }) => {
+          const isBlock = Boolean(className?.includes("language-")) || String(children).includes("\n");
+          return isBlock ? (
+            <code className="block whitespace-pre-wrap text-[12.5px] text-foreground">{children}</code>
+          ) : (
+            <code className="rounded bg-muted px-1 py-0.5 text-[12.5px] text-foreground">{children}</code>
+          );
+        },
+        pre: ({ children }) => (
+          <pre className="mb-2 overflow-x-auto rounded-lg bg-muted p-3 text-[12.5px]">{children}</pre>
+        ),
+        blockquote: ({ children }) => (
+          <blockquote className="mb-2 border-l-2 border-border pl-3 text-muted-foreground">{children}</blockquote>
+        ),
+        table: ({ children }) => (
+          <div className="mb-2 overflow-hidden rounded-lg border border-border">
+            <table className="w-full text-left text-[12.5px]">{children}</table>
+          </div>
+        ),
+        thead: ({ children }) => <thead className="bg-muted">{children}</thead>,
+        th: ({ children }) => (
+          <th className="px-3 py-2 font-medium text-muted-foreground">{children}</th>
+        ),
+        td: ({ children }) => <td className="px-3 py-2 text-foreground">{children}</td>,
+        hr: () => <hr className="my-3 border-border" />,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+}
+
 export function AiChatPage({ role }: { role: Role }) {
   const [sessions, setSessions] = useState<AiSession[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
@@ -220,6 +312,43 @@ export function AiChatPage({ role }: { role: Role }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typewriterTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const mainColumnRef = useRef<HTMLDivElement>(null);
+  const [chatColumnMaxWidth, setChatColumnMaxWidth] = useState(768); // 768 = старый max-w-3xl, как разумный фолбэк до первого замера
+
+  // Ширина колонки чата подстраивается под реально свободное место, а не
+  // под захардкоженный Tailwind-брейкпоинт (тот реагирует на ширину окна
+  // браузера, а не на то, что внутри страницы свернули сайдбар). ResizeObserver
+  // на главной колонке видит изменение её box-size от ЛЮБОЙ причины —
+  // сворачивания истории чата (isHistoryCollapsed, стейт этого компонента)
+  // или общего сайдбара приложения (AppShell, вне этого компонента) — без
+  // необходимости прокидывать их состояние сюда явно.
+  useEffect(() => {
+    const el = mainColumnRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const available = entries[0]?.contentRect.width ?? 0;
+      const next = Math.min(
+        CHAT_COLUMN_MAX_WIDTH_PX,
+        Math.max(CHAT_COLUMN_MIN_WIDTH_PX, available - CHAT_COLUMN_SIDE_PADDING_PX),
+      );
+      setChatColumnMaxWidth(next);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Авто-рост поля ввода под контент, как в Claude/ChatGPT: сбрасываем
+  // высоту в "auto", чтобы scrollHeight пересчитался с нуля (иначе он
+  // застревает на максимуме предыдущего кадра и не даёт полю сжаться
+  // обратно при удалении текста), затем ставим её по контенту с потолком
+  // INPUT_MAX_HEIGHT_PX — после него появляется внутренний скролл textarea.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, INPUT_MAX_HEIGHT_PX)}px`;
+  }, [input]);
 
   const loadSessions = async () => {
     setIsLoadingSessions(true);
@@ -550,11 +679,12 @@ export function AiChatPage({ role }: { role: Role }) {
     }
   };
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter") {
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void sendMessage();
     }
+    // Enter+Shift — обычный перенос строки, отдаём браузеру по умолчанию.
   };
 
   const filteredSessions = sessions.filter((s) =>
@@ -662,7 +792,7 @@ export function AiChatPage({ role }: { role: Role }) {
       )}
 
       {/* Основная колонка */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div ref={mainColumnRef} className="flex min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center justify-between border-b border-border bg-card px-6 py-3.5">
           <div className="flex min-w-0 items-center gap-2">
             {isHistoryCollapsed && (
@@ -698,7 +828,7 @@ export function AiChatPage({ role }: { role: Role }) {
               </p>
             </div>
           ) : (
-            <div className="mx-auto flex max-w-3xl flex-col gap-5">
+            <div className="mx-auto flex flex-col gap-5" style={{ maxWidth: chatColumnMaxWidth }}>
               {messages.map((message, index) => {
                 if (message.role === "user") {
                   return (
@@ -733,9 +863,9 @@ export function AiChatPage({ role }: { role: Role }) {
                         )}
                       </div>
 
-                      <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground">
-                        {message.displayedContent}
-                      </p>
+                      <div className="text-[13.5px] leading-relaxed text-foreground">
+                        <AiMarkdown content={message.displayedContent} />
+                      </div>
 
                       {message.table && message.table.length > 0 && (
                         <AiResultTable rows={message.table} role={role} />
@@ -794,7 +924,7 @@ export function AiChatPage({ role }: { role: Role }) {
           />
 
           {attachedItems.length > 0 && (
-            <div className="mx-auto mb-2 flex max-w-3xl flex-wrap items-center gap-2">
+            <div className="mx-auto mb-2 flex flex-wrap items-center gap-2" style={{ maxWidth: chatColumnMaxWidth }}>
               {attachedItems.map((item, index) =>
                 item.kind === "document" ? (
                   <div
@@ -843,10 +973,10 @@ export function AiChatPage({ role }: { role: Role }) {
           )}
 
           {uploadError && (
-            <p className="mx-auto mb-2 max-w-3xl text-[12px] text-destructive">{uploadError}</p>
+            <p className="mx-auto mb-2 text-[12px] text-destructive" style={{ maxWidth: chatColumnMaxWidth }}>{uploadError}</p>
           )}
 
-          <div className="mx-auto flex max-w-3xl items-center gap-2 rounded-xl border border-border bg-background px-3 py-2">
+          <div className="mx-auto flex items-end gap-2 rounded-xl border border-border bg-background px-3 py-2" style={{ maxWidth: chatColumnMaxWidth }}>
             <button
               type="button"
               onClick={handleAttachClick}
@@ -856,7 +986,8 @@ export function AiChatPage({ role }: { role: Role }) {
             >
               <Paperclip size={16} />
             </button>
-            <input
+            <textarea
+              ref={textareaRef}
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={handleKeyDown}
@@ -866,7 +997,9 @@ export function AiChatPage({ role }: { role: Role }) {
                   : "Спросите что угодно — данные компании, перевод, резюме документа…"
               }
               disabled={isUploadingDocument}
-              className="min-w-0 flex-1 bg-transparent text-[13.5px] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
+              rows={1}
+              style={{ maxHeight: `${INPUT_MAX_HEIGHT_PX}px` }}
+              className="min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-1 text-[13.5px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
             />
             <button
               type="button"
@@ -879,7 +1012,7 @@ export function AiChatPage({ role }: { role: Role }) {
               <Send size={15} />
             </button>
           </div>
-          <div className="mx-auto mt-2 flex max-w-3xl items-center justify-between gap-3">
+          <div className="mx-auto mt-2 flex items-center justify-between gap-3" style={{ maxWidth: chatColumnMaxWidth }}>
             <p className="text-[11px] text-muted-foreground">
               Данные компании — в рамках вашей роли, остальное — без ограничений
             </p>
