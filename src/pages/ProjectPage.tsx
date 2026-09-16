@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
+import axios from "axios";
 import type { Role, Page, ProjectState, Receipt } from "../types";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { Chip } from "../app/components/common/Chip";
@@ -358,6 +360,12 @@ export function ProjectPagePM({
   const [productCatalog, setProductCatalog] = useState<CatalogProduct[]>([]);
   const [productCatalogLoading, setProductCatalogLoading] = useState(false);
   const [openVariantPickerId, setOpenVariantPickerId] = useState<number | null>(null);
+  // Выпадашка выбора товара рендерится порталом в <body> (см. ниже), а не
+  // внутри таблицы — контейнер таблицы имеет overflow-x-auto, а CSS в этом
+  // случае автоматически делает overflow-y тоже обрезающим, из-за чего
+  // список обрезался снизу и требовал скролла внутри крошечной области.
+  // Позиция считается от кнопки-триггера в момент открытия.
+  const [pickerPosition, setPickerPosition] = useState<{ top: number; left: number; width: number } | null>(null);
   const [productSearch, setProductSearch] = useState("");
 
   const resolvedProjectId = projectId; // Let it be a string or a number!
@@ -411,8 +419,21 @@ export function ProjectPagePM({
       })
       .catch((error) => {
         if (cancelled) return;
+
+        // ИЗМЕНЕНО: связка project_id → mlImportId в localStorage может
+        // протухнуть — импорт удалили на бэкенде (сброс тестовой БД, ручная
+        // чистка) или проект переиспользовал чужой id. Раньше это навсегда
+        // блокировало страницу ошибкой "не найден". Забываем протухшую
+        // запись и ведём себя так, будто у проекта ещё нет импорта — как
+        // и для настоящего нового проекта: черновик заведётся лениво по
+        // первому клику «Добавить позицию» через ensureMlImport.
+        const isStaleReference =
+          (axios.isAxiosError(error) && error.response?.status === 404) ||
+          (error instanceof Error && error.message.includes("относится к проекту"));
+
+        localStorage.removeItem(storageKey);
         setMlImport(null);
-        setMlImportError(error instanceof Error ? error.message : "Не удалось загрузить ML-импорт");
+        setMlImportError(isStaleReference ? null : (error instanceof Error ? error.message : "Не удалось загрузить ML-импорт"));
       })
       .finally(() => { if (!cancelled) setMlImportLoading(false); });
     return () => { cancelled = true; };
@@ -532,6 +553,14 @@ export function ProjectPagePM({
   // подтверждение импорта уводит проект сразу в «Активный закуп».
   const isExpress = project?.is_express === true;
 
+  // NEW: «Заявка на склад» (кнопка на дашборде создаёт проект вручную, без
+  // файла). Единственный надёжный признак с бэкенда — source_file_name
+  // ml_import'а: /ml-imports/empty всегда проставляет туда константу
+  // MANUAL_IMPORT_SOURCE_NAME (см. ml_import_service.py). modalMode на
+  // дашборде для этого не годится — он не переживает переход на страницу
+  // проекта и тем более перезагрузку.
+  const isWarehouseRequest = mlImport?.source_file_name === "Добавлено вручную";
+
   const currentIndex = statusToIndex[currentStatus] ?? 0;
   const isKpApproved = project ? currentIndex >= 3 : projectState.kpApproved;
   const isPendingDirector = currentStatus === "На согласовании у Комдира";
@@ -569,7 +598,22 @@ export function ProjectPagePM({
     { label: "Завершен", done: currentIndex === 9, active: currentIndex === 9 },
   ];
 
-  const STAGES = isExpress ? EXPRESS_STAGES : FULL_STAGES;
+  // «Заявка на склад»: клиент и подписание договора ей не нужны — после
+  // одобрения Комдиром (WAREHOUSE_APPROVE) проект уходит сразу в «Активный
+  // закуп», минуя эти два этапа. Но, в отличие от экспресс-проекта, этап
+  // «На согласовании» у неё есть — Комдира по-прежнему нужно пройти.
+  const WAREHOUSE_STAGES = [
+    { label: "Новый", done: currentIndex > 0, active: currentIndex === 0 },
+    { label: "В редактировании", done: currentIndex > 1, active: currentIndex === 1 },
+    { label: "На согласовании", done: currentIndex > 2, active: currentIndex === 2 },
+    { label: "Активный закуп", done: currentIndex > 5, active: currentIndex === 5 },
+    { label: "На приходе", done: currentIndex > 6, active: currentIndex === 6 },
+    { label: "На отгрузке", done: currentIndex > 7, active: currentIndex === 7 },
+    { label: "Ожидание документов", done: currentIndex > 8, active: currentIndex === 8 },
+    { label: "Завершен", done: currentIndex === 9, active: currentIndex === 9 },
+  ];
+
+  const STAGES = isExpress ? EXPRESS_STAGES : isWarehouseRequest ? WAREHOUSE_STAGES : FULL_STAGES;
 
   const title = project?.name ?? "Офисный комплекс «Башня»";
   const subtitle = project
@@ -931,6 +975,44 @@ export function ProjectPagePM({
     }
   };
 
+  // «Заявка на склад»: confirmMlImport создаёт project_items (бэкенд для
+  // ручных импортов больше не требует цену/поставщика — см.
+  // ml_import_service.py), но, в отличие от обычного проекта, дальше сама
+  // никуда не переводит: is_express у такого проекта всегда false, значит
+  // EXPRESS_ACTIVATE не сработает, и проект останется в «В редактировании».
+  // Поэтому сразу следом отправляем его Комдиру тем же вызовом, что и
+  // обычная кнопка «Отправить Комдиру».
+  const handleConfirmWarehouseRequest = async () => {
+    if (!mlImport || mlImport.status !== "draft" || !project) return;
+    try {
+      setConfirmingImport(true);
+      setSending(true);
+      setMlImportError(null);
+      await confirmMlImport(mlImport.id);
+      await sendProjectToDirector(project.id);
+      onKpSent();
+      await refreshProject();
+      setMlImport(await getMlImport(mlImport.id));
+    } catch (error) {
+      setMlImportError(
+        error instanceof Error
+          ? error.message
+          : "Не удалось подтвердить и отправить заявку Комдиру",
+      );
+      // Если что-то из двух шагов упало на середине, локальное состояние
+      // строк могло разойтись с БД — перечитываем импорт, чтобы подсветка
+      // строк соответствовала тому, что реально сохранено.
+      try {
+        setMlImport(await getMlImport(mlImport.id));
+      } catch {
+        /* сообщение об исходной ошибке важнее */
+      }
+    } finally {
+      setConfirmingImport(false);
+      setSending(false);
+    }
+  };
+
   const handleSendToDirector = async () => {
     if (!project) return;
     setSending(true);
@@ -1012,6 +1094,28 @@ export function ProjectPagePM({
           .map((row) => `№${row.index + 1} — ${row.state.reasons.join(", ")}`)
           .join("; ") +
         (unresolvedRows.length > 5 ? "; …" : "");
+
+  // Для «Заявки на склад» цена/себестоимость/поставщик не нужны — это
+  // внутренний запрос по наличию, а не коммерческая позиция. Готовность
+  // строки проверяем только по товару из каталога и количеству.
+  const unresolvedWarehouseRows = (mlImport?.items ?? [])
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => {
+      if (item.is_confirmed) return false;
+      const quantity = Number(item.final_quantity ?? item.input_quantity ?? 0);
+      return item.selected_product_id == null || !Number.isFinite(quantity) || quantity <= 0;
+    });
+
+  const canConfirmWarehouseRequest =
+    mlImport !== null &&
+    mlImport.status === "draft" &&
+    mlImport.items.length > 0 &&
+    unresolvedWarehouseRows.length === 0;
+
+  const warehouseConfirmBlockedHint =
+    mlImport === null || mlImport.status !== "draft" || unresolvedWarehouseRows.length === 0
+      ? ""
+      : `Не готово строк: ${unresolvedWarehouseRows.length}. Выберите товар из каталога и укажите количество больше нуля.`;
 
   const handleExportExcel = async () => {
     if (!project) return;
@@ -1241,7 +1345,7 @@ export function ProjectPagePM({
                     </span>
                   )}
 
-                  {!isPastApprovalWindow && !isExpress && (
+                  {!isPastApprovalWindow && !isExpress && !isWarehouseRequest && (
                     <AppTooltip text={
                       !mlImport || mlImport.status !== "confirmed"
                         ? "Сначала подтвердите импорт товаров"
@@ -1348,10 +1452,13 @@ export function ProjectPagePM({
                     <div className="px-4 py-2.5 text-xs text-muted-foreground border-b border-border bg-background/60">
                       Финальные значения по проекту, с учётом правок Комдира (если он их вносил).
                     </div>
-                    <table className="w-full min-w-[950px] border-collapse">
+                    <table className={`w-full border-collapse ${isWarehouseRequest ? "min-w-[600px]" : "min-w-[950px]"}`}>
                       <thead>
                         <tr className="border-b border-border bg-background/60">
-                          {["№", "Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"].map(h => (
+                          {(isWarehouseRequest
+                            ? ["№", "Наименование", "Кол-во", "Ед.", "Статус"]
+                            : ["№", "Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"]
+                          ).map(h => (
                               <th key={h}
                                   className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
                           ))}
@@ -1360,20 +1467,20 @@ export function ProjectPagePM({
                       <tbody className="divide-y divide-border">
                         {liveItemsLoading ? (
                           <tr>
-                            <td colSpan={10} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                            <td colSpan={isWarehouseRequest ? 5 : 10} className="px-4 py-10 text-center text-sm text-muted-foreground">
                               <Loader2 size={16} className="inline-block animate-spin text-primary mr-2" />
                               Загружаем позиции проекта…
                             </td>
                           </tr>
                         ) : liveItemsError ? (
                           <tr>
-                            <td colSpan={10} className="px-4 py-10 text-center text-sm text-destructive">
+                            <td colSpan={isWarehouseRequest ? 5 : 10} className="px-4 py-10 text-center text-sm text-destructive">
                               {liveItemsError}
                             </td>
                           </tr>
                         ) : liveItems.length === 0 ? (
                           <tr>
-                            <td colSpan={10} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                            <td colSpan={isWarehouseRequest ? 5 : 10} className="px-4 py-10 text-center text-sm text-muted-foreground">
                               В проекте нет позиций
                             </td>
                           </tr>
@@ -1392,20 +1499,26 @@ export function ProjectPagePM({
                                 <tr key={item.id} className="hover:bg-background/50">
                                   <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
                                   <td className="px-4 py-3 text-sm text-foreground">{item.product?.name ?? "—"}</td>
-                                  <td className="px-4 py-3 text-sm text-foreground">
-                                    {item.supplier_raw_name ?? item.supplier?.supplier_name ?? "—"}
-                                  </td>
+                                  {!isWarehouseRequest && (
+                                    <td className="px-4 py-3 text-sm text-foreground">
+                                      {item.supplier_raw_name ?? item.supplier?.supplier_name ?? "—"}
+                                    </td>
+                                  )}
                                   <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
                                   <td className="px-4 py-3 text-xs text-muted-foreground">{item.product?.unit ?? "шт"}</td>
-                                  <td className="px-4 py-3 text-sm font-mono">{priceCost.toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2,})}</td>
-                                  <td className="px-4 py-3 text-sm font-mono">{price.toLocaleString("ru-RU")}</td>
-                                  <td className="px-4 py-3 text-sm font-mono font-semibold">{total.toLocaleString("ru-RU")}</td>
-                                  <td className="px-4 py-3">
-                                  <span
-                                      className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-1 ring-red-200"}`}>
-                                    {margin.toFixed(1)}%
-                                  </span>
-                                  </td>
+                                  {!isWarehouseRequest && (
+                                    <>
+                                      <td className="px-4 py-3 text-sm font-mono">{priceCost.toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2,})}</td>
+                                      <td className="px-4 py-3 text-sm font-mono">{price.toLocaleString("ru-RU")}</td>
+                                      <td className="px-4 py-3 text-sm font-mono font-semibold">{total.toLocaleString("ru-RU")}</td>
+                                      <td className="px-4 py-3">
+                                      <span
+                                          className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-1 ring-red-200"}`}>
+                                        {margin.toFixed(1)}%
+                                      </span>
+                                      </td>
+                                    </>
+                                  )}
                                   <td className="px-4 py-3">
                                     <div className="flex items-center gap-1.5">
                                       <span
@@ -1429,17 +1542,20 @@ export function ProjectPagePM({
                 ) : (
                 <>
                 <div className="bg-card rounded-lg border border-border overflow-x-auto">
-                  <table className="w-full min-w-[1950px] border-collapse">
+                  <table className={`w-full border-collapse ${isWarehouseRequest ? "min-w-[900px]" : "min-w-[1950px]"}`}>
                     <thead>
                       <tr className="border-b border-border bg-background/60">
-                        {["№", "Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Поставщик", "Себестоимость", "Цена", "Сумма", "Маржа", "Доступно", "Комментарий", "Статус", ""].map((heading, headingIndex) => (
+                        {(isWarehouseRequest
+                          ? ["№", "Наименование", "Кол-во", "Совпавший товар", "Ед.", "Доступно", "Комментарий", "Статус", ""]
+                          : ["№", "Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Поставщик", "Себестоимость", "Цена", "Сумма", "Маржа", "Доступно", "Комментарий", "Статус", ""]
+                        ).map((heading, headingIndex) => (
                           <th key={heading || `actions-${headingIndex}`} className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{heading}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
                       {mlImport.items.length === 0 && !isAddingRow && (
-                        <tr><td colSpan={14} className="px-4 py-10 text-center text-sm text-muted-foreground">В ML-импорте нет товаров</td></tr>
+                        <tr><td colSpan={isWarehouseRequest ? 9 : 14} className="px-4 py-10 text-center text-sm text-muted-foreground">В ML-импорте нет товаров</td></tr>
                       )}
                       {mlImport.items.map((item, index) => {
                           const isUpdating = updatingItemId === item.id;
@@ -1462,6 +1578,23 @@ export function ProjectPagePM({
                           // привязать их было физически нечем.
                           const canPickProduct =
                             mlImport.status === "draft" && !item.is_confirmed;
+
+                          // «Заявка на склад»: готовность строки не зависит от
+                          // цены/себестоимости/поставщика (см. rowState выше,
+                          // который проверяет их для обычного импорта) — только
+                          // товар из каталога и количество больше нуля, ровно
+                          // как в unresolvedWarehouseRows, которым управляется
+                          // кнопка «Подтверждаю».
+                          const warehouseQuantity = Number(item.final_quantity ?? item.input_quantity ?? 0);
+                          const effectiveNeedsProduct = isWarehouseRequest
+                            ? item.selected_product_id == null
+                            : rowState.needsProduct;
+                          const effectiveIsReady = isWarehouseRequest
+                            ? item.selected_product_id != null && Number.isFinite(warehouseQuantity) && warehouseQuantity > 0
+                            : rowState.isReady;
+                          const effectiveReasons = isWarehouseRequest
+                            ? (Number.isFinite(warehouseQuantity) && warehouseQuantity > 0 ? [] : ["количество должно быть больше нуля"])
+                            : rowState.reasons;
                           const displayedStatus =
                             normalizedStatus ??
                             item.ml_status?.trim() ??
@@ -1475,7 +1608,26 @@ export function ProjectPagePM({
                                 <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
                                 <td className="px-4 py-3"><p
                                     className="text-sm font-medium text-foreground">{item.input_product}</p></td>
-                                <td className="px-4 py-3 text-sm font-mono text-foreground">{item.input_quantity}</td>
+                                <td className="px-4 py-3">
+                                  <input
+                                      key={`${item.id}-quantity-${item.final_quantity ?? item.input_quantity}`}
+                                      type="number" min={1} step="1"
+                                      disabled={mlImport.status !== "draft" || isUpdating || item.is_confirmed}
+                                      defaultValue={item.final_quantity ?? item.input_quantity}
+                                      onBlur={(event) => {
+                                        const newQuantity = Number(event.target.value);
+                                        if (!Number.isFinite(newQuantity) || newQuantity <= 0) {
+                                          setMlImportError("Количество должно быть числом больше нуля");
+                                          return;
+                                        }
+                                        const currentQuantity = item.final_quantity ?? item.input_quantity;
+                                        if (newQuantity !== currentQuantity) {
+                                          handleMlItemUpdate(item.id, {final_quantity: Math.trunc(newQuantity)});
+                                        }
+                                      }}
+                                      className="w-24 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
+                                  />
+                                </td>
                                 <td className="px-4 py-3">
                                   <span
                                       className={`inline-flex px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap ${statusStyle.badge}`}>
@@ -1538,13 +1690,20 @@ export function ProjectPagePM({
                                           <button
                                               type="button"
                                               disabled={isUpdating}
-                                              onClick={() => {
+                                              onClick={(event) => {
+                                                const willOpen = openVariantPickerId !== item.id;
+                                                const rect = event.currentTarget.getBoundingClientRect();
                                                 setProductSearch("");
-                                                setOpenVariantPickerId((current) =>
-                                                  current === item.id ? null : item.id,
-                                                );
+                                                if (willOpen) {
+                                                  setPickerPosition({
+                                                    top: rect.bottom + 4,
+                                                    left: rect.left,
+                                                    width: Math.max(rect.width, 416),
+                                                  });
+                                                }
+                                                setOpenVariantPickerId(willOpen ? item.id : null);
                                               }}
-                                              className={`w-56 flex items-center justify-between gap-2 px-2 py-1.5 text-sm border rounded-md bg-card text-left disabled:bg-muted disabled:cursor-not-allowed ${
+                                              className={`w-72 flex items-center justify-between gap-2 px-2 py-1.5 text-sm border rounded-md bg-card text-left disabled:bg-muted disabled:cursor-not-allowed ${
                                                 item.selected_product_id != null ? "border-border" : "border-orange-300 dark:border-orange-400/30"
                                               }`}
                                           >
@@ -1562,13 +1721,16 @@ export function ProjectPagePM({
                                             />
                                           </button>
 
-                                          {isPickerOpen && (
-                                            <div className="absolute z-20 mt-1 w-72 max-h-80 overflow-y-auto bg-card border border-border rounded-lg shadow-lg py-1">
+                                          {isPickerOpen && pickerPosition && createPortal(
+                                            <div
+                                                data-variant-picker={item.id}
+                                                style={{ position: "fixed", top: pickerPosition.top, left: pickerPosition.left, width: pickerPosition.width }}
+                                                className="z-50 max-h-[28rem] overflow-y-auto bg-card border border-border rounded-lg shadow-lg py-1">
                                               <div className="sticky top-0 bg-card px-2 pb-1.5 pt-1">
                                                 <div className="relative">
                                                   <Search
-                                                      size={13}
-                                                      className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                                                      size={14}
+                                                      className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
                                                   />
                                                   <input
                                                       type="text"
@@ -1576,7 +1738,7 @@ export function ProjectPagePM({
                                                       value={productSearch}
                                                       onChange={(event) => setProductSearch(event.target.value)}
                                                       placeholder="Поиск по каталогу…"
-                                                      className="w-full rounded-md border border-border bg-card py-1.5 pl-7 pr-2 text-sm outline-none focus:border-primary"
+                                                      className="w-full rounded-md border border-border bg-card py-2 pl-8 pr-2 text-sm outline-none focus:border-primary"
                                                   />
                                                 </div>
                                               </div>
@@ -1594,7 +1756,7 @@ export function ProjectPagePM({
                                                           handleMlItemUpdate(item.id, { selected_product_id: product.id });
                                                           setOpenVariantPickerId(null);
                                                         }}
-                                                        className={`w-full text-left px-3 py-2 text-sm hover:bg-background transition-colors ${
+                                                        className={`w-full text-left px-3 py-2.5 text-sm hover:bg-background transition-colors ${
                                                           item.selected_product_id === product.id
                                                             ? "bg-blue-50 dark:bg-blue-400/15 text-primary font-medium"
                                                             : "text-foreground"
@@ -1626,7 +1788,7 @@ export function ProjectPagePM({
                                                         handleMlItemUpdate(item.id, { selected_product_id: product.id });
                                                         setOpenVariantPickerId(null);
                                                       }}
-                                                      className={`w-full text-left px-3 py-2 text-sm hover:bg-background transition-colors ${
+                                                      className={`w-full text-left px-3 py-2.5 text-sm hover:bg-background transition-colors ${
                                                         item.selected_product_id === product.id
                                                           ? "bg-blue-50 dark:bg-blue-400/15 text-primary font-medium"
                                                           : "text-foreground"
@@ -1644,7 +1806,7 @@ export function ProjectPagePM({
                                                       setOpenVariantPickerId(null);
                                                       openProductModal(item);
                                                     }}
-                                                    className="w-full flex items-center gap-1.5 text-left px-3 py-2 text-sm font-medium text-primary hover:bg-accent transition-colors"
+                                                    className="w-full flex items-center gap-1.5 text-left px-3 py-2.5 text-sm font-medium text-primary hover:bg-accent transition-colors"
                                                 >
                                                   <Plus size={14} /> Это новый товар
                                                 </button>
@@ -1657,13 +1819,14 @@ export function ProjectPagePM({
                                                         });
                                                         setOpenVariantPickerId(null);
                                                       }}
-                                                      className="w-full flex items-center gap-1.5 text-left px-3 py-2 text-sm font-medium text-destructive hover:bg-accent transition-colors"
+                                                      className="w-full flex items-center gap-1.5 text-left px-3 py-2.5 text-sm font-medium text-destructive hover:bg-accent transition-colors"
                                                   >
                                                     <XCircle size={14} /> Снять привязку
                                                   </button>
                                                 )}
                                               </div>
-                                            </div>
+                                            </div>,
+                                            document.body,
                                           )}
                                         </div>
                                       );
@@ -1675,6 +1838,11 @@ export function ProjectPagePM({
                                     </>
                                   )}
                                 </td>
+                                {isWarehouseRequest && (
+                                  <td className="px-4 py-3 text-xs text-muted-foreground">{item.unit ?? "—"}</td>
+                                )}
+                                {!isWarehouseRequest && (
+                                  <>
                                 <td className="px-4 py-3">
                                   <input
                                       key={`${item.id}-supplier-${item.supplier_name ?? ""}`}
@@ -1740,6 +1908,8 @@ export function ProjectPagePM({
                                   {marginPercent.toFixed(1)}%
                                 </span>
                                 </td>
+                                  </>
+                                )}
                                 <td className="px-4 py-3 text-sm font-mono text-foreground">{item.available_quantity}</td>
                                 <td className="px-4 py-3">
                                   <input
@@ -1767,7 +1937,7 @@ export function ProjectPagePM({
       <CheckCircle2 size={14}/>
       Добавлен
     </span>
-                                  ) : rowState.needsProduct ? (
+                                  ) : effectiveNeedsProduct ? (
                                       <AppTooltip text="Строку нельзя импортировать без товара из каталога. Выберите товар в колонке «Совпавший товар» или создайте новый.">
                                         <button
                                             type="button"
@@ -1779,9 +1949,9 @@ export function ProjectPagePM({
                                           Добавить товар
                                         </button>
                                       </AppTooltip>
-                                  ) : !rowState.isReady ? (
+                                  ) : !effectiveIsReady ? (
                                       <span className="text-xs font-medium text-red-700 dark:text-red-300">
-                                        {rowState.reasons.join("; ")}
+                                        {effectiveReasons.join("; ")}
                                       </span>
                                   ) : (
                                       <div className="flex flex-col items-start gap-1">
@@ -1880,7 +2050,7 @@ export function ProjectPagePM({
                                 className="w-24 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
                             />
                           </td>
-                          <td colSpan={10} className="px-4 py-3 text-xs text-muted-foreground">
+                          <td colSpan={isWarehouseRequest ? 5 : 10} className="px-4 py-3 text-xs text-muted-foreground">
                             Товар из каталога, поставщика и цены укажите в самой строке
                             после её создания.
                           </td>
@@ -1936,48 +2106,89 @@ export function ProjectPagePM({
                 <div className="flex items-center justify-between gap-4 mt-4">
                   <div className="min-w-0">
                     <p className="text-xs text-muted-foreground">
-                      Каждая строка должна быть привязана к товару из каталога — выберите его
-                      в колонке «Совпавший товар» либо нажмите «Это новый товар», если
-                      подходящего нет. Также у каждой строки должны быть указаны поставщик,
-                      цена продажи больше нуля и количество.
+                      {isWarehouseRequest
+                        ? "Каждая строка должна быть привязана к товару из каталога — выберите его в колонке «Совпавший товар» либо нажмите «Это новый товар», если подходящего нет. Также укажите количество больше нуля."
+                        : "Каждая строка должна быть привязана к товару из каталога — выберите его в колонке «Совпавший товар» либо нажмите «Это новый товар», если подходящего нет. Также у каждой строки должны быть указаны поставщик, цена продажи больше нуля и количество."}
                     </p>
-                    {mlImport.status === "draft" && unresolvedRows.length > 0 && (
-                      <p className="mt-1.5 text-xs font-medium text-red-700 dark:text-red-300">
-                        Не готово строк: {unresolvedRows.length} из {mlImport.items.length}
-                        {" — "}
-                        {unresolvedRows
-                          .slice(0, 8)
-                          .map((row) => `№${row.index + 1}`)
-                          .join(", ")}
-                        {unresolvedRows.length > 8 ? " и др." : ""}
-                      </p>
+                    {isWarehouseRequest ? (
+                      mlImport.status === "draft" && unresolvedWarehouseRows.length > 0 && (
+                        <p className="mt-1.5 text-xs font-medium text-red-700 dark:text-red-300">
+                          Не готово строк: {unresolvedWarehouseRows.length} из {mlImport.items.length}
+                          {" — "}
+                          {unresolvedWarehouseRows
+                            .slice(0, 8)
+                            .map((row) => `№${row.index + 1}`)
+                            .join(", ")}
+                          {unresolvedWarehouseRows.length > 8 ? " и др." : ""}
+                        </p>
+                      )
+                    ) : (
+                      mlImport.status === "draft" && unresolvedRows.length > 0 && (
+                        <p className="mt-1.5 text-xs font-medium text-red-700 dark:text-red-300">
+                          Не готово строк: {unresolvedRows.length} из {mlImport.items.length}
+                          {" — "}
+                          {unresolvedRows
+                            .slice(0, 8)
+                            .map((row) => `№${row.index + 1}`)
+                            .join(", ")}
+                          {unresolvedRows.length > 8 ? " и др." : ""}
+                        </p>
+                      )
                     )}
                   </div>
-                  <AppTooltip text={confirmBlockedHint}>
-                    <button
-                        type="button"
-                        onClick={handleConfirmMlImport}
-                        disabled={!canConfirmMlImport || confirmingImport}
-                        className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-colors disabled:bg-slate-200 disabled:text-muted-foreground disabled:cursor-not-allowed enabled:bg-primary enabled:text-white enabled:hover:bg-primary/90 enabled:cursor-pointer"
-                    >
-                      {confirmingImport ? (
-                          <>
-                            <Loader2 size={15} className="animate-spin"/>
-                            Подтверждение…
-                          </>
-                      ) : mlImport.status === "confirmed" ? (
-                          <>
-                            <CheckCircle2 size={15}/>
-                            {isExpress ? "Отправлено в закуп" : "Импорт подтверждён"}
-                          </>
-                      ) : (
-                          <>
-                            <Check size={15}/>
-                            {isExpress ? "Подтвердить и отправить в закуп" : "Подтвердить импорт"}
-                          </>
-                      )}
-                    </button>
-                  </AppTooltip>
+                  {isWarehouseRequest ? (
+                    <AppTooltip text={warehouseConfirmBlockedHint}>
+                      <button
+                          type="button"
+                          onClick={handleConfirmWarehouseRequest}
+                          disabled={!canConfirmWarehouseRequest || confirmingImport || sending}
+                          className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-colors disabled:bg-slate-200 disabled:text-muted-foreground disabled:cursor-not-allowed enabled:bg-primary enabled:text-white enabled:hover:bg-primary/90 enabled:cursor-pointer"
+                      >
+                        {confirmingImport || sending ? (
+                            <>
+                              <Loader2 size={15} className="animate-spin"/>
+                              Отправка…
+                            </>
+                        ) : mlImport.status === "confirmed" ? (
+                            <>
+                              <CheckCircle2 size={15}/>
+                              Отправлено Комдиру
+                            </>
+                        ) : (
+                            <>
+                              <Check size={15}/>
+                              Подтверждаю
+                            </>
+                        )}
+                      </button>
+                    </AppTooltip>
+                  ) : (
+                    <AppTooltip text={confirmBlockedHint}>
+                      <button
+                          type="button"
+                          onClick={handleConfirmMlImport}
+                          disabled={!canConfirmMlImport || confirmingImport}
+                          className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-colors disabled:bg-slate-200 disabled:text-muted-foreground disabled:cursor-not-allowed enabled:bg-primary enabled:text-white enabled:hover:bg-primary/90 enabled:cursor-pointer"
+                      >
+                        {confirmingImport ? (
+                            <>
+                              <Loader2 size={15} className="animate-spin"/>
+                              Подтверждение…
+                            </>
+                        ) : mlImport.status === "confirmed" ? (
+                            <>
+                              <CheckCircle2 size={15}/>
+                              {isExpress ? "Отправлено в закуп" : "Импорт подтверждён"}
+                            </>
+                        ) : (
+                            <>
+                              <Check size={15}/>
+                              {isExpress ? "Подтвердить и отправить в закуп" : "Подтвердить импорт"}
+                            </>
+                        )}
+                      </button>
+                    </AppTooltip>
+                  )}
                 </div>
                 </>
                 )}
@@ -2270,6 +2481,12 @@ const [itemSaveError, setItemSaveError] =
 ]);
   const currentStatus = project?.status?.status_name || "На согласовании у Комдира";
 
+  // «Заявка на склад»: цена/себестоимость/поставщик ей не нужны — это
+  // внутренний запрос по наличию, а не коммерческая позиция. Признак
+  // приходит с бэкенда на самом проекте (не на импорте, как в ProjectPagePM,
+  // — здесь ml_import вообще не загружается).
+  const isWarehouseRequest = project?.is_warehouse_request === true;
+
   const PENDING_DIRECTOR_STATUS = "На согласовании у Комдира";
   const REJECTED_STATUS = "Отклонено Комдиром";
 
@@ -2480,10 +2697,13 @@ const [itemSaveError, setItemSaveError] =
             </div>
           )}
           <div className="bg-card rounded-lg border border-border overflow-x-auto">
-            <table className="w-full min-w-[1150px] border-collapse">
+            <table className={`w-full border-collapse ${isWarehouseRequest ? "min-w-[600px]" : "min-w-[1150px]"}`}>
               <thead>
               <tr className="border-b border-border bg-background/60">
-                {["№", "Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"].map(h => (
+                {(isWarehouseRequest
+                  ? ["№", "Наименование", "Кол-во", "Ед.", "Статус"]
+                  : ["№", "Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"]
+                ).map(h => (
                     <th key={h}
                         className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
                 ))}
@@ -2492,20 +2712,20 @@ const [itemSaveError, setItemSaveError] =
               <tbody className="divide-y divide-border">
                 {projectItemsLoading ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    <td colSpan={isWarehouseRequest ? 5 : 10} className="px-4 py-10 text-center text-sm text-muted-foreground">
                       <Loader2 size={16} className="inline-block animate-spin text-primary mr-2" />
                       Загружаем позиции проекта…
                     </td>
                   </tr>
                 ) : projectItemsError ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-10 text-center text-sm text-destructive">
+                    <td colSpan={isWarehouseRequest ? 5 : 10} className="px-4 py-10 text-center text-sm text-destructive">
                       {projectItemsError}
                     </td>
                   </tr>
                 ) : projectItems.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    <td colSpan={isWarehouseRequest ? 5 : 10} className="px-4 py-10 text-center text-sm text-muted-foreground">
                       В проекте нет позиций
                     </td>
                   </tr>
@@ -2526,74 +2746,80 @@ const [itemSaveError, setItemSaveError] =
                         <tr key={item.id} className="hover:bg-background/50">
                           <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
                           <td className="px-4 py-3 text-sm text-foreground">{item.product?.name ?? "—"}</td>
-                          <td className="px-4 py-3">
-                            <input
-                                key={`${item.id}-supplier-${item.supplier_raw_name ?? ""}`}
-                                type="text"
-                                maxLength={255}
-                                disabled={disabled}
-                                defaultValue={item.supplier_raw_name ?? item.supplier?.supplier_name ?? ""}
-                                placeholder="Укажите поставщика"
-                                onBlur={(event) => {
-                                  const supplierName = event.target.value.trim() || null;
-                                  if (supplierName !== (item.supplier_raw_name ?? null)) {
-                                    handleItemFieldUpdate(item.id, { supplier_raw_name: supplierName });
-                                  }
-                                }}
-                                className="w-36 px-2 py-1.5 text-sm border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
-                            />
-                          </td>
+                          {!isWarehouseRequest && (
+                            <td className="px-4 py-3">
+                              <input
+                                  key={`${item.id}-supplier-${item.supplier_raw_name ?? ""}`}
+                                  type="text"
+                                  maxLength={255}
+                                  disabled={disabled}
+                                  defaultValue={item.supplier_raw_name ?? item.supplier?.supplier_name ?? ""}
+                                  placeholder="Укажите поставщика"
+                                  onBlur={(event) => {
+                                    const supplierName = event.target.value.trim() || null;
+                                    if (supplierName !== (item.supplier_raw_name ?? null)) {
+                                      handleItemFieldUpdate(item.id, { supplier_raw_name: supplierName });
+                                    }
+                                  }}
+                                  className="w-36 px-2 py-1.5 text-sm border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
+                              />
+                            </td>
+                          )}
                           <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
                           <td className="px-4 py-3 text-xs text-muted-foreground">{item.product?.unit ?? "шт"}</td>
-                          <td className="px-4 py-3">
-                            <input
-                                key={`${item.id}-cost-${priceCost}`}
-                                type="number"
-                                min={0}
-                                step="1"
-                                disabled={disabled}
-                                defaultValue={priceCost}
-                                onBlur={(event) => {
-                                  const newCost = Number(event.target.value);
-                                  if (!Number.isFinite(newCost) || newCost < 0) {
-                                    setItemSaveError("Себестоимость должна быть числом больше или равным нулю");
-                                    return;
-                                  }
-                                  if (newCost !== priceCost) {
-                                    handleItemFieldUpdate(item.id, { cost_price: newCost });
-                                  }
-                                }}
-                                className="w-28 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
-                            />
-                          </td>
-                          <td className="px-4 py-3">
-                            <input
-                                key={`${item.id}-price-${price}`}
-                                type="number"
-                                min={0}
-                                step="1"
-                                disabled={disabled}
-                                defaultValue={price}
-                                onBlur={(event) => {
-                                  const newPrice = Number(event.target.value);
-                                  if (!Number.isFinite(newPrice) || newPrice < 0) {
-                                    setItemSaveError("Цена должна быть числом больше или равным нулю");
-                                    return;
-                                  }
-                                  if (newPrice !== price) {
-                                    handleItemFieldUpdate(item.id, { sale_price: newPrice });
-                                  }
-                                }}
-                                className="w-28 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
-                            />
-                          </td>
-                          <td className="px-4 py-3 text-sm font-mono font-semibold whitespace-nowrap">{total.toLocaleString("ru-RU")}</td>
-                          <td className="px-4 py-3">
-                          <span
-                              className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-1 ring-red-200"}`}>
-                            {margin.toFixed(1)}%
-                          </span>
-                          </td>
+                          {!isWarehouseRequest && (
+                            <>
+                              <td className="px-4 py-3">
+                                <input
+                                    key={`${item.id}-cost-${priceCost}`}
+                                    type="number"
+                                    min={0}
+                                    step="1"
+                                    disabled={disabled}
+                                    defaultValue={priceCost}
+                                    onBlur={(event) => {
+                                      const newCost = Number(event.target.value);
+                                      if (!Number.isFinite(newCost) || newCost < 0) {
+                                        setItemSaveError("Себестоимость должна быть числом больше или равным нулю");
+                                        return;
+                                      }
+                                      if (newCost !== priceCost) {
+                                        handleItemFieldUpdate(item.id, { cost_price: newCost });
+                                      }
+                                    }}
+                                    className="w-28 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
+                                />
+                              </td>
+                              <td className="px-4 py-3">
+                                <input
+                                    key={`${item.id}-price-${price}`}
+                                    type="number"
+                                    min={0}
+                                    step="1"
+                                    disabled={disabled}
+                                    defaultValue={price}
+                                    onBlur={(event) => {
+                                      const newPrice = Number(event.target.value);
+                                      if (!Number.isFinite(newPrice) || newPrice < 0) {
+                                        setItemSaveError("Цена должна быть числом больше или равным нулю");
+                                        return;
+                                      }
+                                      if (newPrice !== price) {
+                                        handleItemFieldUpdate(item.id, { sale_price: newPrice });
+                                      }
+                                    }}
+                                    className="w-28 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
+                                />
+                              </td>
+                              <td className="px-4 py-3 text-sm font-mono font-semibold whitespace-nowrap">{total.toLocaleString("ru-RU")}</td>
+                              <td className="px-4 py-3">
+                              <span
+                                  className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-1 ring-red-200"}`}>
+                                {margin.toFixed(1)}%
+                              </span>
+                              </td>
+                            </>
+                          )}
                           <td className="px-4 py-3">
                             {isSaving ? (
                               <Loader2 size={16} className="animate-spin text-primary" />
