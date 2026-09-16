@@ -430,6 +430,7 @@ const handleSave = async () => {
           planned_margin: 0,
           deadline: projectForm.deadline,
           is_express: isContractMode,
+          is_warehouse_request: isManualMode,
         }
       : {
           is_new_client: false,
@@ -443,6 +444,7 @@ const handleSave = async () => {
           planned_margin: 0,
           deadline: projectForm.deadline,
           is_express: isContractMode,
+          is_warehouse_request: isManualMode,
         };
 
     console.log("Создание проекта, payload:", payload);
@@ -629,7 +631,7 @@ const handleSave = async () => {
               onClick={() => { setModalMode("manual"); setIsKpModalOpen(true); }}
               className="flex items-center gap-1.5 px-4 py-2 bg-card border border-border text-foreground text-sm font-medium rounded-lg hover:bg-muted transition-colors"
             >
-              <FilePlus size={14} /> Пустой проект
+              <FilePlus size={14} /> Заявка на склад
             </button>
             {/* NEW: экспресс-поток. Договор уже подписан и согласован —
                 проект минует КП, Комдира и клиента и после подтверждения
