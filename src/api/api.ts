@@ -733,6 +733,27 @@ export const postWarehouseIncome = async (payload: WarehouseIncomeInput) => {
   return data;
 };
 
+// ==========================================
+// ЗАЯВКА НА ПРИХОД (ПМ вносит товары без ID, кладовщик подтверждает как обычный приход)
+// ==========================================
+
+export interface WarehouseIncomeRequestItem {
+  product_name: string;
+  quantity: number;
+}
+
+export interface WarehouseIncomeRequestInput {
+  warehouse_id: number;
+  items: WarehouseIncomeRequestItem[];
+}
+
+export const postWarehouseIncomeRequest = async (
+  payload: WarehouseIncomeRequestInput
+): Promise<WarehouseReceiptResponse[]> => {
+  const { data } = await api.post<WarehouseReceiptResponse[]>("/warehouse/income-request", payload);
+  return data;
+};
+
 export const reserveProjectItems = async (projectId: number, warehouseId: number = 1) => {
   const { data } = await api.post(
     `/warehouse/projects/${projectId}/reserve?warehouse_id=${warehouseId}`
@@ -1172,8 +1193,8 @@ export interface WarehouseReceiptResponse {
   project_id?: number;
   project_name?: string;
   date: string;
-  supplier_id: number;
-  product_id: number;
+  supplier_id: number | null;
+  product_id: number | null;
   warehouse_id?: number | null;
   quantity: number;
   status: string;
@@ -1183,6 +1204,8 @@ export interface WarehouseReceiptResponse {
   confirmed_at?: string | null;
   defective_quantity?: number;      // добавить, если нет
   defect_resolved?: boolean;        // добавить, если нет
+  supplier_raw_name?: string | null; // заявка на приход: поставщик ещё не назначен, только сырое название
+  source?: string | null;            // например, "income_request" — заявка ПМ, а не обычный приход
   supplier?: {
     id: number;
     supplier_name: string;

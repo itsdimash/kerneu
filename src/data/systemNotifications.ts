@@ -23,6 +23,7 @@ export type NotificationCategory =
   | "stock_low"
   | "goods_arrived"
   | "goods_shipped"
+  | "income_request_created"
   | "upload_processed"
   | "deadline"
   | "parse_job_done"

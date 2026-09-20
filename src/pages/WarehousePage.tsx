@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { ShipmentModal } from "../app/components/modals/ShipmentModal";
+import { IncomeRequestModal } from "../app/components/modals/IncomeRequestModal";
 import {
   Search,
   AlertTriangle,
@@ -16,6 +17,7 @@ import {
   FileText,
   ArrowUpDown,
   Check,
+  PackagePlus,
 } from "lucide-react";
 import type { ProjectState, Role } from "../types";
 import {
@@ -202,10 +204,14 @@ function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
     projectId: item.project_id ?? null,
     date: item.date ? new Date(item.date).toLocaleDateString("ru-RU") : "—",
     warehouseName: item.warehouse?.name || (item.warehouse_id ? `Склад №${item.warehouse_id}` : "—"),
-    supplier: item.supplier?.supplier_name || item.supplier?.name || `Поставщик #${item.supplier_id}`,
-    sku: (item as any).product?.sku || `P-${item.product_id ?? item.id}`,
-    item: item.product?.name || `Товар #${item.product_id}`,
-    qty: item.quantity,
+    supplier:
+      item.supplier?.supplier_name ||
+      item.supplier?.name ||
+      item.supplier_raw_name ||
+      (item.supplier_id ? `Поставщик #${item.supplier_id}` : "—"),
+    sku: (item as any).product?.sku || (item.product_id ? `P-${item.product_id}` : "—"),
+    item: item.product?.name || (item.product_id ? `Товар #${item.product_id}` : "—"),
+    qty: item.quantity ?? 0,
     unit: item.product?.unit || "шт",
     status: item.status?.toLowerCase() || "pending",
     actualQuantity: item.actual_quantity ?? null,
@@ -701,6 +707,7 @@ function ReceiptDetailsModal({
 
 export function WarehousePage({ role, projectState }: { role: Role; projectState: ProjectState }) {
   const isWarehouseUser = role === "warehouse";
+  const isPm = role === "pm" || role === "admin";
 
   const [tab, setTab] = useState<"stock" | "arrivals" | "shipments">("stock");
 
@@ -733,6 +740,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
 
   const [showShipmentModal, setShowShipmentModal] = useState(false);
   const [showAddStockModal, setShowAddStockModal] = useState(false);
+  const [showIncomeRequestModal, setShowIncomeRequestModal] = useState(false);
 
   const [downloadingChecklistId, setDownloadingChecklistId] = useState<number | null>(null);
 
@@ -977,6 +985,8 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     loadStock();
 
     const projectId = confirmedReceipt?.projectId;
+    // Приходы без проекта (например, из "Заявки на приход" от ПМ) не должны
+    // переводить проект на отгрузку — им просто некого переводить.
     if (!projectId) return;
 
     const projectReceipts = freshArrivals.filter((r) => r.projectId === projectId);
@@ -1116,9 +1126,33 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   }, [stock, selectedWarehouseId, stockFilter, stockSearch, stockSortField, stockSortDir]);
 
   return (
-    <PageWrap title="Склад" subtitle={`Управление остатками, резервом и отгрузками по ${warehouses.length} складам`}>
+    <PageWrap
+      title="Склад"
+      subtitle={`Управление остатками, резервом и отгрузками по ${warehouses.length} складам`}
+      actions={
+        isPm && (
+          <button
+            onClick={() => setShowIncomeRequestModal(true)}
+            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors"
+          >
+            <PackagePlus size={14} /> Заявка на приход
+          </button>
+        )
+      }
+    >
       {showAddStockModal && (
         <AddStockModal warehouses={warehouses} onClose={() => setShowAddStockModal(false)} onSuccess={() => { loadStock(); loadArrivals(); }} />
+      )}
+
+      {showIncomeRequestModal && (
+        <IncomeRequestModal
+          warehouses={warehouses}
+          onClose={() => setShowIncomeRequestModal(false)}
+          onSuccess={() => {
+            loadArrivals();
+            setTab("arrivals");
+          }}
+        />
       )}
 
       {confirmTarget && (

@@ -57,6 +57,7 @@ const CATEGORY_META: Record<
   invoice_sent_to_income: { icon: PackagePlus, ...VIOLET, label: "Ожидается приход" },
   stock_low: { icon: PackageX, ...WARNING, label: "Склад" },
   goods_arrived: { icon: PackageCheck, ...INFO, label: "Приход" },
+  income_request_created: { icon: PackagePlus, ...VIOLET, label: "Заявка на приход" },
   goods_shipped: { icon: Truck, ...SUCCESS, label: "Отгрузка" },
   upload_processed: { icon: UploadCloud, ...VIOLET, label: "Загрузка" },
   deadline: { icon: Clock3, ...DESTRUCTIVE, label: "Дедлайн" },
