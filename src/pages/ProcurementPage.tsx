@@ -30,7 +30,8 @@ import {
   X,
   Pencil,
   Search,
-  Plus
+  Plus,
+  Package
 } from "lucide-react";
 
 type ProjectListItem = {
@@ -87,6 +88,12 @@ type ProcurementProjectItem = {
     status_name?: string | null;
     name?: string | null;
   } | null;
+
+  // Поля комплекта (kit) — заполнены только для позиций, разложенных из комплекта
+  kit_group_key?: string | null;
+  kit_name?: string | null;
+  kit_quantity?: number | string | null;
+  quantity_per_kit?: number | string | null;
 };
 
 type InvoiceWorkflowStatus =
@@ -1141,7 +1148,26 @@ export function ProcurementPage({
                         return (
                           <tr key={item.id} className="hover:bg-background/30 transition-colors">
                             <td className="px-5 py-3.5 text-sm font-medium text-foreground">
-                              {getItemName(item)}
+                              <div className="flex flex-col gap-1">
+                                <span>{getItemName(item)}</span>
+                                {item.kit_group_key ? (
+                                  <span
+                                    className="inline-flex w-fit max-w-[220px] items-center gap-1 rounded-md bg-blue-100 dark:bg-blue-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                                    title={`из комплекта «${safeTrim(item.kit_name) || "Комплект"}»${item.kit_quantity != null ? ` ×${item.kit_quantity}` : ""}`}
+                                  >
+                                    <Package size={10} className="shrink-0" />
+                                    <span className="truncate">
+                                      из комплекта «{safeTrim(item.kit_name) || "Комплект"}»
+                                      {item.kit_quantity != null ? ` ×${item.kit_quantity}` : ""}
+                                    </span>
+                                  </span>
+                                ) : null}
+                                {item.kit_group_key && item.quantity_per_kit != null ? (
+                                  <span className="text-[11px] text-muted-foreground">
+                                    {item.quantity_per_kit} на комплект
+                                  </span>
+                                ) : null}
+                              </div>
                             </td>
                             <td className="px-5 py-3.5">
                               {canChangeSupplier ? (

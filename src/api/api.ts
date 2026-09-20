@@ -5,7 +5,7 @@ export const api = axios.create({
     withCredentials: true, // очень важно для Cookie
 });
 
-export interface ProjectItem {
+export interface ProjectItem extends ProjectItemKitFields {
   id: number;
   project_id: number;
   product_id: number;
@@ -181,6 +181,24 @@ export interface MlImportItemResponse {
   // чтобы UI не падал на более старом контракте.
   is_kit?: boolean;
   kit_components?: KitComponentStatus[];
+  // Себестоимость комплекта, посчитанная backend'ом из компонентов —
+  // подсказка ПМ рядом с полем "Себестоимость", когда он ставит 0
+  // (0 = "считается из состава"). null, если backend не смог посчитать.
+  kit_derived_unit_cost?: number | string | null;
+}
+
+// Поля комплекта на позиции проекта (ProjectItem/ProjectItemResponse) —
+// backend проставляет их всем компонентам одного комплекта после confirm
+// ML-импорта (см. explode комплекта на backend). Для обычных позиций и
+// старых проектов все поля — null.
+export interface ProjectItemKitFields {
+  kit_group_key?: string | null;
+  kit_product_id?: number | null;
+  kit_name?: string | null;
+  kit_quantity?: number | string | null;
+  quantity_per_kit?: number | string | null;
+  kit_unit_sale_price?: number | string | null;
+  kit_unit_cost_price?: number | string | null;
 }
 
 export interface MlImportDetailResponse {
@@ -997,7 +1015,7 @@ export interface SupplierInfo {
   supplier_name: string;
 }
 
-export interface ProjectItemResponse {
+export interface ProjectItemResponse extends ProjectItemKitFields {
   id: number;
   required_quantity: number | null;
   cost_price: number | string;
@@ -1054,6 +1072,37 @@ export async function updateProjectItemSupplier(
       payload,
     );
     return data;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const detail = error.response?.data?.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        throw new Error(detail);
+      }
+    }
+    throw error;
+  }
+}
+
+export interface PatchKitGroupPricesPayload {
+  sale_price?: number;
+  cost_price?: number;
+}
+
+// Комдир правит цену/себестоимость комплекта ЦЕЛИКОМ (не по отдельному
+// компоненту) — backend сам перераспределяет их по компонентам. Форма
+// ответа не гарантирована, поэтому после успеха всегда перечитываем позиции
+// проекта заново (см. вызовы fetchProjectItems в ProjectPage.tsx), а не
+// полагаемся на тело этого ответа.
+export async function patchKitGroupPrices(
+  projectId: number | string,
+  kitGroupKey: string,
+  payload: PatchKitGroupPricesPayload,
+): Promise<void> {
+  try {
+    await api.patch(
+      `/projects/${projectId}/kit-groups/${encodeURIComponent(kitGroupKey)}/prices`,
+      payload,
+    );
   } catch (error) {
     if (axios.isAxiosError(error)) {
       const detail = error.response?.data?.detail;

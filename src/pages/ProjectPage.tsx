@@ -49,7 +49,9 @@ import type {
 import { MultiSelectCombobox } from "../app/components/ui/multi-select";
 import { Checkbox } from "../app/components/ui/checkbox";
 import { StockStatusBadge } from "../app/components/common/StockStatusBadge";
+import { KitGroupHeaderRow } from "../app/components/common/KitGroupHeaderRow";
 import { ML_STATUS_STYLES, UNKNOWN_ML_STATUS_STYLE, normalizeMlStatus } from "../lib/stockStatus";
+import { groupEntriesByKit } from "../lib/kitGroups";
 
 // Достаёт читаемые текстовые подсказки из similar_variants — ML отдаёт
 // их из внешнего Excel-файла в произвольном виде (иногда структурированные
@@ -129,6 +131,26 @@ type MlRowState = {
   isReady: boolean;
 };
 
+// is_kit строки может отсутствовать (старый backend/строка ещё не
+// пересчитана) — тогда падаем на is_kit привязанного товара из каталога,
+// ровно как buildKitSelectionsPayload ниже. hasEmptyComponents — отдельно:
+// blocking только когда kit_components ПРИШЁЛ массивом и он пуст; если
+// backend это поле вообще не отдаёт (undefined), считать строку пустым
+// комплектом нельзя — это не то же самое, что "состав не выбран".
+const getItemKitStatus = (
+  item: MlImportItemResponse,
+  productCatalog: CatalogProduct[],
+): { isKit: boolean; hasEmptyComponents: boolean } => {
+  const selectedProduct =
+    item.selected_product_id != null
+      ? productCatalog.find((p) => p.id === item.selected_product_id)
+      : undefined;
+  return {
+    isKit: item.is_kit ?? selectedProduct?.is_kit ?? false,
+    hasEmptyComponents: Array.isArray(item.kit_components) && item.kit_components.length === 0,
+  };
+};
+
 // Единый источник правды о готовности строки ML-импорта.
 //
 // РАНЬШЕ правил было два и они противоречили друг другу:
@@ -142,7 +164,10 @@ type MlRowState = {
 //
 // Теперь и кнопка в строке, и блокировка confirm, и текст подсказки
 // считаются здесь — рассинхрон между ними стал невозможен.
-const getMlRowState = (item: MlImportItemResponse): MlRowState => {
+const getMlRowState = (
+  item: MlImportItemResponse,
+  productCatalog: CatalogProduct[],
+): MlRowState => {
   if (item.is_confirmed) {
     return { needsProduct: false, reasons: [], isReady: true };
   }
@@ -168,6 +193,10 @@ const getMlRowState = (item: MlImportItemResponse): MlRowState => {
   }
   if (!item.supplier_name?.trim()) {
     reasons.push("не указан поставщик");
+  }
+  const kitStatus = getItemKitStatus(item, productCatalog);
+  if (kitStatus.isKit && kitStatus.hasEmptyComponents) {
+    reasons.push("Комплект: выберите состав");
   }
 
   return { needsProduct, reasons, isReady: reasons.length === 0 };
@@ -304,6 +333,11 @@ export function ProjectPagePM({
   const [liveItems, setLiveItems] = useState<ProjectItemResponse[]>([]);
   const [liveItemsLoading, setLiveItemsLoading] = useState(false);
   const [liveItemsError, setLiveItemsError] = useState<string | null>(null);
+  // Развёрнутость групп-комплектов в финальной таблице позиций — по
+  // kit_group_key, а не по индексу строки, чтобы переживать перезапросы
+  // liveItems (id группы не меняется, порядок массива — может). Раскрыта
+  // по умолчанию: отсутствие ключа в записи трактуется как true.
+  const [expandedLiveKitGroups, setExpandedLiveKitGroups] = useState<Record<string, boolean>>({});
   const [updatingItemId, setUpdatingItemId] = useState<number | null>(null);
   const [deletingItemId, setDeletingItemId] = useState<number | null>(null);
   // Ручное добавление позиции в черновик: форма живёт последней строкой
@@ -1474,8 +1508,32 @@ export function ProjectPagePM({
   // Строки, которые backend отвергнет при confirm. Считаются тем же
   // getMlRowState, что рисует кнопки в таблице.
   const unresolvedRows = (mlImport?.items ?? [])
-    .map((item, index) => ({ item, index, state: getMlRowState(item) }))
+    .map((item, index) => ({ item, index, state: getMlRowState(item, productCatalog) }))
     .filter((row) => !row.state.isReady);
+
+  // Комплекты без подобранного состава — общие для обоих флоу подтверждения
+  // (обычный импорт и «Заявка на склад»): backend отклоняет confirm с одним
+  // и тем же товаром-комплектом независимо от флоу, а kit-пикер доступен в
+  // обеих таблицах через одну и ту же колонку «Совпавший товар».
+  const kitCompositionMissingItems = (mlImport?.items ?? []).filter((item) => {
+    if (item.is_confirmed) return false;
+    const kitStatus = getItemKitStatus(item, productCatalog);
+    return kitStatus.isKit && kitStatus.hasEmptyComponents;
+  });
+  const kitCompositionMissingNames = kitCompositionMissingItems.map((item) => {
+    const selectedProduct =
+      item.selected_product_id != null
+        ? productCatalog.find((p) => p.id === item.selected_product_id)
+        : undefined;
+    return selectedProduct?.name || item.matched_product?.trim() || item.input_product;
+  });
+  const invalidKitsHint =
+    kitCompositionMissingNames.length === 0
+      ? ""
+      : `Не выбран состав комплекта: ${kitCompositionMissingNames.slice(0, 3).join(", ")}` +
+        (kitCompositionMissingNames.length > 3
+          ? ` и ещё ${kitCompositionMissingNames.length - 3}`
+          : "");
 
   const canConfirmMlImport =
     mlImport !== null &&
@@ -1501,7 +1559,12 @@ export function ProjectPagePM({
     .filter(({ item }) => {
       if (item.is_confirmed) return false;
       const quantity = Number(item.final_quantity ?? item.input_quantity ?? 0);
-      return item.selected_product_id == null || !Number.isFinite(quantity) || quantity <= 0;
+      const kitStatus = getItemKitStatus(item, productCatalog);
+      return (
+        item.selected_product_id == null ||
+        !Number.isFinite(quantity) || quantity <= 0 ||
+        (kitStatus.isKit && kitStatus.hasEmptyComponents)
+      );
     });
 
   const canConfirmWarehouseRequest =
@@ -1845,7 +1908,77 @@ export function ProjectPagePM({
               </div>
             ) : (
               <>
-                {isApproved ? (
+                {isApproved ? (() => {
+                  const liveItemsHeaders = isWarehouseRequest
+                    ? ["№", "Наименование", "Кол-во", "Ед.", "Статус"]
+                    : ["№", "Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"];
+                  const liveItemsColSpan = liveItemsHeaders.length;
+
+                  const renderLiveItemRow = (item: ProjectItemResponse, index: number) => {
+                    const qty = Number(item.required_quantity ?? 0);
+                    const price = Number(item.sale_price ?? 0);
+                    const priceCost = Number(item.cost_price ?? 0);
+                    const total = item.total_sum != null ? Number(item.total_sum) : qty * price;
+                    const margin = price > 0 ? ((price - priceCost) / price) * 100 : 0;
+                    const isEditedByDirector = Boolean((item as { edited_by_director?: boolean }).edited_by_director);
+                    const stockStatusName = item.status?.status_name ?? "—";
+                    const isInStock = stockStatusName === "На складе";
+                    // Компонент комплекта: визуально с отступом, с подписью
+                    // количества "в комплекте" под наименованием — те же
+                    // данные, что и у обычной позиции, просто сгруппированы
+                    // под заголовком комплекта (см. groupEntriesByKit ниже).
+                    const isKitComponent = Boolean(item.kit_group_key);
+                    const quantityPerKit = Number(item.quantity_per_kit ?? 0);
+
+                    return (
+                        <tr key={item.id} className="hover:bg-background/50">
+                          <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
+                          <td className={`px-4 py-3 text-sm text-foreground ${isKitComponent ? "pl-8 border-l-2 border-border/60" : ""}`}>
+                            {item.product?.name ?? "—"}
+                            {isKitComponent && quantityPerKit > 0 && (
+                              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                × {quantityPerKit.toLocaleString("ru-RU")} в комплекте
+                              </p>
+                            )}
+                          </td>
+                          {!isWarehouseRequest && (
+                            <td className="px-4 py-3 text-sm text-foreground">
+                              {item.supplier_raw_name ?? item.supplier?.supplier_name ?? "—"}
+                            </td>
+                          )}
+                          <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground">{item.product?.unit ?? "шт"}</td>
+                          {!isWarehouseRequest && (
+                            <>
+                              <td className={`px-4 py-3 text-sm font-mono ${isKitComponent ? "text-muted-foreground" : ""}`}>{priceCost.toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2,})}</td>
+                              <td className={`px-4 py-3 text-sm font-mono ${isKitComponent ? "text-muted-foreground" : ""}`}>{price.toLocaleString("ru-RU")}</td>
+                              <td className={`px-4 py-3 text-sm font-mono font-semibold ${isKitComponent ? "text-muted-foreground font-normal" : ""}`}>{total.toLocaleString("ru-RU")}</td>
+                              <td className="px-4 py-3">
+                              <span
+                                  className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-1 ring-red-200"}`}>
+                                {margin.toFixed(1)}%
+                              </span>
+                              </td>
+                            </>
+                          )}
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                  className={`inline-flex px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap ${isInStock ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200"}`}>
+                                {stockStatusName}
+                              </span>
+                              {isEditedByDirector && (
+                                <span title="Изменено Комдиром">
+                                  <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                    );
+                  };
+
+                  return (
                   <div className="bg-card rounded-lg border border-border overflow-x-auto">
                     <div className="px-4 py-2.5 text-xs text-muted-foreground border-b border-border bg-background/60">
                       Финальные значения по проекту, с учётом правок Комдира (если он их вносил).
@@ -1853,10 +1986,7 @@ export function ProjectPagePM({
                     <table className={`w-full border-collapse ${isWarehouseRequest ? "min-w-[600px]" : "min-w-[950px]"}`}>
                       <thead>
                         <tr className="border-b border-border bg-background/60">
-                          {(isWarehouseRequest
-                            ? ["№", "Наименование", "Кол-во", "Ед.", "Статус"]
-                            : ["№", "Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"]
-                          ).map(h => (
+                          {liveItemsHeaders.map(h => (
                               <th key={h}
                                   className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
                           ))}
@@ -1865,79 +1995,72 @@ export function ProjectPagePM({
                       <tbody className="divide-y divide-border">
                         {liveItemsLoading ? (
                           <tr>
-                            <td colSpan={isWarehouseRequest ? 5 : 10} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                            <td colSpan={liveItemsColSpan} className="px-4 py-10 text-center text-sm text-muted-foreground">
                               <Loader2 size={16} className="inline-block animate-spin text-primary mr-2" />
                               Загружаем позиции проекта…
                             </td>
                           </tr>
                         ) : liveItemsError ? (
                           <tr>
-                            <td colSpan={isWarehouseRequest ? 5 : 10} className="px-4 py-10 text-center text-sm text-destructive">
+                            <td colSpan={liveItemsColSpan} className="px-4 py-10 text-center text-sm text-destructive">
                               {liveItemsError}
                             </td>
                           </tr>
                         ) : liveItems.length === 0 ? (
                           <tr>
-                            <td colSpan={isWarehouseRequest ? 5 : 10} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                            <td colSpan={liveItemsColSpan} className="px-4 py-10 text-center text-sm text-muted-foreground">
                               В проекте нет позиций
                             </td>
                           </tr>
                         ) : (
-                          liveItems.map((item, index) => {
-                            const qty = Number(item.required_quantity ?? 0);
-                            const price = Number(item.sale_price ?? 0);
-                            const priceCost = Number(item.cost_price ?? 0);
-                            const total = item.total_sum != null ? Number(item.total_sum) : qty * price;
-                            const margin = price > 0 ? ((price - priceCost) / price) * 100 : 0;
-                            const isEditedByDirector = Boolean((item as { edited_by_director?: boolean }).edited_by_director);
-                            const stockStatusName = item.status?.status_name ?? "—";
-                            const isInStock = stockStatusName === "На складе";
+                          groupEntriesByKit(
+                            liveItems.map((item, index) => ({ item, index })),
+                            (entry) => entry.item.kit_group_key,
+                          ).map((row) => {
+                            if (row.type === "single") {
+                              return renderLiveItemRow(row.entry.item, row.entry.index);
+                            }
+
+                            const first = row.entries[0].item;
+                            const expanded = expandedLiveKitGroups[row.key] ?? true;
+                            const itemsTotalSum = row.entries.reduce(
+                              (sum, entry) => sum + Number(entry.item.total_sum ?? 0),
+                              0,
+                            );
 
                             return (
-                                <tr key={item.id} className="hover:bg-background/50">
-                                  <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
-                                  <td className="px-4 py-3 text-sm text-foreground">{item.product?.name ?? "—"}</td>
-                                  {!isWarehouseRequest && (
-                                    <td className="px-4 py-3 text-sm text-foreground">
-                                      {item.supplier_raw_name ?? item.supplier?.supplier_name ?? "—"}
-                                    </td>
-                                  )}
-                                  <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
-                                  <td className="px-4 py-3 text-xs text-muted-foreground">{item.product?.unit ?? "шт"}</td>
-                                  {!isWarehouseRequest && (
-                                    <>
-                                      <td className="px-4 py-3 text-sm font-mono">{priceCost.toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2,})}</td>
-                                      <td className="px-4 py-3 text-sm font-mono">{price.toLocaleString("ru-RU")}</td>
-                                      <td className="px-4 py-3 text-sm font-mono font-semibold">{total.toLocaleString("ru-RU")}</td>
-                                      <td className="px-4 py-3">
-                                      <span
-                                          className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-1 ring-red-200"}`}>
-                                        {margin.toFixed(1)}%
-                                      </span>
-                                      </td>
-                                    </>
-                                  )}
-                                  <td className="px-4 py-3">
-                                    <div className="flex items-center gap-1.5">
-                                      <span
-                                          className={`inline-flex px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap ${isInStock ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200"}`}>
-                                        {stockStatusName}
-                                      </span>
-                                      {isEditedByDirector && (
-                                        <span title="Изменено Комдиром">
-                                          <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
-                                        </span>
-                                      )}
-                                    </div>
-                                  </td>
-                                </tr>
-                            )
+                              <React.Fragment key={row.key}>
+                                <KitGroupHeaderRow
+                                    projectId={Number(projectId)}
+                                    groupKey={row.key}
+                                    kitName={first.kit_name ?? "Комплект"}
+                                    kitQuantity={Number(first.kit_quantity ?? 0)}
+                                    itemCount={row.entries.length}
+                                    colSpan={liveItemsColSpan}
+                                    expanded={expanded}
+                                    onToggleExpand={() =>
+                                      setExpandedLiveKitGroups((current) => ({
+                                        ...current,
+                                        [row.key]: !expanded,
+                                      }))
+                                    }
+                                    showPrices={!isWarehouseRequest}
+                                    kitUnitSalePrice={Number(first.kit_unit_sale_price ?? 0)}
+                                    kitUnitCostPrice={Number(first.kit_unit_cost_price ?? 0)}
+                                    itemsTotalSum={itemsTotalSum}
+                                    canEdit={false}
+                                    onPricesSaved={() => {}}
+                                />
+                                {expanded && row.entries.map((entry) => renderLiveItemRow(entry.item, entry.index))}
+                              </React.Fragment>
+                            );
                           })
                         )}
                       </tbody>
                     </table>
                   </div>
-                ) : (
+                  );
+                })() : (
                 <>
                 <div className="bg-card rounded-lg border border-border overflow-x-auto">
                   <table className={`w-full border-collapse ${isWarehouseRequest ? "min-w-[900px]" : "min-w-[1950px]"}`}>
@@ -1966,7 +2089,8 @@ export function ProjectPagePM({
                           const margin = Number(item.margin ?? 0);
                           const marginPercent = margin * 100;
                           const normalizedStatus = normalizeMlStatus(item.ml_status);
-                          const rowState = getMlRowState(item);
+                          const rowState = getMlRowState(item, productCatalog);
+                          const kitStatus = getItemKitStatus(item, productCatalog);
                           // Выбор товара доступен для ЛЮБОЙ неподтверждённой
                           // строки черновика — включая "Возможное совпадение"
                           // и "Есть в системе (недостаточно)", где ML заполнил
@@ -1987,11 +2111,15 @@ export function ProjectPagePM({
                           const effectiveNeedsProduct = isWarehouseRequest
                             ? item.selected_product_id == null
                             : rowState.needsProduct;
+                          const isKitCompositionMissing = kitStatus.isKit && kitStatus.hasEmptyComponents;
                           const effectiveIsReady = isWarehouseRequest
-                            ? item.selected_product_id != null && Number.isFinite(warehouseQuantity) && warehouseQuantity > 0
+                            ? item.selected_product_id != null && Number.isFinite(warehouseQuantity) && warehouseQuantity > 0 && !isKitCompositionMissing
                             : rowState.isReady;
                           const effectiveReasons = isWarehouseRequest
-                            ? (Number.isFinite(warehouseQuantity) && warehouseQuantity > 0 ? [] : ["количество должно быть больше нуля"])
+                            ? [
+                                ...(Number.isFinite(warehouseQuantity) && warehouseQuantity > 0 ? [] : ["количество должно быть больше нуля"]),
+                                ...(isKitCompositionMissing ? ["Комплект: выберите состав"] : []),
+                              ]
                             : rowState.reasons;
                           const statusStyle = normalizedStatus
                             ? ML_STATUS_STYLES[normalizedStatus]
@@ -2342,6 +2470,14 @@ export function ProjectPagePM({
                                       }}
                                       className="w-32 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
                                   />
+                                  {item.is_kit && (
+                                    <p className="mt-1 text-[11px] text-muted-foreground">
+                                      0 = считается из состава
+                                      {priceCost === 0 && item.kit_derived_unit_cost != null && (
+                                        <> · Расчётная: {formatMoney(item.kit_derived_unit_cost)}</>
+                                      )}
+                                    </p>
+                                  )}
                                 </td>
                                 <td className="px-4 py-3">
                                   <input
@@ -2612,6 +2748,11 @@ export function ProjectPagePM({
                           {unresolvedRows.length > 8 ? " и др." : ""}
                         </p>
                       )
+                    )}
+                    {mlImport.status === "draft" && invalidKitsHint && (
+                      <p className="mt-1.5 text-xs font-medium text-red-700 dark:text-red-300">
+                        {invalidKitsHint}
+                      </p>
                     )}
                   </div>
                   {isWarehouseRequest ? (
@@ -3174,6 +3315,27 @@ const [itemSaveError, setItemSaveError] =
   hasValidProjectId,
   projectId,
 ]);
+
+  // Развёрнутость групп-комплектов — по kit_group_key, чтобы пережить
+  // перезапрос projectItems после правки цены комплекта (см.
+  // handleKitPricesSaved ниже). Раскрыта по умолчанию.
+  const [expandedKitGroups, setExpandedKitGroups] = useState<Record<string, boolean>>({});
+
+  // После patchKitGroupPrices тело ответа не гарантировано — всегда
+  // перечитываем позиции проекта заново, а не полагаемся на него.
+  const refreshProjectItems = async () => {
+    if (!hasValidProjectId) return;
+    try {
+      const data = await fetchProjectItems(resolvedProjectId);
+      setProjectItems(data);
+      setProjectItemsError(null);
+    } catch (error) {
+      setProjectItemsError(
+        error instanceof Error ? error.message : "Не удалось загрузить позиции проекта",
+      );
+    }
+  };
+
   const currentStatus = project?.status?.status_name || "На согласовании у Комдира";
 
   // «Заявка на склад»: цена/себестоимость/поставщик ей не нужны — это
@@ -3391,14 +3553,153 @@ const [itemSaveError, setItemSaveError] =
               </div>
             </div>
           )}
+          {(() => {
+            const directorHeaders = isWarehouseRequest
+              ? ["№", "Наименование", "Кол-во", "Ед.", "Статус"]
+              : ["№", "Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"];
+            const directorColSpan = directorHeaders.length;
+
+            const renderDirectorItemRow = (item: ProjectItemResponse, index: number) => {
+              const qty = Number(item.required_quantity ?? 0);
+              const price = Number(item.sale_price ?? 0);
+              const priceCost = Number(item.cost_price ?? 0);
+              const total = item.total_sum != null ? Number(item.total_sum) : qty * price;
+              const margin = price > 0 ? ((price - priceCost) / price) * 100 : 0;
+              const isEditedByDirector = Boolean((item as { edited_by_director?: boolean }).edited_by_director);
+              const isSaving = updatingItemId === item.id;
+              const disabled = !canEditItems || isSaving;
+              const stockStatusName = item.status?.status_name ?? "—";
+              const isInStock = stockStatusName === "На складе";
+              // Компонент комплекта: цена/себестоимость правятся только на
+              // уровне комплекта (см. KitGroupHeaderRow) — здесь только
+              // отображение уже распределённых (allocated) значений.
+              const isKitComponent = Boolean(item.kit_group_key);
+              const quantityPerKit = Number(item.quantity_per_kit ?? 0);
+
+              return (
+                  <tr key={item.id} className="hover:bg-background/50">
+                    <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
+                    <td className={`px-4 py-3 text-sm text-foreground ${isKitComponent ? "pl-8 border-l-2 border-border/60" : ""}`}>
+                      {item.product?.name ?? "—"}
+                      {isKitComponent && quantityPerKit > 0 && (
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          × {quantityPerKit.toLocaleString("ru-RU")} в комплекте
+                        </p>
+                      )}
+                    </td>
+                    {!isWarehouseRequest && (
+                      <td className="px-4 py-3">
+                        <input
+                            key={`${item.id}-supplier-${item.supplier_raw_name ?? ""}`}
+                            type="text"
+                            maxLength={255}
+                            disabled={disabled}
+                            defaultValue={item.supplier_raw_name ?? item.supplier?.supplier_name ?? ""}
+                            placeholder="Укажите поставщика"
+                            onBlur={(event) => {
+                              const supplierName = event.target.value.trim() || null;
+                              if (supplierName !== (item.supplier_raw_name ?? null)) {
+                                handleItemFieldUpdate(item.id, { supplier_raw_name: supplierName });
+                              }
+                            }}
+                            className="w-36 px-2 py-1.5 text-sm border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
+                        />
+                      </td>
+                    )}
+                    <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">{item.product?.unit ?? "шт"}</td>
+                    {!isWarehouseRequest && (
+                      <>
+                        <td className="px-4 py-3">
+                          {isKitComponent ? (
+                            <span className="inline-block w-28 px-2 py-1.5 text-sm font-mono text-muted-foreground">
+                              {priceCost.toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2,})}
+                            </span>
+                          ) : (
+                            <input
+                                key={`${item.id}-cost-${priceCost}`}
+                                type="number"
+                                min={0}
+                                step="1"
+                                disabled={disabled}
+                                defaultValue={priceCost}
+                                onBlur={(event) => {
+                                  const newCost = Number(event.target.value);
+                                  if (!Number.isFinite(newCost) || newCost < 0) {
+                                    setItemSaveError("Себестоимость должна быть числом больше или равным нулю");
+                                    return;
+                                  }
+                                  if (newCost !== priceCost) {
+                                    handleItemFieldUpdate(item.id, { cost_price: newCost });
+                                  }
+                                }}
+                                className="w-28 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
+                            />
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {isKitComponent ? (
+                            <span className="inline-block w-28 px-2 py-1.5 text-sm font-mono text-muted-foreground">
+                              {price.toLocaleString("ru-RU")}
+                            </span>
+                          ) : (
+                            <input
+                                key={`${item.id}-price-${price}`}
+                                type="number"
+                                min={0}
+                                step="1"
+                                disabled={disabled}
+                                defaultValue={price}
+                                onBlur={(event) => {
+                                  const newPrice = Number(event.target.value);
+                                  if (!Number.isFinite(newPrice) || newPrice < 0) {
+                                    setItemSaveError("Цена должна быть числом больше или равным нулю");
+                                    return;
+                                  }
+                                  if (newPrice !== price) {
+                                    handleItemFieldUpdate(item.id, { sale_price: newPrice });
+                                  }
+                                }}
+                                className="w-28 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
+                            />
+                          )}
+                        </td>
+                        <td className={`px-4 py-3 text-sm font-mono whitespace-nowrap ${isKitComponent ? "text-muted-foreground" : "font-semibold"}`}>{total.toLocaleString("ru-RU")}</td>
+                        <td className="px-4 py-3">
+                        <span
+                            className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-1 ring-red-200"}`}>
+                          {margin.toFixed(1)}%
+                        </span>
+                        </td>
+                      </>
+                    )}
+                    <td className="px-4 py-3">
+                      {isSaving ? (
+                        <Loader2 size={16} className="animate-spin text-primary" />
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <span
+                              className={`inline-flex px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap ${isInStock ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200"}`}>
+                            {stockStatusName}
+                          </span>
+                          {isEditedByDirector && (
+                            <span title="Изменено Комдиром">
+                              <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+              );
+            };
+
+            return (
           <div className="bg-card rounded-lg border border-border overflow-x-auto">
             <table className={`w-full border-collapse ${isWarehouseRequest ? "min-w-[600px]" : "min-w-[1150px]"}`}>
               <thead>
               <tr className="border-b border-border bg-background/60">
-                {(isWarehouseRequest
-                  ? ["№", "Наименование", "Кол-во", "Ед.", "Статус"]
-                  : ["№", "Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"]
-                ).map(h => (
+                {directorHeaders.map(h => (
                     <th key={h}
                         className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
                 ))}
@@ -3407,138 +3708,72 @@ const [itemSaveError, setItemSaveError] =
               <tbody className="divide-y divide-border">
                 {projectItemsLoading ? (
                   <tr>
-                    <td colSpan={isWarehouseRequest ? 5 : 10} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    <td colSpan={directorColSpan} className="px-4 py-10 text-center text-sm text-muted-foreground">
                       <Loader2 size={16} className="inline-block animate-spin text-primary mr-2" />
                       Загружаем позиции проекта…
                     </td>
                   </tr>
                 ) : projectItemsError ? (
                   <tr>
-                    <td colSpan={isWarehouseRequest ? 5 : 10} className="px-4 py-10 text-center text-sm text-destructive">
+                    <td colSpan={directorColSpan} className="px-4 py-10 text-center text-sm text-destructive">
                       {projectItemsError}
                     </td>
                   </tr>
                 ) : projectItems.length === 0 ? (
                   <tr>
-                    <td colSpan={isWarehouseRequest ? 5 : 10} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    <td colSpan={directorColSpan} className="px-4 py-10 text-center text-sm text-muted-foreground">
                       В проекте нет позиций
                     </td>
                   </tr>
                 ) : (
-                  projectItems.map((item, index) => {
-                    const qty = Number(item.required_quantity ?? 0);
-                    const price = Number(item.sale_price ?? 0);
-                    const priceCost = Number(item.cost_price ?? 0);
-                    const total = item.total_sum != null ? Number(item.total_sum) : qty * price;
-                    const margin = price > 0 ? ((price - priceCost) / price) * 100 : 0;
-                    const isEditedByDirector = Boolean((item as { edited_by_director?: boolean }).edited_by_director);
-                    const isSaving = updatingItemId === item.id;
-                    const disabled = !canEditItems || isSaving;
-                    const stockStatusName = item.status?.status_name ?? "—";
-                    const isInStock = stockStatusName === "На складе";
+                  groupEntriesByKit(
+                    projectItems.map((item, index) => ({ item, index })),
+                    (entry) => entry.item.kit_group_key,
+                  ).map((row) => {
+                    if (row.type === "single") {
+                      return renderDirectorItemRow(row.entry.item, row.entry.index);
+                    }
+
+                    const first = row.entries[0].item;
+                    const expanded = expandedKitGroups[row.key] ?? true;
+                    const itemsTotalSum = row.entries.reduce(
+                      (sum, entry) => sum + Number(entry.item.total_sum ?? 0),
+                      0,
+                    );
 
                     return (
-                        <tr key={item.id} className="hover:bg-background/50">
-                          <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
-                          <td className="px-4 py-3 text-sm text-foreground">{item.product?.name ?? "—"}</td>
-                          {!isWarehouseRequest && (
-                            <td className="px-4 py-3">
-                              <input
-                                  key={`${item.id}-supplier-${item.supplier_raw_name ?? ""}`}
-                                  type="text"
-                                  maxLength={255}
-                                  disabled={disabled}
-                                  defaultValue={item.supplier_raw_name ?? item.supplier?.supplier_name ?? ""}
-                                  placeholder="Укажите поставщика"
-                                  onBlur={(event) => {
-                                    const supplierName = event.target.value.trim() || null;
-                                    if (supplierName !== (item.supplier_raw_name ?? null)) {
-                                      handleItemFieldUpdate(item.id, { supplier_raw_name: supplierName });
-                                    }
-                                  }}
-                                  className="w-36 px-2 py-1.5 text-sm border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
-                              />
-                            </td>
-                          )}
-                          <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
-                          <td className="px-4 py-3 text-xs text-muted-foreground">{item.product?.unit ?? "шт"}</td>
-                          {!isWarehouseRequest && (
-                            <>
-                              <td className="px-4 py-3">
-                                <input
-                                    key={`${item.id}-cost-${priceCost}`}
-                                    type="number"
-                                    min={0}
-                                    step="1"
-                                    disabled={disabled}
-                                    defaultValue={priceCost}
-                                    onBlur={(event) => {
-                                      const newCost = Number(event.target.value);
-                                      if (!Number.isFinite(newCost) || newCost < 0) {
-                                        setItemSaveError("Себестоимость должна быть числом больше или равным нулю");
-                                        return;
-                                      }
-                                      if (newCost !== priceCost) {
-                                        handleItemFieldUpdate(item.id, { cost_price: newCost });
-                                      }
-                                    }}
-                                    className="w-28 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
-                                />
-                              </td>
-                              <td className="px-4 py-3">
-                                <input
-                                    key={`${item.id}-price-${price}`}
-                                    type="number"
-                                    min={0}
-                                    step="1"
-                                    disabled={disabled}
-                                    defaultValue={price}
-                                    onBlur={(event) => {
-                                      const newPrice = Number(event.target.value);
-                                      if (!Number.isFinite(newPrice) || newPrice < 0) {
-                                        setItemSaveError("Цена должна быть числом больше или равным нулю");
-                                        return;
-                                      }
-                                      if (newPrice !== price) {
-                                        handleItemFieldUpdate(item.id, { sale_price: newPrice });
-                                      }
-                                    }}
-                                    className="w-28 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
-                                />
-                              </td>
-                              <td className="px-4 py-3 text-sm font-mono font-semibold whitespace-nowrap">{total.toLocaleString("ru-RU")}</td>
-                              <td className="px-4 py-3">
-                              <span
-                                  className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-1 ring-red-200"}`}>
-                                {margin.toFixed(1)}%
-                              </span>
-                              </td>
-                            </>
-                          )}
-                          <td className="px-4 py-3">
-                            {isSaving ? (
-                              <Loader2 size={16} className="animate-spin text-primary" />
-                            ) : (
-                              <div className="flex items-center gap-1.5">
-                                <span
-                                    className={`inline-flex px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap ${isInStock ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200"}`}>
-                                  {stockStatusName}
-                                </span>
-                                {isEditedByDirector && (
-                                  <span title="Изменено Комдиром">
-                                    <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                    )
+                      <React.Fragment key={row.key}>
+                        <KitGroupHeaderRow
+                            projectId={resolvedProjectId}
+                            groupKey={row.key}
+                            kitName={first.kit_name ?? "Комплект"}
+                            kitQuantity={Number(first.kit_quantity ?? 0)}
+                            itemCount={row.entries.length}
+                            colSpan={directorColSpan}
+                            expanded={expanded}
+                            onToggleExpand={() =>
+                              setExpandedKitGroups((current) => ({
+                                ...current,
+                                [row.key]: !expanded,
+                              }))
+                            }
+                            showPrices={!isWarehouseRequest}
+                            kitUnitSalePrice={Number(first.kit_unit_sale_price ?? 0)}
+                            kitUnitCostPrice={Number(first.kit_unit_cost_price ?? 0)}
+                            itemsTotalSum={itemsTotalSum}
+                            canEdit={canEditItems}
+                            onPricesSaved={() => { void refreshProjectItems(); }}
+                        />
+                        {expanded && row.entries.map((entry) => renderDirectorItemRow(entry.item, entry.index))}
+                      </React.Fragment>
+                    );
                   })
                 )}
               </tbody>
             </table>
           </div>
+            );
+          })()}
 
           <div className="bg-card rounded-lg border border-border p-5">
             <h3 className="text-sm font-semibold text-foreground mb-4">Решение по КП</h3>
