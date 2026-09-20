@@ -18,7 +18,12 @@ import {
   createMlImportItem,
   deleteMlImportItem,
   createProductForMlImportItem,
+  createProduct,
+  resolveKitProduct,
   confirmMlImport,
+  getKitComponents,
+  saveMlImportKitComponents,
+  fetchProductsAvailability,
   startProjectEditing,
   sendProjectToDirector,
   approveProjectDirector,
@@ -38,68 +43,13 @@ import type {
   MlImportItemCreate,
   MlImportItemCreateProduct,
   MlImportItemUpdate,
+  KitComponentResponse,
+  ConfirmMlImportKitSelection,
 } from "../api/api";
-
-type MlStatus =
-  | "Нет в системе"
-  | "Нет в системе (похожие варианты)"
-  | "Возможное совпадение (требует проверки)"
-  | "Есть в системе (недостаточно)"
-  | "На складе";
-
-const ML_STATUS_STYLES: Record<
-  MlStatus,
-  {
-    badge: string;
-    row: string;
-  }
-> = {
-  "Нет в системе": {
-    badge: "bg-red-100 dark:bg-red-400/20 text-red-800 dark:text-red-200 border border-red-300 dark:border-red-400/30",
-    row: "bg-red-50 dark:bg-red-400/15 hover:bg-red-100/60 dark:bg-red-400/30",
-  },
-  "Нет в системе (похожие варианты)": {
-    badge: "bg-orange-100 dark:bg-orange-400/20 text-orange-800 dark:text-orange-200 border border-orange-300 dark:border-orange-400/30",
-    row: "bg-orange-50 dark:bg-orange-400/15 hover:bg-orange-100/60 dark:bg-orange-400/30",
-  },
-  "Возможное совпадение (требует проверки)": {
-    badge: "bg-amber-100 dark:bg-amber-400/20 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-400/30",
-    row: "bg-amber-50 dark:bg-amber-400/15 hover:bg-amber-100/60 dark:bg-amber-400/30",
-  },
-  "Есть в системе (недостаточно)": {
-    badge: "bg-yellow-100 dark:bg-yellow-400/20 text-yellow-800 dark:text-yellow-200 border border-yellow-300 dark:border-yellow-400/30",
-    row: "bg-yellow-50 dark:bg-yellow-400/15 hover:bg-yellow-100/60 dark:bg-yellow-400/30",
-  },
-  "На складе": {
-    badge: "bg-green-100 dark:bg-green-400/20 text-green-800 dark:text-green-200 border border-green-300 dark:border-green-400/30",
-    row: "bg-green-50 dark:bg-green-400/15 hover:bg-green-100/60 dark:bg-green-400/30",
-  },
-};
-
-const normalizeMlStatus = (
-  status: string | null | undefined,
-): MlStatus | null => {
-  const normalized = status?.trim();
-
-  if (normalized === "Нет в системе") return "Нет в системе";
-  if (normalized === "Нет в системе (похожие варианты)") {
-    return "Нет в системе (похожие варианты)";
-  }
-  if (normalized === "Возможное совпадение (требует проверки)") {
-    return "Возможное совпадение (требует проверки)";
-  }
-  if (normalized === "На складе") return "На складе";
-  if (normalized === "Есть в системе (недостаточно)") {
-    return "Есть в системе (недостаточно)";
-  }
-
-  return null;
-};
-
-const UNKNOWN_ML_STATUS_STYLE = {
-  badge: "bg-muted text-foreground border border-input",
-  row: "bg-card hover:bg-background",
-};
+import { MultiSelectCombobox } from "../app/components/ui/multi-select";
+import { Checkbox } from "../app/components/ui/checkbox";
+import { StockStatusBadge } from "../app/components/common/StockStatusBadge";
+import { ML_STATUS_STYLES, UNKNOWN_ML_STATUS_STYLE, normalizeMlStatus } from "../lib/stockStatus";
 
 // Достаёт читаемые текстовые подсказки из similar_variants — ML отдаёт
 // их из внешнего Excel-файла в произвольном виде (иногда структурированные
@@ -118,11 +68,53 @@ const getSimilarVariantLabels = (item: MlImportItemResponse): string[] =>
     })
     .filter((label): label is string => Boolean(label));
 
+// Позиция и допустимая высота выпадашки «Совпавший товар» — top при
+// открытии вниз, bottom при открытии вверх (см. computePickerPosition).
+type PickerPosition = { left: number; width: number; maxHeight: number } & (
+  | { top: number; bottom?: undefined }
+  | { bottom: number; top?: undefined }
+);
+
+// Раньше высота выпадашки была фиксированной константой (28rem/448px)
+// независимо от того, где на экране открыт триггер — из-за этого при
+// открытии в нижней половине окна весь блок (включая sticky-футер с
+// кнопкой «Применить») мог целиком уезжать за нижний край видимого
+// вьюпорта: sticky корректно прилипал к низу СВОЕГО скролл-контейнера,
+// но сам контейнер был ниже видимой области, и футер был не виден без
+// скролла страницы. Теперь высота считается по фактически доступному
+// пространству в выбранную сторону, а при недостатке места снизу список
+// открывается вверх от триггера.
+const PICKER_PREFERRED_MAX_HEIGHT = 448; // px, было max-h-[28rem]
+const PICKER_VIEWPORT_MARGIN = 8;
+const PICKER_MIN_HEIGHT = 160;
+
+const computePickerPosition = (rect: DOMRect): PickerPosition => {
+  const left = rect.left;
+  const width = Math.max(rect.width, 416);
+
+  const spaceBelow = window.innerHeight - rect.bottom - 4 - PICKER_VIEWPORT_MARGIN;
+  const spaceAbove = rect.top - 4 - PICKER_VIEWPORT_MARGIN;
+  const openUpward = spaceBelow < PICKER_MIN_HEIGHT && spaceAbove > spaceBelow;
+
+  const maxHeight = Math.max(
+    PICKER_MIN_HEIGHT,
+    Math.min(PICKER_PREFERRED_MAX_HEIGHT, openUpward ? spaceAbove : spaceBelow),
+  );
+
+  return openUpward
+    ? { bottom: window.innerHeight - rect.top + 4, left, width, maxHeight }
+    : { top: rect.bottom + 4, left, width, maxHeight };
+};
+
 type CatalogProduct = {
   id: number;
   name: string;
   unit?: string | null;
   price?: number | string | null;
+  // Товар-комплект: при выборе такой строки ПМ дополнительно подбирает
+  // состав (см. kitPickerItem / openKitPicker ниже) вместо того, чтобы сразу
+  // закрыть попап выбора товара.
+  is_kit?: boolean;
 };
 
 type MlRowState = {
@@ -341,6 +333,7 @@ export function ProjectPagePM({
     unit: "шт",
     price_cost: "",
     price: "",
+    is_kit: false,
   });
   const [productModalError, setProductModalError] = useState<string | null>(null);
   // Строка уже привязана к товару, но пользователь хочет создать вместо него
@@ -365,8 +358,61 @@ export function ProjectPagePM({
   // случае автоматически делает overflow-y тоже обрезающим, из-за чего
   // список обрезался снизу и требовал скролла внутри крошечной области.
   // Позиция считается от кнопки-триггера в момент открытия.
-  const [pickerPosition, setPickerPosition] = useState<{ top: number; left: number; width: number } | null>(null);
+  // top задан при открытии вниз (обычный случай), bottom — при открытии
+  // вверх, когда снизу триггера не хватает места. maxHeight считается по
+  // фактически доступному пространству вьюпорта в выбранную сторону, а не
+  // фиксированной константой — иначе при открытии в нижней половине экрана
+  // сам блок (включая sticky-футер с «Применить») мог целиком уезжать за
+  // нижний край окна, и его было не видно без скролла СТРАНИЦЫ (см. баг:
+  // «Применить» рендерился в DOM и sticky работал корректно относительно
+  // своего скролл-контейнера, но сам контейнер помещался ниже видимой
+  // области viewport).
+  const [pickerPosition, setPickerPosition] = useState<PickerPosition | null>(null);
   const [productSearch, setProductSearch] = useState("");
+  // Отметки чекбоксами в открытом дропдауне «Совпавший товар» — общие для
+  // всего компонента, а не per-row, потому что дропдаун в любой момент
+  // открыт максимум для одной строки (openVariantPickerId). Сбрасываются
+  // при каждом открытии/закрытии дропдауна конкретной строки (см. onClick
+  // кнопки-триггера ниже) — иначе отметки одной строки утекли бы в другую.
+  const [selectedProductIdsInDropdown, setSelectedProductIdsInDropdown] = useState<string[]>([]);
+
+  // Кит-пикер: открывается вместо немедленного закрытия попапа выбора
+  // товара, когда выбранный товар — комплект (is_kit). kitPickerItem/
+  // kitPickerProduct — строка ML-импорта и сам товар-комплект, для которых
+  // сейчас подбирается состав.
+  const [kitPickerItem, setKitPickerItem] = useState<MlImportItemResponse | null>(null);
+  const [kitPickerProduct, setKitPickerProduct] = useState<CatalogProduct | null>(null);
+  const [kitSelectedIds, setKitSelectedIds] = useState<string[]>([]);
+  const [kitQuantities, setKitQuantities] = useState<Record<string, number>>({});
+  const [kitLoading, setKitLoading] = useState(false);
+  const [kitError, setKitError] = useState<string | null>(null);
+  // Короткая инлайн-подсказка на случай, когда /products/resolve-kit
+  // уникализировал имя комплекта из-за коллизии (см.
+  // handleResolveKitFromChecked) — чтобы ПМ не удивлялся молча, почему
+  // итоговое имя товара отличается от текста строки.
+  const [kitResolveNotice, setKitResolveNotice] = useState<string | null>(null);
+  // Состав комплекта по каждой строке ML-импорта, подтверждённый ПМ через
+  // кит-пикер. Хранится на фронте до подтверждения импорта — уходит на
+  // backend целиком вместе с confirmMlImport (см. handleConfirmMlImport).
+  const [kitComponentsByItemId, setKitComponentsByItemId] = useState<
+    Record<number, { component_product_id: number; quantity: number }[]>
+  >({});
+  // Сохранение состава на backend (saveMlImportKitComponents) — отдельно от
+  // kitLoading (загрузка дефолтного состава при открытии), чтобы кнопка
+  // "Сохранить состав" не путалась со спиннером открытия пикера.
+  const [kitSaving, setKitSaving] = useState(false);
+  // Живые остатки по товарам-компонентам текущего комплекта (product_id ->
+  // available_quantity), подтягиваются с /products/availability при
+  // открытии пикера и каждом изменении набора выбранных компонентов —
+  // заменяют собой несуществующий ml_status у CatalogProduct.
+  const [kitAvailability, setKitAvailability] = useState<Record<string, number>>({});
+  const [kitAvailabilityLoading, setKitAvailabilityLoading] = useState(false);
+  const [kitAvailabilityError, setKitAvailabilityError] = useState<string | null>(null);
+  // Счётчик запросов остатков — увеличивается на каждый новый запрос,
+  // ответ применяется только если счётчик не успел уйти вперёд (пикер не
+  // переоткрыли для другого товара, набор компонентов не сменился ещё раз
+  // за время в полёте предыдущего запроса).
+  const kitAvailabilityRequestRef = useRef(0);
 
   const resolvedProjectId = projectId; // Let it be a string or a number!
   const hasValidProjectId = Boolean(resolvedProjectId); // Just check that it's not empty
@@ -466,7 +512,60 @@ export function ProjectPagePM({
     return () => { cancelled = true; };
   }, []);
 
+  // Живые остатки компонентов открытого кит-пикера — перезапрашиваются при
+  // каждом изменении набора выбранных товаров (добавили/убрали компонент),
+  // с debounce 300мс, чтобы не долбить backend на каждый чих чекбокса.
+  // Количество на единицу (kitQuantities) в зависимости эффекта нет: оно не
+  // меняет НАБОР id, только требуемое количество, которое считается на
+  // фронте от уже загруженных остатков — пересчитывать доступность заново
+  // не нужно.
+  useEffect(() => {
+    if (!kitPickerItem || kitSelectedIds.length === 0) {
+      setKitAvailability({});
+      setKitAvailabilityError(null);
+      setKitAvailabilityLoading(false);
+      return;
+    }
+
+    const requestId = ++kitAvailabilityRequestRef.current;
+    setKitAvailabilityLoading(true);
+
+    const timer = setTimeout(() => {
+      const productIds = kitSelectedIds.map((id) => Number(id));
+      fetchProductsAvailability(productIds)
+        .then((items) => {
+          if (requestId !== kitAvailabilityRequestRef.current) return;
+          const next: Record<string, number> = {};
+          // Товары, отсутствующие в ответе, трактуются как остаток 0 — см.
+          // контракт /products/availability.
+          kitSelectedIds.forEach((id) => { next[id] = 0; });
+          items.forEach((entry) => { next[String(entry.product_id)] = entry.available_quantity; });
+          setKitAvailability(next);
+          setKitAvailabilityError(null);
+        })
+        .catch((error) => {
+          if (requestId !== kitAvailabilityRequestRef.current) return;
+          setKitAvailabilityError(
+            error instanceof Error ? error.message : "Не удалось получить остатки",
+          );
+        })
+        .finally(() => {
+          if (requestId === kitAvailabilityRequestRef.current) setKitAvailabilityLoading(false);
+        });
+    }, 300);
+
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kitPickerItem?.id, kitSelectedIds.join("|")]);
+
   const currentStatus = project?.status?.status_name || "Новый";
+
+  // Отметки чекбоксами принадлежат конкретному открытому дропдауну — сброс
+  // при любой смене (открытие другой строки, закрытие) не даёт им утечь
+  // в следующую строку.
+  useEffect(() => {
+    setSelectedProductIdsInDropdown([]);
+  }, [openVariantPickerId]);
 
   useEffect(() => {
     if (openVariantPickerId === null) return;
@@ -642,10 +741,262 @@ export function ProjectPagePM({
         if (!current) return current;
         return { ...current, items: current.items.map((item) => item.id === updatedItem.id ? updatedItem : item) };
       });
+      // Строка-комплект: смена КОЛ-ВО меняет required_quantity каждого
+      // компонента на backend (kit_components в ответе) — обновляем и
+      // локальный kitComponentsByItemId, иначе buildKitSelectionsPayload на
+      // confirm может уйти со старым составом, если ПМ не переоткрывал
+      // кит-пикер после правки количества.
+      if (updatedItem.kit_components) {
+        setKitComponentsByItemId((current) => ({
+          ...current,
+          [updatedItem.id]: updatedItem.kit_components!.map((c) => ({
+            component_product_id: c.component_product_id,
+            quantity: c.quantity_per_kit,
+          })),
+        }));
+      }
     } catch (error) {
       setMlImportError(error instanceof Error ? error.message : "Не удалось изменить строку");
     } finally {
       setUpdatingItemId(null);
+    }
+  };
+
+  // Переключает чекбокс товара в открытом дропдауне «Совпавший товар» —
+  // список остаётся открытым, привязка происходит только по «Применить»
+  // (handleApplyProductSelection).
+  const toggleProductIdInDropdown = (productId: number) => {
+    const id = String(productId);
+    setSelectedProductIdsInDropdown((current) =>
+      current.includes(id) ? current.filter((v) => v !== id) : [...current, id],
+    );
+  };
+
+  // Привязка строки ML-импорта к товару из каталога. Если товар — комплект,
+  // вместо простого закрытия попапа открываем кит-пикер для подбора состава;
+  // если ПМ ранее привязал строку к комплекту, а теперь переключился на
+  // обычный товар — забываем сохранённый для строки состав, чтобы он не
+  // улетел на confirm вместе с уже неактуальным selected_product_id.
+  const handlePickProduct = (item: MlImportItemResponse, product: CatalogProduct) => {
+    handleMlItemUpdate(item.id, { selected_product_id: product.id });
+    setOpenVariantPickerId(null);
+
+    if (product.is_kit) {
+      void openKitPicker(item, product);
+    } else {
+      setKitComponentsByItemId((current) => {
+        if (!(item.id in current)) return current;
+        const next = { ...current };
+        delete next[item.id];
+        return next;
+      });
+    }
+  };
+
+  // Открывает кит-пикер для строки item, привязанной к товару-комплекту
+  // product. Приоритет источников состава:
+  // 1) item.kit_components — уже сохранённый на backend черновик состава
+  //    именно для ЭТОЙ строки (saveMlImportKitComponents), самый свежий и
+  //    авторитетный источник, в т.ч. после перезагрузки страницы;
+  // 2) kitComponentsByItemId — то, что подбиралось в текущей сессии, но
+  //    ещё не было сохранено (например, ПМ отменил пикер до "Сохранить");
+  // 3) getKitComponents(product.id) — "рецепт по умолчанию" для товара-
+  //    комплекта, когда для этой строки состав ещё не подбирался вовсе.
+  const openKitPicker = async (item: MlImportItemResponse, product: CatalogProduct) => {
+    setKitPickerItem(item);
+    setKitPickerProduct(product);
+    setKitError(null);
+
+    if (item.kit_components && item.kit_components.length > 0) {
+      const resolved = item.kit_components.map((c) => ({
+        component_product_id: c.component_product_id,
+        quantity: c.quantity_per_kit,
+      }));
+      setKitSelectedIds(resolved.map((c) => String(c.component_product_id)));
+      setKitQuantities(
+        Object.fromEntries(resolved.map((c) => [String(c.component_product_id), c.quantity])),
+      );
+      setKitComponentsByItemId((current) => ({ ...current, [item.id]: resolved }));
+      return;
+    }
+
+    const remembered = kitComponentsByItemId[item.id];
+    if (remembered) {
+      setKitSelectedIds(remembered.map((c) => String(c.component_product_id)));
+      setKitQuantities(
+        Object.fromEntries(remembered.map((c) => [String(c.component_product_id), c.quantity])),
+      );
+      return;
+    }
+
+    try {
+      setKitLoading(true);
+      const components: KitComponentResponse[] = await getKitComponents(product.id);
+      const resolved = components.map((c) => ({
+        component_product_id: c.component_product_id,
+        quantity: c.default_quantity > 0 ? Math.trunc(c.default_quantity) : 1,
+      }));
+      setKitSelectedIds(resolved.map((c) => String(c.component_product_id)));
+      setKitQuantities(
+        Object.fromEntries(resolved.map((c) => [String(c.component_product_id), c.quantity])),
+      );
+      // Коммитим предзаполненный по умолчанию состав сразу после загрузки —
+      // не только по явному клику «Сохранить состав». backend отклоняет
+      // (400) строку-комплект, для которой в kit_selections вообще нет
+      // записи, поэтому у ПМ, который просто закрыл кит-пикер, согласившись
+      // с дефолтом, обязано остаться что отправить на confirm.
+      setKitComponentsByItemId((current) => ({
+        ...current,
+        [item.id]: resolved,
+      }));
+    } catch (error) {
+      setKitError(
+        error instanceof Error ? error.message : "Не удалось загрузить состав комплекта",
+      );
+      setKitSelectedIds([]);
+      setKitQuantities({});
+    } finally {
+      setKitLoading(false);
+    }
+  };
+
+  // Отмечены >1 товаров чекбоксами в дропдауне «Совпавший товар» — ПМ
+  // фактически собирает комплект прямо там, без похода в Каталог товаров
+  // за галочкой is_kit (заменяет прежний однократный флоу через отдельную
+  // кнопку «Это комплект»). /products/resolve-kit по названию строки сам
+  // решает, переиспользовать существующий товар-комплект или создать
+  // новый — затем сразу открываем кит-пикер, предзаполненный тем, что ПМ
+  // только что отметил (без похода за remembered/kit_components на
+  // backend — это то, что openKitPicker делает для уже существующих
+  // комплектов, но здесь состав только что выбран вручную).
+  const handleResolveKitFromChecked = async (
+    item: MlImportItemResponse,
+    checkedProductIds: string[],
+  ) => {
+    setOpenVariantPickerId(null);
+    try {
+      const resolved = await resolveKitProduct({ name: item.input_product });
+      setProductCatalog((current) =>
+        current.some((p) => p.id === resolved.id)
+          ? current.map((p) =>
+              p.id === resolved.id ? { ...p, name: resolved.name, is_kit: resolved.is_kit } : p,
+            )
+          : [...current, { id: resolved.id, name: resolved.name, is_kit: resolved.is_kit }],
+      );
+
+      handleMlItemUpdate(item.id, { selected_product_id: resolved.id });
+
+      if (!resolved.reused && resolved.name !== item.input_product) {
+        setKitResolveNotice(`Комплект сохранён под именем «${resolved.name}»`);
+      } else {
+        setKitResolveNotice(null);
+      }
+
+      const prefilledComponents = checkedProductIds
+        .filter((id) => id !== String(resolved.id))
+        .map((id) => ({ component_product_id: Number(id), quantity: 1 }));
+
+      setKitComponentsByItemId((current) => ({
+        ...current,
+        [item.id]: prefilledComponents,
+      }));
+      setKitSelectedIds(prefilledComponents.map((c) => String(c.component_product_id)));
+      setKitQuantities(
+        Object.fromEntries(prefilledComponents.map((c) => [String(c.component_product_id), c.quantity])),
+      );
+      setKitError(null);
+      setKitPickerItem(item);
+      setKitPickerProduct({ id: resolved.id, name: resolved.name, is_kit: resolved.is_kit });
+    } catch (error) {
+      setMlImportError(
+        error instanceof Error ? error.message : "Не удалось создать комплект",
+      );
+    }
+  };
+
+  // Применяет отметки чекбоксами из дропдауна «Совпавший товар»: ровно 1
+  // товар — обычная привязка строки к нему (как раньше), больше одного —
+  // сборка комплекта через handleResolveKitFromChecked.
+  const handleApplyProductSelection = (item: MlImportItemResponse) => {
+    if (selectedProductIdsInDropdown.length === 0) return;
+
+    if (selectedProductIdsInDropdown.length === 1) {
+      const product = productCatalog.find(
+        (p) => String(p.id) === selectedProductIdsInDropdown[0],
+      );
+      if (!product) return;
+      handlePickProduct(item, product);
+      return;
+    }
+
+    void handleResolveKitFromChecked(item, selectedProductIdsInDropdown);
+  };
+
+  const closeKitPicker = () => {
+    setKitResolveNotice(null);
+    setKitPickerItem(null);
+    setKitPickerProduct(null);
+    setKitSelectedIds([]);
+    setKitQuantities({});
+    setKitError(null);
+  };
+
+  // Кит-пикер: создаёт новый товар-компонент "на лету", когда введённое
+  // ПМ название не совпадает ни с одним товаром каталога. POST /products/
+  // не привязан к ml_import_item и не трогает kitPickerItem — в отличие от
+  // createProductForMlImportItem, которым пользуется основная модалка
+  // «Создать товар» (та требует поставщика/цену и переписывает
+  // selected_product_id конкретной строки импорта).
+  const handleCreateKitComponentProduct = async (name: string) => {
+    const created = await createProduct({ product_name: name });
+    setProductCatalog((current) =>
+      current.some((product) => product.id === created.id)
+        ? current
+        : [...current, { id: created.id, name: created.name, is_kit: created.is_kit }],
+    );
+    return { value: String(created.id), label: created.name };
+  };
+
+  // Сохраняет текущий подбор состава комплекта на backend (черновик
+  // конкретной строки ML-импорта) через PUT .../kit-components. Ответ
+  // содержит пересчитанные available_quantity/ml_status/kit_components
+  // строки — заменяем ею запись в mlImport.items и переинициализируем
+  // локальный kitComponentsByItemId её же данными, чтобы buildKitSelectionsPayload
+  // на confirm отправил ровно то, что реально сохранено на backend.
+  const handleSaveKitComponents = async () => {
+    if (!kitPickerItem || !mlImport) return;
+
+    const components = kitSelectedIds.map((id) => ({
+      component_product_id: Number(id),
+      quantity: kitQuantities[id] && kitQuantities[id] > 0 ? Math.trunc(kitQuantities[id]) : 1,
+    }));
+
+    try {
+      setKitSaving(true);
+      setKitError(null);
+      const updatedItem = await saveMlImportKitComponents(mlImport.id, kitPickerItem.id, components);
+
+      setMlImport((current) => {
+        if (!current) return current;
+        return { ...current, items: current.items.map((item) => item.id === updatedItem.id ? updatedItem : item) };
+      });
+      setKitComponentsByItemId((current) => ({
+        ...current,
+        [updatedItem.id]: (updatedItem.kit_components ?? []).map((c) => ({
+          component_product_id: c.component_product_id,
+          quantity: c.quantity_per_kit,
+        })),
+      }));
+
+      closeKitPicker();
+    } catch (error) {
+      // Модалка остаётся открытой — ПМ должен видеть ошибку и иметь
+      // возможность поправить состав, не начиная подбор заново.
+      setKitError(
+        error instanceof Error ? error.message : "Не удалось сохранить состав комплекта",
+      );
+    } finally {
+      setKitSaving(false);
     }
   };
 
@@ -668,6 +1019,12 @@ export function ProjectPagePM({
         return { ...current, items: current.items.filter((row) => row.id !== item.id) };
       });
       setOpenVariantPickerId((current) => (current === item.id ? null : current));
+      setKitComponentsByItemId((current) => {
+        if (!(item.id in current)) return current;
+        const next = { ...current };
+        delete next[item.id];
+        return next;
+      });
     } catch (error) {
       setMlImportError(error instanceof Error ? error.message : "Не удалось удалить строку");
     } finally {
@@ -808,6 +1165,7 @@ export function ProjectPagePM({
         ? String(item.price_cost)
         : "",
       price: Number(item.price ?? 0) > 0 ? String(item.price) : "",
+      is_kit: false,
     });
     setProductModalError(null);
   };
@@ -858,6 +1216,7 @@ export function ProjectPagePM({
       unit,
       price_cost: priceCost,
       price,
+      is_kit: productModalForm.is_kit,
     };
 
     try {
@@ -899,7 +1258,7 @@ export function ProjectPagePM({
         setProductCatalog((current) =>
           current.some((product) => product.id === newProductId)
             ? current
-            : [...current, { id: newProductId, name: productName, unit }],
+            : [...current, { id: newProductId, name: productName, unit, is_kit: productModalForm.is_kit }],
         );
       } else {
         // Диагностика вместо тихого провала: backend создал товар, но не
@@ -924,12 +1283,47 @@ export function ProjectPagePM({
     }
   };
 
+  // Пакует состав комплекта в тело confirmMlImport. backend отклоняет (400)
+  // ЛЮБУЮ строку, привязанную к товару-комплекту, у которой в
+  // kit_selections нет записи, поэтому здесь включаем запись для КАЖДОЙ
+  // строки, чей selected_product_id указывает на товар с is_kit=true.
+  //
+  // Источник состава на строку — kitComponentsByItemId (то, что подбиралось
+  // в текущей сессии), а если её там нет (страницу перезагрузили и
+  // кит-пикер для этой строки в этой сессии ни разу не открывали) —
+  // item.kit_components, уже сохранённый на backend черновик. Раньше при
+  // отсутствии в kitComponentsByItemId сюда уходил пустой массив ([]) даже
+  // для строки с реально сохранённым составом — confirm тихо затирал бы его
+  // пустым.
+  const buildKitSelectionsPayload = (): ConfirmMlImportKitSelection[] => {
+    if (!mlImport) return [];
+    return mlImport.items
+      .filter((item) => {
+        if (item.selected_product_id == null) return false;
+        const product = productCatalog.find((p) => p.id === item.selected_product_id);
+        return product?.is_kit === true;
+      })
+      .map((item) => ({
+        item_id: item.id,
+        components:
+          kitComponentsByItemId[item.id] ??
+          (item.kit_components ?? []).map((c) => ({
+            component_product_id: c.component_product_id,
+            quantity: c.quantity_per_kit,
+          })),
+      }));
+  };
+
   const handleConfirmMlImport = async () => {
     if (!mlImport || mlImport.status !== "draft") return;
     try {
       setConfirmingImport(true);
       setMlImportError(null);
-      await confirmMlImport(mlImport.id);
+      const kitSelections = buildKitSelectionsPayload();
+      await confirmMlImport(
+        mlImport.id,
+        kitSelections.length ? { kit_selections: kitSelections } : undefined,
+      );
 
       // Подтверждение импорта должно переводить проект:
       // «Новый» / «Новый проект» → «В редактировании».
@@ -988,7 +1382,11 @@ export function ProjectPagePM({
       setConfirmingImport(true);
       setSending(true);
       setMlImportError(null);
-      await confirmMlImport(mlImport.id);
+      const kitSelections = buildKitSelectionsPayload();
+      await confirmMlImport(
+        mlImport.id,
+        kitSelections.length ? { kit_selections: kitSelections } : undefined,
+      );
       await sendProjectToDirector(project.id);
       onKpSent();
       await refreshProject();
@@ -1595,13 +1993,17 @@ export function ProjectPagePM({
                           const effectiveReasons = isWarehouseRequest
                             ? (Number.isFinite(warehouseQuantity) && warehouseQuantity > 0 ? [] : ["количество должно быть больше нуля"])
                             : rowState.reasons;
-                          const displayedStatus =
-                            normalizedStatus ??
-                            item.ml_status?.trim() ??
-                            "Статус не указан";
                           const statusStyle = normalizedStatus
                             ? ML_STATUS_STYLES[normalizedStatus]
                             : UNKNOWN_ML_STATUS_STYLE;
+                          // Для строки-комплекта — короткая расшифровка под
+                          // статусом/ДОСТУПНО: сколько позиций состава не
+                          // хватает, либо что состав вообще не подобран.
+                          // kit_components — опциональное поле (см. api.ts),
+                          // поэтому на старом backend просто ничего не покажем.
+                          const kitComponentsCount = item.kit_components?.length ?? 0;
+                          const kitShortfallCount =
+                            item.kit_components?.filter((c) => c.shortfall_quantity > 0).length ?? 0;
 
                           return (
                               <tr key={item.id} className={`transition-colors ${statusStyle.row} ${isDeleting ? "opacity-50" : ""}`}>
@@ -1628,12 +2030,11 @@ export function ProjectPagePM({
                                       className="w-24 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
                                   />
                                 </td>
-                                <td className="px-4 py-3">
-                                  <span
-                                      className={`inline-flex px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap ${statusStyle.badge}`}>
-                                    {displayedStatus}
-                                  </span>
-                                </td>
+                                {!isWarehouseRequest && (
+                                  <td className="px-4 py-3">
+                                    <StockStatusBadge status={item.ml_status} />
+                                  </td>
+                                )}
                                 <td className="px-4 py-3">
                                   {canPickProduct ? (() => {
                                       const isPickerOpen = openVariantPickerId === item.id;
@@ -1665,12 +2066,27 @@ export function ProjectPagePM({
                                         .filter(matchesQuery)
                                         .slice(0, 50);
 
+                                      const selectedCatalogProduct =
+                                        item.selected_product_id != null
+                                          ? productCatalog.find((p) => p.id === item.selected_product_id)
+                                          : undefined;
+
                                       const selectedProductName =
                                         item.selected_product_id != null
-                                          ? productCatalog.find((p) => p.id === item.selected_product_id)?.name
+                                          ? selectedCatalogProduct?.name
                                             ?? item.matched_product
                                             ?? "Товар выбран"
                                           : null;
+
+                                      // item.kit_components — сохранённый на backend
+                                      // состав (авторитетный после saveMlImportKitComponents);
+                                      // kitComponentsByItemId — то, что подбирается в
+                                      // текущей сессии до сохранения (или на старом
+                                      // backend, где kit_components ещё не отдаётся).
+                                      const selectedKitComponentsCount =
+                                        item.kit_components?.length ??
+                                        kitComponentsByItemId[item.id]?.length ??
+                                        0;
 
                                       return (
                                         <div className="relative" data-variant-picker={item.id}>
@@ -1682,11 +2098,7 @@ export function ProjectPagePM({
                                                 const rect = event.currentTarget.getBoundingClientRect();
                                                 setProductSearch("");
                                                 if (willOpen) {
-                                                  setPickerPosition({
-                                                    top: rect.bottom + 4,
-                                                    left: rect.left,
-                                                    width: Math.max(rect.width, 416),
-                                                  });
+                                                  setPickerPosition(computePickerPosition(rect));
                                                 }
                                                 setOpenVariantPickerId(willOpen ? item.id : null);
                                               }}
@@ -1708,11 +2120,32 @@ export function ProjectPagePM({
                                             />
                                           </button>
 
+                                          {selectedCatalogProduct?.is_kit && (
+                                            <button
+                                                type="button"
+                                                onClick={() => void openKitPicker(item, selectedCatalogProduct)}
+                                                className="mt-1 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                                            >
+                                              <Pencil size={11} />
+                                              {selectedKitComponentsCount > 0
+                                                ? `Состав комплекта: ${selectedKitComponentsCount}`
+                                                : "Выбрать состав комплекта"}
+                                            </button>
+                                          )}
+
                                           {isPickerOpen && pickerPosition && createPortal(
                                             <div
                                                 data-variant-picker={item.id}
-                                                style={{ position: "fixed", top: pickerPosition.top, left: pickerPosition.left, width: pickerPosition.width }}
-                                                className="z-50 max-h-[28rem] overflow-y-auto bg-card border border-border rounded-lg shadow-lg py-1">
+                                                style={{
+                                                  position: "fixed",
+                                                  left: pickerPosition.left,
+                                                  width: pickerPosition.width,
+                                                  maxHeight: pickerPosition.maxHeight,
+                                                  ...(pickerPosition.top !== undefined
+                                                    ? { top: pickerPosition.top }
+                                                    : { bottom: pickerPosition.bottom }),
+                                                }}
+                                                className="z-50 overflow-y-auto bg-card border border-border rounded-lg shadow-lg py-1">
                                               <div className="sticky top-0 bg-card px-2 pb-1.5 pt-1">
                                                 <div className="relative">
                                                   <Search
@@ -1735,23 +2168,36 @@ export function ProjectPagePM({
                                                   <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                                                     Похожие по данным ML
                                                   </p>
-                                                  {shownSuggested.map((product) => (
-                                                    <button
-                                                        key={`suggested-${product.id}`}
-                                                        type="button"
-                                                        onClick={() => {
-                                                          handleMlItemUpdate(item.id, { selected_product_id: product.id });
-                                                          setOpenVariantPickerId(null);
-                                                        }}
-                                                        className={`w-full text-left px-3 py-2.5 text-sm hover:bg-background transition-colors ${
-                                                          item.selected_product_id === product.id
-                                                            ? "bg-blue-50 dark:bg-blue-400/15 text-primary font-medium"
-                                                            : "text-foreground"
-                                                        }`}
-                                                    >
-                                                      {product.name}
-                                                    </button>
-                                                  ))}
+                                                  {shownSuggested.map((product) => {
+                                                    const isChecked = selectedProductIdsInDropdown.includes(String(product.id));
+                                                    return (
+                                                      <div
+                                                          key={`suggested-${product.id}`}
+                                                          role="button"
+                                                          tabIndex={0}
+                                                          onClick={() => toggleProductIdInDropdown(product.id)}
+                                                          onKeyDown={(event) => {
+                                                            if (event.key === "Enter" || event.key === " ") {
+                                                              event.preventDefault();
+                                                              toggleProductIdInDropdown(product.id);
+                                                            }
+                                                          }}
+                                                          className={`w-full flex items-center gap-1.5 text-left px-3 py-2.5 text-sm hover:bg-background transition-colors cursor-pointer ${
+                                                            isChecked
+                                                              ? "bg-blue-50 dark:bg-blue-400/15 text-primary font-medium"
+                                                              : "text-foreground"
+                                                          }`}
+                                                      >
+                                                        <Checkbox checked={isChecked} className="pointer-events-none shrink-0" />
+                                                        <span className="truncate">{product.name}</span>
+                                                        {product.is_kit && (
+                                                          <span className="shrink-0 rounded-md bg-blue-50 dark:bg-blue-400/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                                                            Комплект
+                                                          </span>
+                                                        )}
+                                                      </div>
+                                                    );
+                                                  })}
                                                 </>
                                               )}
 
@@ -1767,23 +2213,36 @@ export function ProjectPagePM({
                                                     : "Каталог пуст"}
                                                 </p>
                                               ) : (
-                                                shownRest.map((product) => (
-                                                  <button
-                                                      key={`catalog-${product.id}`}
-                                                      type="button"
-                                                      onClick={() => {
-                                                        handleMlItemUpdate(item.id, { selected_product_id: product.id });
-                                                        setOpenVariantPickerId(null);
-                                                      }}
-                                                      className={`w-full text-left px-3 py-2.5 text-sm hover:bg-background transition-colors ${
-                                                        item.selected_product_id === product.id
-                                                          ? "bg-blue-50 dark:bg-blue-400/15 text-primary font-medium"
-                                                          : "text-foreground"
-                                                      }`}
-                                                  >
-                                                    {product.name}
-                                                  </button>
-                                                ))
+                                                shownRest.map((product) => {
+                                                  const isChecked = selectedProductIdsInDropdown.includes(String(product.id));
+                                                  return (
+                                                    <div
+                                                        key={`catalog-${product.id}`}
+                                                        role="button"
+                                                        tabIndex={0}
+                                                        onClick={() => toggleProductIdInDropdown(product.id)}
+                                                        onKeyDown={(event) => {
+                                                          if (event.key === "Enter" || event.key === " ") {
+                                                            event.preventDefault();
+                                                            toggleProductIdInDropdown(product.id);
+                                                          }
+                                                        }}
+                                                        className={`w-full flex items-center gap-1.5 text-left px-3 py-2.5 text-sm hover:bg-background transition-colors cursor-pointer ${
+                                                          isChecked
+                                                            ? "bg-blue-50 dark:bg-blue-400/15 text-primary font-medium"
+                                                            : "text-foreground"
+                                                        }`}
+                                                    >
+                                                      <Checkbox checked={isChecked} className="pointer-events-none shrink-0" />
+                                                      <span className="truncate">{product.name}</span>
+                                                      {product.is_kit && (
+                                                        <span className="shrink-0 rounded-md bg-blue-50 dark:bg-blue-400/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                                                          Комплект
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                  );
+                                                })
                                               )}
 
                                               <div className="sticky bottom-0 border-t border-border bg-card mt-1 pt-1">
@@ -1805,12 +2264,29 @@ export function ProjectPagePM({
                                                           selected_product_id: null,
                                                         });
                                                         setOpenVariantPickerId(null);
+                                                        setKitComponentsByItemId((current) => {
+                                                          if (!(item.id in current)) return current;
+                                                          const next = { ...current };
+                                                          delete next[item.id];
+                                                          return next;
+                                                        });
                                                       }}
                                                       className="w-full flex items-center gap-1.5 text-left px-3 py-2.5 text-sm font-medium text-destructive hover:bg-accent transition-colors"
                                                   >
                                                     <XCircle size={14} /> Снять привязку
                                                   </button>
                                                 )}
+                                                <button
+                                                    type="button"
+                                                    disabled={selectedProductIdsInDropdown.length === 0}
+                                                    onClick={() => handleApplyProductSelection(item)}
+                                                    className="w-full flex items-center justify-center gap-1.5 mt-1 rounded-md bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground transition-colors"
+                                                >
+                                                  <Check size={14} />
+                                                  {selectedProductIdsInDropdown.length > 1
+                                                    ? `Применить (комплект из ${selectedProductIdsInDropdown.length})`
+                                                    : "Применить"}
+                                                </button>
                                               </div>
                                             </div>,
                                             document.body,
@@ -1897,7 +2373,12 @@ export function ProjectPagePM({
                                 </td>
                                   </>
                                 )}
-                                <td className="px-4 py-3 text-sm font-mono text-foreground">{item.available_quantity}</td>
+                                <td className="px-4 py-3 text-sm font-mono text-foreground">
+                                  {item.available_quantity}
+                                  {item.is_kit && (
+                                    <span className="ml-1 text-[10px] font-sans text-muted-foreground">компл.</span>
+                                  )}
+                                </td>
                                 <td className="px-4 py-3">
                                   <input
                                       key={`${item.id}-comment-${item.user_comment ?? ""}`}
@@ -1951,6 +2432,16 @@ export function ProjectPagePM({
                                           <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300">
                                             <CheckCircle2 size={14}/>
                                             Будет куплено
+                                          </span>
+                                        )}
+                                        {item.is_kit && kitComponentsCount === 0 && (
+                                          <span className="text-[11px] text-amber-700 dark:text-amber-300">
+                                            Состав комплекта не выбран
+                                          </span>
+                                        )}
+                                        {item.is_kit && kitComponentsCount > 0 && kitShortfallCount > 0 && (
+                                          <span className="text-[11px] text-amber-700 dark:text-amber-300">
+                                            Не хватает: {kitShortfallCount} из {kitComponentsCount} позиций
                                           </span>
                                         )}
                                         {mlImport.status === "draft" && (
@@ -2330,6 +2821,17 @@ export function ProjectPagePM({
                   </label>
                 </div>
 
+                <label className="flex items-center gap-2 text-sm text-foreground">
+                  <Checkbox
+                      checked={productModalForm.is_kit}
+                      onCheckedChange={(checked) => setProductModalForm((current) => ({
+                        ...current,
+                        is_kit: checked === true,
+                      }))}
+                  />
+                  Это комплект (состоит из нескольких товаров)
+                </label>
+
                 {productModalError && (
                   <div className="rounded-lg border border-red-200 dark:border-red-400/25 bg-red-50 dark:bg-red-400/15 px-3 py-2 text-sm text-red-700 dark:text-red-300">
                     {productModalError}
@@ -2358,6 +2860,212 @@ export function ProjectPagePM({
             </div>
           </div>
         )}
+
+        {kitPickerItem && kitPickerProduct && (() => {
+          // КОЛ-ВО строки могло измениться после того, как кит-пикер был
+          // открыт (final_quantity правится вне модалки) — берём свежее
+          // значение из mlImport.items, а не из захваченного при открытии
+          // kitPickerItem, чтобы required = quantityPerKit × kitRowQuantity
+          // не был устаревшим.
+          const kitRowItem = mlImport?.items.find((i) => i.id === kitPickerItem.id) ?? kitPickerItem;
+          const kitRowQuantity = Number(kitRowItem.final_quantity ?? kitRowItem.input_quantity ?? 1);
+          const kitShortfallIds = kitSelectedIds.filter((id) => {
+            const required = (kitQuantities[id] ?? 1) * kitRowQuantity;
+            const available = kitAvailability[id] ?? 0;
+            return available < required;
+          });
+          const hasAvailabilityData = Object.keys(kitAvailability).length > 0;
+
+          return (
+          <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="kit-picker-title"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) closeKitPicker();
+              }}
+          >
+            <div className="w-full max-w-lg rounded-xl bg-card shadow-xl">
+              <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
+                <div>
+                  <h2 id="kit-picker-title" className="text-lg font-semibold text-foreground">
+                    Состав комплекта «{kitPickerProduct.name}»
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Строка «{kitPickerItem.input_product}» привязана к комплекту — выберите товары, из которых он состоит, и укажите их количество.
+                  </p>
+                </div>
+                <button
+                    type="button"
+                    onClick={closeKitPicker}
+                    className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-muted-foreground"
+                    aria-label="Закрыть"
+                >
+                  <XCircle size={20}/>
+                </button>
+              </div>
+
+              <div className="space-y-4 px-6 py-5">
+                {kitLoading ? (
+                  <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+                    <Loader2 size={16} className="animate-spin"/>
+                    Загрузка состава комплекта…
+                  </div>
+                ) : (
+                  <>
+                    <MultiSelectCombobox
+                        options={productCatalog
+                          .filter((product) => product.id !== kitPickerProduct.id && !product.is_kit)
+                          .map((product) => ({ value: String(product.id), label: product.name }))}
+                        selected={kitSelectedIds}
+                        onChange={(values) => {
+                          setKitSelectedIds(values);
+                          setKitQuantities((current) => {
+                            const next: Record<string, number> = {};
+                            values.forEach((id) => { next[id] = current[id] ?? 1; });
+                            return next;
+                          });
+                        }}
+                        placeholder="Выберите товары комплекта…"
+                        searchPlaceholder="Поиск по каталогу…"
+                        emptyText={productCatalogLoading ? "Загрузка каталога…" : "Ничего не найдено"}
+                        onCreateOption={handleCreateKitComponentProduct}
+                    />
+
+                    {kitSelectedIds.length > 0 && (
+                      <div className="flex items-center gap-2 text-sm">
+                        {kitAvailabilityLoading && !hasAvailabilityData ? (
+                          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                            <Loader2 size={14} className="animate-spin"/>
+                            Проверяем остатки…
+                          </span>
+                        ) : kitShortfallIds.length === 0 ? (
+                          <span className="inline-flex items-center gap-1.5 font-medium text-green-700 dark:text-green-300">
+                            <CheckCircle2 size={14}/>
+                            Хватает на {kitRowQuantity} компл.
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 font-medium text-amber-700 dark:text-amber-300">
+                            <AlertTriangle size={14}/>
+                            Не хватает по {kitShortfallIds.length} из {kitSelectedIds.length} позиций
+                          </span>
+                        )}
+                        {kitAvailabilityError && (
+                          <span className="text-xs text-red-700 dark:text-red-300">
+                            ({kitAvailabilityError})
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {kitSelectedIds.length > 0 && (
+                      <div className="max-h-64 overflow-y-auto rounded-lg border border-border divide-y divide-border">
+                        {kitSelectedIds.map((id) => {
+                          const componentProduct = productCatalog.find((p) => String(p.id) === id);
+                          const quantityPerKit = kitQuantities[id] ?? 1;
+                          const required = quantityPerKit * kitRowQuantity;
+                          const available = kitAvailability[id] ?? 0;
+                          const isKnown = id in kitAvailability;
+                          const sufficient = isKnown && available >= required;
+                          const shortfall = Math.max(required - available, 0);
+                          const rowBackground = !isKnown
+                            ? UNKNOWN_ML_STATUS_STYLE.row
+                            : sufficient
+                            ? ML_STATUS_STYLES["На складе"].row
+                            : ML_STATUS_STYLES["Есть в системе (недостаточно)"].row;
+
+                          return (
+                            <div key={id} className={`flex items-center justify-between gap-3 px-3 py-2 ${rowBackground}`}>
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-medium text-foreground">
+                                  {componentProduct?.name ?? `Товар #${id}`}
+                                </p>
+                                {!isKnown ? (
+                                  <span className="mt-1 inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                                    <Loader2 size={10} className="animate-spin"/>
+                                    Проверка остатков…
+                                  </span>
+                                ) : (
+                                  <StockStatusBadge
+                                      status={sufficient ? "На складе" : "Есть в системе (недостаточно)"}
+                                      label={sufficient ? "На складе" : `Не хватает ${shortfall}`}
+                                      className="mt-1 px-2 py-0.5 text-[11px]"
+                                  />
+                                )}
+                              </div>
+                              <input
+                                  type="number"
+                                  min={1}
+                                  step="1"
+                                  value={kitQuantities[id] ?? 1}
+                                  onChange={(event) => {
+                                    const qty = Number(event.target.value);
+                                    setKitQuantities((current) => ({
+                                      ...current,
+                                      [id]: Number.isFinite(qty) && qty > 0 ? Math.trunc(qty) : 1,
+                                    }));
+                                  }}
+                                  className="w-20 shrink-0 rounded-md border border-border bg-card px-2 py-1 text-sm text-right focus:outline-none focus:border-primary"
+                              />
+                              <button
+                                  type="button"
+                                  onClick={() => {
+                                    setKitSelectedIds((current) => current.filter((v) => v !== id));
+                                    setKitQuantities((current) => {
+                                      const next = { ...current };
+                                      delete next[id];
+                                      return next;
+                                    });
+                                  }}
+                                  className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted"
+                                  aria-label="Убрать из комплекта"
+                              >
+                                <XCircle size={15}/>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {kitResolveNotice && (
+                  <div className="rounded-lg border border-blue-200 dark:border-blue-400/25 bg-blue-50 dark:bg-blue-400/15 px-3 py-2 text-sm text-blue-700 dark:text-blue-300">
+                    {kitResolveNotice}
+                  </div>
+                )}
+
+                {kitError && (
+                  <div className="rounded-lg border border-red-200 dark:border-red-400/25 bg-red-50 dark:bg-red-400/15 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+                    {kitError}
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-3 border-t border-border pt-4">
+                  <button
+                      type="button"
+                      onClick={closeKitPicker}
+                      className="rounded-lg border border-input px-4 py-2 text-sm font-medium text-foreground hover:bg-background"
+                  >
+                    Отмена
+                  </button>
+                  <button
+                      type="button"
+                      onClick={() => void handleSaveKitComponents()}
+                      disabled={kitLoading || kitSaving}
+                      className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    {kitSaving && <Loader2 size={14} className="animate-spin"/>}
+                    Сохранить состав
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          );
+        })()}
     </PageWrap>
   );
 }

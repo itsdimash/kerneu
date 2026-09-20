@@ -7,6 +7,10 @@ type Product = {
   id: number;
   name: string;
   description: string | null;
+  // ПРЕДПОЛОЖЕНИЕ: GET /products/ отдаёт is_kit наравне с остальными полями
+  // товара. Если поле отсутствует в ответе, трактуем товар как обычный
+  // (не комплект) — см. использование ?? false ниже.
+  is_kit?: boolean;
 };
 
 type ProductHistory = {
@@ -105,6 +109,12 @@ export default function ProductsCatalog() {
   const [history, setHistory] = useState<ProductHistory[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+
+  // Минимальный inline-тумблер признака "комплект" прямо в строке каталога —
+  // отдельной формы/модалки редактирования товара в приложении нет и она не
+  // нужна ради одного булева поля.
+  const [updatingKitId, setUpdatingKitId] = useState<number | null>(null);
+  const [kitFlagError, setKitFlagError] = useState<string | null>(null);
 
   const formatDate = (dateString: string) =>
     new Date(dateString).toLocaleDateString("ru-RU", {
@@ -233,6 +243,40 @@ export default function ProductsCatalog() {
     p.name.toLowerCase().includes(search.toLowerCase()),
   );
 
+  // ПРЕДПОЛОЖЕНИЕ: PATCH /products/{id}/kit-flag принимает { is_kit } и
+  // отвечает 2xx при успехе — тело ответа фронтом не используется, состояние
+  // обновляется оптимистично значением, которое уже отправили.
+  const toggleKitFlag = async (product: Product, nextValue: boolean) => {
+    try {
+      setUpdatingKitId(product.id);
+      setKitFlagError(null);
+
+      const res = await fetch(`${API_BASE}/products/${product.id}/kit-flag`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_kit: nextValue }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Не удалось изменить признак комплекта");
+      }
+
+      setProducts((current) =>
+        current.map((p) => (p.id === product.id ? { ...p, is_kit: nextValue } : p)),
+      );
+      setSelectedProduct((current) =>
+        current && current.id === product.id ? { ...current, is_kit: nextValue } : current,
+      );
+    } catch (error) {
+      setKitFlagError(
+        error instanceof Error ? error.message : "Ошибка изменения признака комплекта",
+      );
+    } finally {
+      setUpdatingKitId(null);
+    }
+  };
+
   return (
     <>
       {/* --- Кнопка --- */}
@@ -284,6 +328,12 @@ export default function ProductsCatalog() {
                 </div>
               )}
 
+              {kitFlagError && (
+                <div className="text-sm text-destructive py-2 text-center">
+                  {kitFlagError}
+                </div>
+              )}
+
               {!productsLoading && !productsError && (
                 <div className="flex flex-col divide-y divide-border">
                   {filteredProducts.length === 0 && (
@@ -293,21 +343,45 @@ export default function ProductsCatalog() {
                   )}
 
                   {filteredProducts.map((product) => (
-                    <button
+                    <div
                       key={product.id}
-                      onClick={() => openProductDetails(product)}
-                      className="flex items-center justify-between w-full text-left py-3 px-1 hover:bg-muted transition-colors rounded-md"
+                      className="flex items-center justify-between w-full py-3 px-1 hover:bg-muted transition-colors rounded-md"
                     >
-                      <div>
-                        <div className="text-sm font-medium text-foreground">
+                      <button
+                        onClick={() => openProductDetails(product)}
+                        className="flex-1 min-w-0 text-left"
+                      >
+                        <div className="text-sm font-medium text-foreground truncate">
                           {product.name}
                         </div>
                         <div className="text-xs text-muted-foreground">
                           ID: {product.id}
                         </div>
+                      </button>
+
+                      <div className="flex items-center gap-3 shrink-0 pl-2">
+                        <label
+                          className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none"
+                          title="Комплект: состоит из нескольких товаров"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={product.is_kit ?? false}
+                            disabled={updatingKitId === product.id}
+                            onChange={(e) => toggleKitFlag(product, e.target.checked)}
+                            className="size-3.5 rounded border-input accent-primary disabled:opacity-50"
+                          />
+                          Комплект
+                        </label>
+                        <button
+                          onClick={() => openProductDetails(product)}
+                          className="text-xs text-muted-foreground"
+                        >
+                          Подробнее →
+                        </button>
                       </div>
-                      <span className="text-xs text-muted-foreground">Подробнее →</span>
-                    </button>
+                    </div>
                   ))}
                 </div>
               )}
