@@ -138,6 +138,13 @@ export interface KitComponentStatus {
   available_quantity: number;
   shortfall_quantity: number;
   ml_status: "На складе" | "Есть в системе (недостаточно)";
+  // Себестоимость компонента, введённая ПМ вручную (null = "не введена" —
+  // backend использует цену из каталога). Typed 0 — валидное значение
+  // (бесплатный компонент), отличное от "не введена".
+  price_cost?: number | string | null;
+  // Эффективная себестоимость, фактически использованная backend'ом
+  // (введённая ПМ либо цена из каталога) — присутствует всегда.
+  unit_cost?: number | string | null;
 }
 
 export interface MlImportItemResponse {
@@ -437,7 +444,13 @@ export async function updateMlImportItem(
 export async function saveMlImportKitComponents(
   importId: number,
   itemId: number,
-  components: { component_product_id: number; quantity: number }[],
+  components: {
+    component_product_id: number;
+    quantity: number;
+    // Опциональная себестоимость компонента. Отсутствие поля = "не введена"
+    // (backend возьмёт цену из каталога); typed 0 отправляется как 0.
+    price_cost?: number | null;
+  }[],
 ): Promise<MlImportItemResponse> {
   try {
     const { data } = await api.put<MlImportItemResponse>(
@@ -550,7 +563,13 @@ export async function deleteMlImportItem(
 // предполагалось изначально).
 export interface ConfirmMlImportKitSelection {
   item_id: number;
-  components: { component_product_id: number; quantity: number }[];
+  components: {
+    component_product_id: number;
+    quantity: number;
+    // Себестоимость компонента > 0 в теле confirm побеждает сохранённую в
+    // черновике — см. приоритет на backend в ConfirmMlImportPayload.
+    price_cost?: number | null;
+  }[];
 }
 
 // ПОДТВЕРЖДЕНО backend'ом: confirm_ml_import ожидает kit_selections с ровно

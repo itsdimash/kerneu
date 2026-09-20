@@ -52,6 +52,16 @@ import { StockStatusBadge } from "../app/components/common/StockStatusBadge";
 import { KitGroupHeaderRow } from "../app/components/common/KitGroupHeaderRow";
 import { ML_STATUS_STYLES, UNKNOWN_ML_STATUS_STYLE, normalizeMlStatus } from "../lib/stockStatus";
 import { groupEntriesByKit } from "../lib/kitGroups";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../app/components/ui/alert-dialog";
 
 // Достаёт читаемые текстовые подсказки из similar_variants — ML отдаёт
 // их из внешнего Excel-файла в произвольном виде (иногда структурированные
@@ -370,6 +380,10 @@ export function ProjectPagePM({
     is_kit: false,
   });
   const [productModalError, setProductModalError] = useState<string | null>(null);
+  // Продажа ниже себестоимости разрешена (явное решение бизнеса), но перед
+  // тем как ПМ нажмёт «Подтвердить импорт» с такими строками, показываем
+  // предупреждение — чтобы отрицательная маржа не проскакивала случайно.
+  const [showNegativeMarginConfirm, setShowNegativeMarginConfirm] = useState(false);
   // Строка уже привязана к товару, но пользователь хочет создать вместо него
   // новый (ML мог сопоставить уверенно, но неверно). Backend запрещает
   // create-product для привязанной строки, поэтому привязку снимаем сами,
@@ -429,8 +443,32 @@ export function ProjectPagePM({
   // кит-пикер. Хранится на фронте до подтверждения импорта — уходит на
   // backend целиком вместе с confirmMlImport (см. handleConfirmMlImport).
   const [kitComponentsByItemId, setKitComponentsByItemId] = useState<
-    Record<number, { component_product_id: number; quantity: number }[]>
+    Record<number, { component_product_id: number; quantity: number; price_cost?: number | null }[]>
   >({});
+  // Введённая ПМ себестоимость за единицу компонента в открытом кит-пикере
+  // (component_product_id -> сырой текст поля). Ключ присутствует, только
+  // если ПМ реально ввёл значение в этой сессии (включая typed 0) —
+  // отсутствие ключа означает "не введено", а не 0. Только для коммерческих
+  // импортов (см. isWarehouseRequest) — у "Заявка на склад" цен нет вовсе.
+  //
+  // Хранится строкой, а не числом: контролируемый <input type="number">,
+  // немедленно приводящий введённый текст к числу и кладущий это число
+  // обратно в value, съедает недописанную десятичную часть — ввод "12."
+  // после следующей цифры превращался в "125" вместо "12.5", потому что
+  // React на каждый рендер откатывал value к уже распарсенному "12".
+  // Парсинг в число происходит только в точках потребления (см.
+  // parseKitComponentCost).
+  const [kitComponentCosts, setKitComponentCosts] = useState<Record<string, string>>({});
+
+  // Приводит сырой текст поля себестоимости к валидному неотрицательному
+  // числу, либо null для пустой/недописанной/некорректной строки (например
+  // одиночная точка "."). Используется везде, где kitComponentCosts
+  // реально считывается — сам инпут хранит и показывает сырой текст.
+  const parseKitComponentCost = (raw: string | undefined): number | null => {
+    if (raw == null || raw.trim() === "") return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  };
   // Сохранение состава на backend (saveMlImportKitComponents) — отдельно от
   // kitLoading (загрузка дефолтного состава при открытии), чтобы кнопка
   // "Сохранить состав" не путалась со спиннером открытия пикера.
@@ -786,6 +824,7 @@ export function ProjectPagePM({
           [updatedItem.id]: updatedItem.kit_components!.map((c) => ({
             component_product_id: c.component_product_id,
             quantity: c.quantity_per_kit,
+            price_cost: c.price_cost != null ? Number(c.price_cost) : null,
           })),
         }));
       }
@@ -845,10 +884,18 @@ export function ProjectPagePM({
       const resolved = item.kit_components.map((c) => ({
         component_product_id: c.component_product_id,
         quantity: c.quantity_per_kit,
+        price_cost: c.price_cost != null ? Number(c.price_cost) : null,
       }));
       setKitSelectedIds(resolved.map((c) => String(c.component_product_id)));
       setKitQuantities(
         Object.fromEntries(resolved.map((c) => [String(c.component_product_id), c.quantity])),
+      );
+      setKitComponentCosts(
+        Object.fromEntries(
+          resolved
+            .filter((c) => c.price_cost != null)
+            .map((c) => [String(c.component_product_id), String(c.price_cost)]),
+        ),
       );
       setKitComponentsByItemId((current) => ({ ...current, [item.id]: resolved }));
       return;
@@ -859,6 +906,13 @@ export function ProjectPagePM({
       setKitSelectedIds(remembered.map((c) => String(c.component_product_id)));
       setKitQuantities(
         Object.fromEntries(remembered.map((c) => [String(c.component_product_id), c.quantity])),
+      );
+      setKitComponentCosts(
+        Object.fromEntries(
+          remembered
+            .filter((c) => c.price_cost != null)
+            .map((c) => [String(c.component_product_id), String(c.price_cost)]),
+        ),
       );
       return;
     }
@@ -874,6 +928,8 @@ export function ProjectPagePM({
       setKitQuantities(
         Object.fromEntries(resolved.map((c) => [String(c.component_product_id), c.quantity])),
       );
+      // Себестоимости у дефолтного "рецепта" нет — ПМ ещё ничего не вводил.
+      setKitComponentCosts({});
       // Коммитим предзаполненный по умолчанию состав сразу после загрузки —
       // не только по явному клику «Сохранить состав». backend отклоняет
       // (400) строку-комплект, для которой в kit_selections вообще нет
@@ -938,6 +994,7 @@ export function ProjectPagePM({
       setKitQuantities(
         Object.fromEntries(prefilledComponents.map((c) => [String(c.component_product_id), c.quantity])),
       );
+      setKitComponentCosts({});
       setKitError(null);
       setKitPickerItem(item);
       setKitPickerProduct({ id: resolved.id, name: resolved.name, is_kit: resolved.is_kit });
@@ -972,6 +1029,7 @@ export function ProjectPagePM({
     setKitPickerProduct(null);
     setKitSelectedIds([]);
     setKitQuantities({});
+    setKitComponentCosts({});
     setKitError(null);
   };
 
@@ -1000,10 +1058,18 @@ export function ProjectPagePM({
   const handleSaveKitComponents = async () => {
     if (!kitPickerItem || !mlImport) return;
 
-    const components = kitSelectedIds.map((id) => ({
-      component_product_id: Number(id),
-      quantity: kitQuantities[id] && kitQuantities[id] > 0 ? Math.trunc(kitQuantities[id]) : 1,
-    }));
+    // price_cost отправляется только для коммерческих импортов и только для
+    // компонентов, которые ПМ реально ввёл в этой сессии (typed 0 включая) —
+    // у "Заявка на склад" цен нет вовсе (см. isWarehouseRequest). Недописанный
+    // текст ("." в одиночку и т.п.) parseKitComponentCost вернёт как null —
+    // считаем это "не введено", а не шлём NaN на backend.
+    const components = kitSelectedIds.map((id) => {
+      const quantity = kitQuantities[id] && kitQuantities[id] > 0 ? Math.trunc(kitQuantities[id]) : 1;
+      const cost = isWarehouseRequest ? null : parseKitComponentCost(kitComponentCosts[id]);
+      return cost != null
+        ? { component_product_id: Number(id), quantity, price_cost: cost }
+        : { component_product_id: Number(id), quantity };
+    });
 
     try {
       setKitSaving(true);
@@ -1019,6 +1085,7 @@ export function ProjectPagePM({
         [updatedItem.id]: (updatedItem.kit_components ?? []).map((c) => ({
           component_product_id: c.component_product_id,
           quantity: c.quantity_per_kit,
+          price_cost: c.price_cost != null ? Number(c.price_cost) : null,
         })),
       }));
 
@@ -1239,11 +1306,6 @@ export function ProjectPagePM({
       return;
     }
 
-    if (price < priceCost) {
-      setProductModalError("Цена продажи не может быть ниже себестоимости.");
-      return;
-    }
-
     const payload: MlImportItemCreateProduct = {
       product_name: productName,
       supplier_name: supplierName,
@@ -1339,12 +1401,22 @@ export function ProjectPagePM({
       })
       .map((item) => ({
         item_id: item.id,
-        components:
+        components: (
           kitComponentsByItemId[item.id] ??
           (item.kit_components ?? []).map((c) => ({
             component_product_id: c.component_product_id,
             quantity: c.quantity_per_kit,
-          })),
+            price_cost: c.price_cost != null ? Number(c.price_cost) : null,
+          }))
+        ).map((c) => ({
+          component_product_id: c.component_product_id,
+          quantity: c.quantity,
+          // Только реально введённая себестоимость (>= 0, включая 0) — иначе
+          // confirm затёр бы сохранённое значение нулём для нетронутых
+          // компонентов (у "Заявка на склад" price_cost всегда null, см.
+          // isWarehouseRequest — там цены не вводятся).
+          ...(c.price_cost != null ? { price_cost: c.price_cost } : {}),
+        })),
       }));
   };
 
@@ -1550,6 +1622,21 @@ export function ProjectPagePM({
           .map((row) => `№${row.index + 1} — ${row.state.reasons.join(", ")}`)
           .join("; ") +
         (unresolvedRows.length > 5 ? "; …" : "");
+
+  // Продажа ниже себестоимости не блокирует confirm (бизнес-решение), но
+  // ПМ должен явно подтвердить, что видит такие строки — список считаем
+  // тем же item.margin, что рисует подсветку в таблице.
+  const negativeMarginRows = (mlImport?.items ?? [])
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => !item.is_confirmed && Number(item.margin ?? 0) < 0);
+  const negativeMarginNames = negativeMarginRows.map(({ item, index }) => {
+    const selectedProduct =
+      item.selected_product_id != null
+        ? productCatalog.find((p) => p.id === item.selected_product_id)
+        : undefined;
+    const name = selectedProduct?.name || item.matched_product?.trim() || item.input_product;
+    return `№${index + 1} — ${name}`;
+  });
 
   // Для «Заявки на склад» цена/себестоимость/поставщик не нужны — это
   // внутренний запрос по наличию, а не коммерческая позиция. Готовность
@@ -2469,28 +2556,77 @@ export function ProjectPagePM({
                                   />
                                 </td>
                                 <td className="px-4 py-3">
-                                  <input
-                                      key={`${item.id}-cost-${item.price_cost}`}
-                                      type="number" min={0} step="1"
-                                      disabled={mlImport.status !== "draft" || isUpdating || item.is_confirmed} defaultValue={priceCost}
-                                      onBlur={(event) => {
-                                        const newPriceCost = Number(event.target.value);
-                                        if (!Number.isFinite(newPriceCost) || newPriceCost < 0) {
-                                          setMlImportError("Себестоимость должна быть числом больше или равным нулю");
-                                          return;
-                                        }
-                                        if (newPriceCost !== priceCost) handleMlItemUpdate(item.id, {price_cost: newPriceCost});
-                                      }}
-                                      className="w-32 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
-                                  />
-                                  {item.is_kit && (
-                                    <p className="mt-1 text-[11px] text-muted-foreground">
-                                      0 = считается из состава
-                                      {priceCost === 0 && item.kit_derived_unit_cost != null && (
-                                        <> · Расчётная: {formatMoney(item.kit_derived_unit_cost)}</>
-                                      )}
-                                    </p>
-                                  )}
+                                  {(() => {
+                                    const fieldDisabled = mlImport.status !== "draft" || isUpdating || item.is_confirmed;
+
+                                    if (item.is_kit) {
+                                      // Себестоимость кит-строки теперь ВСЕГДА считается backend'ом
+                                      // как сумма себестоимостей компонентов (kit_derived_unit_cost) —
+                                      // ручного price_cost для кит-строк больше нет. ПМ меняет её
+                                      // только через инпуты компонентов в модалке "Состав комплекта"
+                                      // (см. openKitPicker/handleSaveKitComponents), отсюда — чисто
+                                      // read-only отображение с переходом в модалку.
+                                      const hasDerivedCost = item.kit_derived_unit_cost != null && kitComponentsCount > 0;
+                                      const selectedCatalogProduct =
+                                        item.selected_product_id != null
+                                          ? productCatalog.find((p) => p.id === item.selected_product_id)
+                                          : undefined;
+
+                                      return (
+                                        <div>
+                                          <p className="text-sm font-mono text-foreground">
+                                            {hasDerivedCost ? formatMoney(item.kit_derived_unit_cost) : "—"}
+                                          </p>
+                                          <div className="mt-1 flex items-center gap-1.5">
+                                            <span className="text-[11px] text-muted-foreground">
+                                              {hasDerivedCost ? "авто — сумма по составу" : "выберите состав"}
+                                            </span>
+                                            {selectedCatalogProduct && (
+                                              <button
+                                                  type="button"
+                                                  disabled={fieldDisabled}
+                                                  onClick={() => void openKitPicker(item, selectedCatalogProduct)}
+                                                  className="text-[11px] font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline"
+                                              >
+                                                Изменить в составе
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+
+                                    // Достаёт число из текста поля ("1500", "1 200,50") — убираем
+                                    // всё, кроме цифр/точки/запятой/минуса, запятую трактуем как
+                                    // десятичный разделитель. null — если получилось не число или
+                                    // число отрицательное.
+                                    const parseCostFieldValue = (raw: string): number | null => {
+                                      const cleaned = raw.replace(/[^\d,.-]/g, "").replace(",", ".");
+                                      if (cleaned.trim() === "") return 0;
+                                      const value = Number(cleaned);
+                                      if (!Number.isFinite(value) || value < 0) return null;
+                                      return value;
+                                    };
+
+                                    return (
+                                      <input
+                                          key={`${item.id}-cost-${item.price_cost}`}
+                                          type="text"
+                                          inputMode="decimal"
+                                          disabled={fieldDisabled}
+                                          defaultValue={String(priceCost)}
+                                          onBlur={(event) => {
+                                            const parsed = parseCostFieldValue(event.target.value);
+                                            if (parsed === null) {
+                                              setMlImportError("Себестоимость должна быть числом больше или равным нулю");
+                                              return;
+                                            }
+                                            if (parsed !== priceCost) handleMlItemUpdate(item.id, {price_cost: parsed});
+                                          }}
+                                          className="w-32 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
+                                      />
+                                    );
+                                  })()}
                                 </td>
                                 <td className="px-4 py-3">
                                   <input
@@ -2515,10 +2651,15 @@ export function ProjectPagePM({
                                     className="text-sm font-semibold font-mono text-foreground">{formatMoney(totalAmount)}</span>
                                 </td>
                                 <td className="px-4 py-3">
-                                <span
-                                    className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${marginPercent >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : marginPercent > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : marginPercent < 0 ? "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-1 ring-red-200" : "bg-muted text-muted-foreground ring-1 ring-slate-200"}`}>
-                                  {marginPercent.toFixed(1)}%
-                                </span>
+                                <div className="flex flex-col items-start gap-0.5">
+                                  <span
+                                      className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${marginPercent >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : marginPercent > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : marginPercent < 0 ? "bg-amber-50 dark:bg-amber-400/15 text-red-700 dark:text-red-300 ring-1 ring-amber-200" : "bg-muted text-muted-foreground ring-1 ring-slate-200"}`}>
+                                    {marginPercent.toFixed(1)}%
+                                  </span>
+                                  {marginPercent < 0 && (
+                                    <span className="text-[10px] font-medium text-red-700 dark:text-red-300">убыток</span>
+                                  )}
+                                </div>
                                 </td>
                                   </>
                                 )}
@@ -2798,7 +2939,13 @@ export function ProjectPagePM({
                     <AppTooltip text={confirmBlockedHint}>
                       <button
                           type="button"
-                          onClick={handleConfirmMlImport}
+                          onClick={() => {
+                            if (negativeMarginRows.length > 0) {
+                              setShowNegativeMarginConfirm(true);
+                              return;
+                            }
+                            void handleConfirmMlImport();
+                          }}
                           disabled={!canConfirmMlImport || confirmingImport}
                           className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-colors disabled:bg-slate-200 disabled:text-muted-foreground disabled:cursor-not-allowed enabled:bg-primary enabled:text-white enabled:hover:bg-primary/90 enabled:cursor-pointer"
                       >
@@ -2827,6 +2974,38 @@ export function ProjectPagePM({
               </>
             )}
         </div>
+
+        <AlertDialog open={showNegativeMarginConfirm} onOpenChange={setShowNegativeMarginConfirm}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Есть строки с отрицательной маржой</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-1">
+                  <p>Эти строки продаются ниже себестоимости:</p>
+                  <ul className="list-disc pl-5">
+                    {negativeMarginNames.slice(0, 5).map((label) => (
+                      <li key={label}>{label}</li>
+                    ))}
+                  </ul>
+                  {negativeMarginNames.length > 5 && (
+                    <p>и ещё {negativeMarginNames.length - 5}</p>
+                  )}
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Отмена</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  setShowNegativeMarginConfirm(false);
+                  void handleConfirmMlImport();
+                }}
+              >
+                Подтвердить всё равно
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {productModalItem && (
           <div
@@ -3030,6 +3209,43 @@ export function ProjectPagePM({
           });
           const hasAvailabilityData = Object.keys(kitAvailability).length > 0;
 
+          // Подсказка себестоимости компонента, пока ПМ её не ввёл: цена из
+          // уже сохранённого черновика строки (unit_cost — эффективная
+          // себестоимость на backend), а для только что добавленных в этой
+          // сессии компонентов — цена из каталога товаров. Manual imports
+          // ("Заявка на склад") цен не имеют вовсе — там кит-пикер эту
+          // колонку не рендерит (см. isWarehouseRequest ниже).
+          const getComponentCostPlaceholder = (id: string): number | null => {
+            const savedComponent = kitRowItem.kit_components?.find(
+              (c) => String(c.component_product_id) === id,
+            );
+            if (savedComponent?.unit_cost != null) {
+              const value = Number(savedComponent.unit_cost);
+              if (Number.isFinite(value)) return value;
+            }
+            const catalogProduct = productCatalog.find((p) => String(p.id) === id);
+            if (catalogProduct?.price != null) {
+              const value = Number(catalogProduct.price);
+              if (Number.isFinite(value)) return value;
+            }
+            return null;
+          };
+
+          // Себестоимость комплекта = Σ(кол-во на комплект × (введённая
+          // себестоимость, иначе подсказка)). Компонент без известной цены
+          // не считается нулём — попадает в отдельный счётчик "без цены".
+          let kitCostTotal = 0;
+          let kitCostMissingCount = 0;
+          kitSelectedIds.forEach((id) => {
+            const quantityPerKit = kitQuantities[id] ?? 1;
+            const cost = parseKitComponentCost(kitComponentCosts[id]) ?? getComponentCostPlaceholder(id);
+            if (cost == null || !Number.isFinite(cost)) {
+              kitCostMissingCount += 1;
+            } else {
+              kitCostTotal += cost * quantityPerKit;
+            }
+          });
+
           return (
           <div
               className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
@@ -3040,7 +3256,7 @@ export function ProjectPagePM({
                 if (event.target === event.currentTarget) closeKitPicker();
               }}
           >
-            <div className="w-full max-w-lg rounded-xl bg-card shadow-xl">
+            <div className="w-full max-w-2xl rounded-xl bg-card shadow-xl">
               <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
                 <div>
                   <h2 id="kit-picker-title" className="text-lg font-semibold text-foreground">
@@ -3128,6 +3344,7 @@ export function ProjectPagePM({
                             : sufficient
                             ? ML_STATUS_STYLES["На складе"].row
                             : ML_STATUS_STYLES["Есть в системе (недостаточно)"].row;
+                          const costPlaceholder = getComponentCostPlaceholder(id);
 
                           return (
                             <div key={id} className={`flex items-center justify-between gap-3 px-3 py-2 ${rowBackground}`}>
@@ -3162,6 +3379,44 @@ export function ProjectPagePM({
                                   }}
                                   className="w-20 shrink-0 rounded-md border border-border bg-card px-2 py-1 text-sm text-right focus:outline-none focus:border-primary"
                               />
+                              {!isWarehouseRequest && (
+                                <div className="flex flex-col items-end gap-0.5 shrink-0">
+                                  <span className="text-[10px] leading-none text-muted-foreground">
+                                    Себестоимость, за ед.
+                                  </span>
+                                  <input
+                                      type="number"
+                                      min={0}
+                                      step="0.01"
+                                      aria-label="Себестоимость за единицу"
+                                      value={id in kitComponentCosts ? kitComponentCosts[id] : ""}
+                                      placeholder={costPlaceholder != null ? String(costPlaceholder) : "—"}
+                                      onChange={(event) => {
+                                        // Запятая — привычный для ПМ десятичный разделитель,
+                                        // нормализуем в точку до валидации.
+                                        const raw = event.target.value.replace(",", ".");
+                                        if (raw === "") {
+                                          setKitComponentCosts((current) => {
+                                            const next = { ...current };
+                                            delete next[id];
+                                            return next;
+                                          });
+                                          return;
+                                        }
+                                        // Разрешаем недописанные промежуточные состояния ("12.",
+                                        // "0.") — хранится сырой текст, а не Number(raw), иначе
+                                        // контролируемый инпут откатывал бы value к уже
+                                        // распарсенному числу на каждый рендер, съедая точку
+                                        // прежде, чем ПМ допишет дробную часть. "-" (и любые
+                                        // другие символы вне цифр/точки) отклоняется целиком —
+                                        // отрицательная себестоимость недопустима.
+                                        if (!/^\d*\.?\d*$/.test(raw)) return;
+                                        setKitComponentCosts((current) => ({ ...current, [id]: raw }));
+                                      }}
+                                      className="w-24 rounded-md border border-border bg-card px-2 py-1 text-sm text-right focus:outline-none focus:border-primary"
+                                  />
+                                </div>
+                              )}
                               <button
                                   type="button"
                                   onClick={() => {
@@ -3181,6 +3436,17 @@ export function ProjectPagePM({
                           );
                         })}
                       </div>
+                    )}
+
+                    {!isWarehouseRequest && kitSelectedIds.length > 0 && (
+                      <p className="text-sm font-medium text-foreground">
+                        Себестоимость комплекта: {formatMoney(kitCostTotal)}
+                        {kitCostMissingCount > 0 && (
+                          <span className="text-amber-700 dark:text-amber-300">
+                            {" "}+ без цены: {kitCostMissingCount}
+                          </span>
+                        )}
+                      </p>
                     )}
                   </>
                 )}
