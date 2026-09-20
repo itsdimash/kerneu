@@ -124,6 +124,22 @@ export interface MlSimilarVariant {
   [key: string]: unknown;
 }
 
+// Статус наличия одного компонента комплекта — тот же набор значений,
+// что и MlStatus в src/lib/stockStatus.ts, но backend всегда отдаёт для
+// компонента ровно одно из этих двух ("Нет в системе" и т.п. компонентам
+// не присваиваются: если товара-компонента вообще нет в системе, это
+// ошибка подбора состава, а не статус наличия).
+export interface KitComponentStatus {
+  component_product_id: number;
+  product_name: string;
+  unit: string | null;
+  quantity_per_kit: number;
+  required_quantity: number;
+  available_quantity: number;
+  shortfall_quantity: number;
+  ml_status: "На складе" | "Есть в системе (недостаточно)";
+}
+
 export interface MlImportItemResponse {
   id: number;
 
@@ -159,6 +175,12 @@ export interface MlImportItemResponse {
 
   created_at: string;
   updated_at: string | null;
+
+  // Опциональные — старый backend их ещё не отдаёт. Отсутствие трактуется
+  // на фронте как is_kit=false / kit_components=[] (см. ProjectPage.tsx),
+  // чтобы UI не падал на более старом контракте.
+  is_kit?: boolean;
+  kit_components?: KitComponentStatus[];
 }
 
 export interface MlImportDetailResponse {
@@ -195,6 +217,115 @@ export interface MlImportItemCreateProduct {
   unit: string;
   price_cost: number;
   price: number;
+  // Товар-комплект: состоит из набора других товаров каталога, которые ПМ
+  // подбирает отдельно в кит-пикере после создания (см. getKitComponents /
+  // confirmMlImport ниже). Опционально — по умолчанию backend должен
+  // трактовать отсутствие поля как false.
+  is_kit?: boolean;
+}
+
+// Отдельный от ML-импорта эндпоинт: создаёт товар сам по себе, не трогая
+// никакую строку импорта (в отличие от createProductForMlImportItem,
+// который привязан к конкретному item и переписывает его
+// selected_product_id). Нужен, чтобы кит-пикер мог создать товар-компонент
+// "на лету", не имея под рукой ml_import_item. Единственное обязательное
+// поле — имя; остальное (поставщик/единица/себестоимость/цена) backend
+// проставляет дефолтами.
+export interface ProductCreate {
+  product_name: string;
+}
+
+export interface ProductOut {
+  id: number;
+  name: string;
+  description?: string | null;
+  is_kit: boolean;
+}
+
+export async function createProduct(
+  payload: ProductCreate,
+): Promise<ProductOut> {
+  try {
+    const { data } = await api.post<ProductOut>("/products/", payload);
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось создать товар");
+  }
+}
+
+// Отмечая чекбоксами несколько товаров сразу в дропдауне «Совпавший
+// товар», ПМ фактически говорит "эта строка — комплект из этих товаров".
+// /products/resolve-kit по сырому названию строки (name) сам решает,
+// переиспользовать ли уже существующий товар-комплект с таким именем
+// (reused: true) или создать новый — при коллизии имени backend
+// уникализирует его и возвращает reused: false с итоговым name, которое
+// может отличаться от переданного.
+export interface ResolveKitProductRequest {
+  name: string;
+}
+
+export interface ResolveKitProductResponse {
+  id: number;
+  name: string;
+  is_kit: boolean;
+  reused: boolean;
+}
+
+export async function resolveKitProduct(
+  payload: ResolveKitProductRequest,
+): Promise<ResolveKitProductResponse> {
+  try {
+    const { data } = await api.post<ResolveKitProductResponse>(
+      "/products/resolve-kit",
+      payload,
+    );
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось создать комплект");
+  }
+}
+
+// Состав комплекта, "запомненный" за товаром-комплектом с прошлого раза —
+// backend отдаёт его, чтобы кит-пикер мог предзаполнить выбор, а ПМ мог его
+// скорректировать перед подтверждением строки ML-импорта.
+//
+// ПРЕДПОЛОЖЕНИЕ (backend реализуется отдельно): GET /products/{id}/kit-components
+// возвращает массив { component_product_id, default_quantity }. Если реальная
+// форма ответа отличается, сузить типизацию и разбор в getKitComponents.
+export interface KitComponentResponse {
+  component_product_id: number;
+  default_quantity: number;
+}
+
+export async function getKitComponents(
+  productId: number,
+): Promise<KitComponentResponse[]> {
+  try {
+    const { data } = await api.get<KitComponentResponse[]>(
+      `/products/${productId}/kit-components`,
+    );
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось загрузить состав комплекта");
+  }
+}
+
+// ПРЕДПОЛОЖЕНИЕ: PATCH /products/{id}/kit-flag принимает { is_kit } и
+// возвращает обновлённый товар (используем только то, что реально нужно
+// фронту — id и is_kit).
+export async function updateProductKitFlag(
+  productId: number,
+  isKit: boolean,
+): Promise<{ id: number; is_kit: boolean }> {
+  try {
+    const { data } = await api.patch<{ id: number; is_kit: boolean }>(
+      `/products/${productId}/kit-flag`,
+      { is_kit: isKit },
+    );
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось изменить признак комплекта");
+  }
 }
 
 // Ручное добавление строки в черновик импорта. Обязательны только
@@ -280,6 +411,60 @@ export async function updateMlImportItem(
   return data;
 }
 
+// Заменяет весь черновой состав комплекта для конкретной строки ML-импорта
+// (пустой массив — очищает состав). В ответе backend сразу пересчитывает
+// available_quantity/ml_status/kit_components строки по актуальным
+// остаткам, поэтому дальше просто заменяем строку в mlImport.items тем,
+// что вернул этот запрос — отдельно ничего пересчитывать не нужно.
+export async function saveMlImportKitComponents(
+  importId: number,
+  itemId: number,
+  components: { component_product_id: number; quantity: number }[],
+): Promise<MlImportItemResponse> {
+  try {
+    const { data } = await api.put<MlImportItemResponse>(
+      `/ml-imports/${importId}/items/${itemId}/kit-components`,
+      { components },
+    );
+    return data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 409) {
+      const detail = error.response?.data?.detail;
+      throw new Error(
+        typeof detail === "string" && detail.trim()
+          ? detail
+          : "Импорт больше нельзя редактировать — он уже подтверждён",
+      );
+    }
+    throwWithDetail(error, "Не удалось сохранить состав комплекта");
+  }
+}
+
+export interface ProductAvailability {
+  product_id: number;
+  available_quantity: number;
+}
+
+// Живые остатки по товарам (без разбивки по складам, в отличие от
+// fetchWarehouseStocks) — используется кит-пикером, чтобы показать
+// реальный статус наличия компонента вместо ml_status из каталога
+// товаров, которого там фактически нет. Id, отсутствующие в ответе,
+// трактуются на фронте как остаток 0 (см. контракт эндпоинта).
+export async function fetchProductsAvailability(
+  productIds: number[],
+): Promise<ProductAvailability[]> {
+  if (productIds.length === 0) return [];
+  try {
+    const { data } = await api.post<{ items: ProductAvailability[] }>(
+      "/products/availability",
+      { product_ids: productIds },
+    );
+    return data.items ?? [];
+  } catch (error) {
+    throwWithDetail(error, "Не удалось получить остатки по товарам");
+  }
+}
+
 // Backend отдаёт понятную человеку причину в detail (строкой). Без этой
 // распаковки пользователь видел бы "Request failed with status code 409".
 function throwWithDetail(error: unknown, fallback: string): never {
@@ -339,11 +524,35 @@ export async function deleteMlImportItem(
   }
 }
 
+// Состав комплекта, выбранный ПМ для конкретной строки ML-импорта (строка
+// привязана к товару-комплекту через selected_product_id, а этот массив —
+// то, из чего комплект фактически собран в этом заказе).
+//
+// ПОДТВЕРЖДЕНО backend'ом: ключ строки — item_id (не ml_import_item_id, как
+// предполагалось изначально).
+export interface ConfirmMlImportKitSelection {
+  item_id: number;
+  components: { component_product_id: number; quantity: number }[];
+}
+
+// ПОДТВЕРЖДЕНО backend'ом: confirm_ml_import ожидает kit_selections с ровно
+// одной записью на КАЖДУЮ строку черновика, у которой selected_product_id
+// указывает на товар с is_kit=true — backend не подставляет состав
+// комплекта по умолчанию сам и отвечает 400, если строка-комплект осталась
+// без записи. Поэтому ProjectPage.tsx обязан прислать запись для каждой
+// такой строки, даже если ПМ не трогал кит-пикер и строка осталась на
+// предзаполненном по умолчанию составе (см. buildKitSelectionsPayload).
+export interface ConfirmMlImportPayload {
+  kit_selections?: ConfirmMlImportKitSelection[];
+}
+
 export async function confirmMlImport(
   importId: number,
+  payload?: ConfirmMlImportPayload,
 ): Promise<MlImportCreateResponse> {
   const { data } = await api.post<MlImportCreateResponse>(
     `/ml-imports/${importId}/confirm`,
+    payload ?? {},
   );
 
   return data;
