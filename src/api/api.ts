@@ -1127,6 +1127,8 @@ export async function updateProjectItemSupplier(
 // СВОДНАЯ ЗАКУПКА (одинаковые товары суммируются по всем проектам)
 // ==========================================
 
+export type ProcurementSummaryStage = "to_buy" | "partially_ordered" | "ordered";
+
 export interface ProcurementSummaryProjectRow {
   project_id: number;
   project_name: string;
@@ -1136,6 +1138,9 @@ export interface ProcurementSummaryProjectRow {
   price_cost: number | string | null;
   kit_name?: string | null;
   kit_quantity?: number | string | null;
+  ordered_quantity?: number | string | null;
+  to_buy_quantity?: number | string | null;
+  stage?: ProcurementSummaryStage;
 }
 
 export interface ProcurementSummaryItem {
@@ -1150,6 +1155,8 @@ export interface ProcurementSummaryItem {
   available_stock: number;
   unit_conflict: boolean;
   projects: ProcurementSummaryProjectRow[];
+  ordered_quantity?: number | string | null;
+  to_buy_quantity?: number | string | null;
 }
 
 export interface ProcurementSummaryResponse {
@@ -1157,11 +1164,16 @@ export interface ProcurementSummaryResponse {
   totals: {
     products_count: number;
     projects_count: number;
+    hidden_ordered_products?: number;
   };
 }
 
-export const fetchProcurementSummary = async (): Promise<ProcurementSummaryResponse> => {
-  const { data } = await api.get<ProcurementSummaryResponse>("/procurement/summary");
+export const fetchProcurementSummary = async (
+  includeOrdered = false
+): Promise<ProcurementSummaryResponse> => {
+  const { data } = await api.get<ProcurementSummaryResponse>("/procurement/summary", {
+    params: { include_ordered: includeOrdered },
+  });
   return data;
 };
 
