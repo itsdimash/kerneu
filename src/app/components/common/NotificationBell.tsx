@@ -16,6 +16,7 @@ import {
   PackagePlus,
   Truck,
   Handshake,
+  Trash2,
 } from "lucide-react";
 import type { Role, Page } from "../../../types";
 import {
@@ -58,6 +59,7 @@ const CATEGORY_META: Record<
   stock_low: { icon: PackageX, ...WARNING, label: "Склад" },
   goods_arrived: { icon: PackageCheck, ...INFO, label: "Приход" },
   income_request_created: { icon: PackagePlus, ...VIOLET, label: "Заявка на приход" },
+  income_request_deleted: { icon: Trash2, ...DESTRUCTIVE, label: "Заявка удалена" },
   goods_shipped: { icon: Truck, ...SUCCESS, label: "Отгрузка" },
   upload_processed: { icon: UploadCloud, ...VIOLET, label: "Загрузка" },
   deadline: { icon: Clock3, ...DESTRUCTIVE, label: "Дедлайн" },
@@ -68,13 +70,15 @@ const CATEGORY_META: Record<
   parse_job_failed: { icon: FileX2, ...DESTRUCTIVE, label: "Ошибка обработки" },
 };
 
-// Fallback для категорий, которых ещё нет в CATEGORY_META (например,
-// бэкенд добавил новую категорию, а фронт ещё не обновили) — раньше
-// отсутствие ключа роняло весь компонент (и с ним всё приложение,
-// см. NotificationBell в дереве TopBar/AppShell) с "can't access
-// property on undefined". Теперь неизвестная категория просто рисуется
-// с дефолтной иконкой вместо краша.
-const DEFAULT_META = { icon: Bell, ...INFO, label: "Уведомление" };
+// Fallback для категорий, которых ещё нет в CATEGORY_META (бэкенд добавил новую
+// категорию, а фронт ещё не обновили). Рисуем нейтрально и с понятной меткой —
+// раньше в бейдже показывался сырой код категории (INCOME_REQUEST_DELETED).
+const FALLBACK_META = {
+  icon: Bell,
+  fg: "var(--muted-foreground)",
+  bg: "var(--muted)",
+  label: "Уведомление",
+};
 
 const FILTERS = [
   { id: "all", label: "Все" },
@@ -92,6 +96,23 @@ function timeAgo(iso: string) {
   if (hours < 24) return `${hours} ч назад`;
   const days = Math.round(hours / 24);
   return `${days} дн назад`;
+}
+
+type DayBucket = "today" | "yesterday" | "earlier";
+
+const BUCKET_LABEL: Record<DayBucket, string> = {
+  today: "Сегодня",
+  yesterday: "Вчера",
+  earlier: "Ранее",
+};
+
+function dayBucket(iso: string): DayBucket {
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const t = new Date(iso).getTime();
+  if (t >= startOfToday.getTime()) return "today";
+  if (t >= startOfToday.getTime() - 24 * 60 * 60 * 1000) return "yesterday";
+  return "earlier";
 }
 
 type Props = {
@@ -133,20 +154,25 @@ export function NotificationBell({ role, onNavigate, onSelectProject }: Props) {
   const visible = filter === "unread" ? mine.filter((n) => !n.read) : mine;
   const unreadCount = mine.filter((n) => !n.read).length;
 
-  function toggleRead(id: string) {
+  // Группы "Сегодня / Вчера / Ранее" — список читается как лента, а не как стена текста
+  const groups = useMemo(() => {
+    const order: DayBucket[] = ["today", "yesterday", "earlier"];
+    return order
+      .map((key) => ({ key, label: BUCKET_LABEL[key], items: visible.filter((n) => dayBucket(n.createdAt) === key) }))
+      .filter((g) => g.items.length > 0);
+  }, [visible]);
+
+  // Бэкенд умеет только "прочитано" / "прочитать всё" — обратного действия нет,
+  // поэтому и в интерфейсе его нет (раньше кнопка переключала статус только
+  // локально, а после перезагрузки уведомление снова становилось прочитанным).
+  function markRead(id: string) {
     const target = items.find((n) => n.id === id);
-    if (!target) return;
+    if (!target || target.read) return;
 
-    const nextRead = !target.read;
-    setItems((prev) => prev.map((n) => (n.id === id ? { ...n, read: nextRead } : n)));
-
-    // Бэкенд пока не даёт эндпоинт "пометить непрочитанным" — только
-    // read/read-all. Если понадобится обратное, добавим POST .../unread.
-    if (nextRead) {
-      markNotificationRead(id).catch((err) =>
-        console.error("Не удалось отметить уведомление прочитанным:", err),
-      );
-    }
+    setItems((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    markNotificationRead(id).catch((err) =>
+      console.error("Не удалось отметить уведомление прочитанным:", err),
+    );
   }
 
   function markAllRead() {
@@ -229,13 +255,22 @@ export function NotificationBell({ role, onNavigate, onSelectProject }: Props) {
             <button
               key={f.id}
               onClick={() => setFilter(f.id)}
-              className={`rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors ${
+              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors ${
                 filter === f.id
                   ? "bg-foreground text-background"
                   : "text-muted-foreground hover:bg-muted"
               }`}
             >
               {f.label}
+              {f.id === "unread" && unreadCount > 0 && (
+                <span
+                  className={`rounded-full px-1.5 text-[10.5px] font-semibold leading-[16px] ${
+                    filter === f.id ? "bg-background/20 text-background" : "bg-muted text-foreground"
+                  }`}
+                >
+                  {unreadCount}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -245,99 +280,113 @@ export function NotificationBell({ role, onNavigate, onSelectProject }: Props) {
           {visible.length === 0 && (
             <div className="flex flex-col items-center gap-2 px-6 py-14 text-center">
               <Check size={20} className="text-muted-foreground/60" />
-              <p className="text-[12.5px] font-medium text-muted-foreground">Здесь пока пусто</p>
+              <p className="text-[12.5px] font-medium text-muted-foreground">
+                {filter === "unread" ? "Всё прочитано" : "Здесь пока пусто"}
+              </p>
             </div>
           )}
 
-          {visible.map((n) => {
-            // Backend category strings can drift from this frontend enum
-            // (renamed/removed workflow steps, typos, etc). Falling back to
-            // a neutral icon here beats an uncaught exception mid-render,
-            // which previously took down the entire app shell (the bell is
-            // mounted globally) for any recipient whose notifications
-            // included an unrecognized category.
-            const meta = CATEGORY_META[n.category] ?? {
-              icon: Bell,
-              fg: "var(--muted-foreground)",
-              bg: "var(--muted)",
-              label: n.category,
-            };
-            if (!CATEGORY_META[n.category]) {
-              console.warn(`Неизвестная категория уведомления: "${n.category}"`, n);
-            }
-            const Icon = meta.icon;
-            return (
-              <div
-                key={n.id}
-                className={`flex gap-3 border-b border-border/60 px-4 py-3 last:border-b-0 hover:bg-muted ${
-                  n.read ? "bg-transparent" : "bg-accent/40"
-                }`}
-              >
-                <div
-                  className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
-                  style={{ backgroundColor: meta.bg }}
-                >
-                  <Icon size={16} color={meta.fg} strokeWidth={2.1} />
-                  {!n.read && (
-                    <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border-2 border-card bg-primary" />
-                  )}
-                </div>
+          {groups.map((group) => (
+            <section key={group.key}>
+              <div className="sticky top-0 z-[1] border-b border-border/60 bg-card/95 px-4 py-1.5 text-[11px] font-medium text-muted-foreground backdrop-blur">
+                {group.label}
+              </div>
 
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <span
-                      className="rounded-md px-1.5 py-[1px] text-[10px] font-semibold uppercase tracking-wide"
-                      style={{ color: meta.fg, backgroundColor: meta.bg }}
+              {group.items.map((n) => {
+                // Категория с бэкенда может не совпасть с фронтовым enum —
+                // рисуем нейтрально, а не роняем всё приложение (колокольчик
+                // смонтирован глобально, в TopBar).
+                const known = CATEGORY_META[n.category];
+                const meta = known ?? FALLBACK_META;
+                if (!known) {
+                  console.warn(`Неизвестная категория уведомления: "${n.category}"`, n);
+                }
+                const Icon = meta.icon;
+
+                return (
+                  <div
+                    key={n.id}
+                    className={`relative flex gap-3 border-b border-border/60 px-4 py-3.5 transition-colors last:border-b-0 hover:bg-muted/50 ${
+                      n.read ? "bg-transparent" : "bg-accent/30"
+                    }`}
+                  >
+                    {/* Непрочитанное — цветная полоса слева в цвете категории */}
+                    {!n.read && (
+                      <span
+                        aria-hidden
+                        className="absolute inset-y-0 left-0 w-[3px]"
+                        style={{ backgroundColor: meta.fg }}
+                      />
+                    )}
+
+                    <div
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                      style={{ backgroundColor: meta.bg }}
                     >
-                      {meta.label}
-                    </span>
-                    <span className="shrink-0 text-[10.5px] text-muted-foreground">
-                      {timeAgo(n.createdAt)}
-                    </span>
-                  </div>
+                      <Icon size={16} color={meta.fg} strokeWidth={2.1} />
+                    </div>
 
-                  <p className="mt-1 text-[13px] font-medium leading-snug text-foreground">
-                    {n.title}
-                  </p>
-                  {n.detail && (
-                    <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground">
-                      {n.detail}
-                    </p>
-                  )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="text-[11.5px] font-semibold" style={{ color: meta.fg }}>
+                          {meta.label}
+                        </span>
+                        <span className="shrink-0 text-[10.5px] text-muted-foreground">
+                          {timeAgo(n.createdAt)}
+                        </span>
+                      </div>
 
-                  {n.comment && (
-                    <div className="mt-2 flex gap-1.5 rounded-lg px-2.5 py-2" style={{ backgroundColor: meta.bg }}>
-                      <Quote size={12} color={meta.fg} className="mt-0.5 shrink-0" strokeWidth={2.5} />
-                      <div className="min-w-0">
-                        <p className="text-[12px] leading-snug text-foreground/80">{n.comment}</p>
-                        {n.actorName && (
-                          <p className="mt-1 text-[11px] font-medium" style={{ color: meta.fg }}>
-                            — {n.actorName}{n.actorRole ? `, ${n.actorRole}` : ""}
-                          </p>
+                      <p
+                        className={`mt-0.5 text-[13px] leading-snug ${
+                          n.read ? "font-medium text-foreground/80" : "font-semibold text-foreground"
+                        }`}
+                      >
+                        {n.title}
+                      </p>
+                      {n.detail && (
+                        <p className="mt-1 text-[12px] leading-snug text-muted-foreground">{n.detail}</p>
+                      )}
+
+                      {n.comment && (
+                        <div className="mt-2 flex gap-1.5 rounded-lg px-2.5 py-2" style={{ backgroundColor: meta.bg }}>
+                          <Quote size={12} color={meta.fg} className="mt-0.5 shrink-0" strokeWidth={2.5} />
+                          <div className="min-w-0">
+                            <p className="text-[12px] leading-snug text-foreground/80">{n.comment}</p>
+                            {n.actorName && (
+                              <p className="mt-1 text-[11px] font-medium" style={{ color: meta.fg }}>
+                                — {n.actorName}{n.actorRole ? `, ${n.actorRole}` : ""}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <button
+                          onClick={() => handleCta(n)}
+                          className="-ml-2 inline-flex items-center gap-0.5 rounded-md px-2 py-1 text-[12px] font-semibold text-primary transition-colors hover:bg-primary/10"
+                        >
+                          {n.ctaLabel}
+                          <ChevronRight size={12} />
+                        </button>
+
+                        {!n.read && (
+                          <button
+                            onClick={() => markRead(n.id)}
+                            title="Отметить прочитанным"
+                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          >
+                            <Check size={12} />
+                            Прочитано
+                          </button>
                         )}
                       </div>
                     </div>
-                  )}
-
-                  <div className="mt-2 flex items-center gap-3">
-                    <button
-                      onClick={() => handleCta(n)}
-                      className="flex items-center gap-0.5 text-[12px] font-semibold text-primary hover:text-primary/80"
-                    >
-                      {n.ctaLabel}
-                      <ChevronRight size={12} />
-                    </button>
-                    <button
-                      onClick={() => toggleRead(n.id)}
-                      className="text-[11.5px] font-medium text-muted-foreground hover:text-foreground"
-                    >
-                      {n.read ? "Не прочитано" : "Прочитано"}
-                    </button>
                   </div>
-                </div>
-              </div>
-            );
-          })}
+                );
+              })}
+            </section>
+          ))}
         </div>
       </DropdownMenuContent>
       </DropdownMenu>

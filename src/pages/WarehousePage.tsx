@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { ShipmentModal } from "../app/components/modals/ShipmentModal";
 import { IncomeRequestModal } from "../app/components/modals/IncomeRequestModal";
+import { ConfirmDialog } from "../app/components/modals/ConfirmDialog";
 import {
   Search,
   AlertTriangle,
@@ -18,6 +19,7 @@ import {
   ArrowUpDown,
   Check,
   PackagePlus,
+  Trash2,
 } from "lucide-react";
 import type { ProjectState, Role } from "../types";
 import {
@@ -58,6 +60,7 @@ const DEFAULT_WAREHOUSES: WarehouseInfo[] = [
 
 type StockRow = {
   id: number;
+  productId: number;
   sku: string;
   name: string;
   unit: string;
@@ -87,6 +90,8 @@ type ArrivalRow = {
   confirmedAt: string | null;
   defectiveQuantity: number;
   defectResolved: boolean;
+  // источник прихода: "pm_request" — создан через «Заявку на приход»
+  source: string | null;
 };
 
 type ShipmentRow = {
@@ -155,6 +160,7 @@ function mapStock(item: WarehouseStockResponse): StockRow {
 
   return {
     id: item.id,
+    productId: item.product_id || item.id,
     sku: `P-${item.product_id || item.id}`,
     name: item.name,
     unit: item.unit || "шт",
@@ -196,6 +202,25 @@ async function sendProjectToDocuments(projectId: number) {
   return response.json().catch(() => null);
 }
 
+// ПМ удаляет свою заявку на приход, пока кладовщик её не принял
+async function deleteIncomeRequest(receiptId: number) {
+  const response = await fetch(`${WAREHOUSE_API_BASE}/warehouse/receipts/${receiptId}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    let message = "";
+    try {
+      const body = await response.json();
+      message = typeof body?.detail === "string" ? body.detail : "";
+    } catch {
+      /* тело не JSON */
+    }
+    throw new Error(message || "Не удалось удалить заявку на приход");
+  }
+}
+
 function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
   return {
     id: item.id,
@@ -220,6 +245,7 @@ function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
     confirmedAt: item.confirmed_at ?? null,
     defectiveQuantity: item.defective_quantity ?? 0,
     defectResolved: item.defect_resolved ?? false,
+    source: (item as any).source ?? null,
   };
 }
 
@@ -729,6 +755,9 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   const [confirmTarget, setConfirmTarget] = useState<ArrivalRow | null>(null);
   const [detailsTarget, setDetailsTarget] = useState<ArrivalRow | null>(null);
   const [cancellingReceiptId, setCancellingReceiptId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ArrivalRow | null>(null);
+  const [deletingReceiptId, setDeletingReceiptId] = useState<number | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [shipments, setShipments] = useState<ShipmentRow[]>([]);
   const [shipmentsLoading, setShipmentsLoading] = useState(false);
@@ -1099,6 +1128,38 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     }
   };
 
+  // PM удаляет свою заявку на приход (отправил по ошибке), пока кладовщик её не принял.
+  // Подтверждение — своё окно ConfirmDialog, а не системный window.confirm.
+  const openDeleteReceipt = (receipt: ArrivalRow) => {
+    setDeleteError(null);
+    setDeleteTarget(receipt);
+  };
+
+  const closeDeleteReceipt = () => {
+    if (deletingReceiptId !== null) return;
+    setDeleteTarget(null);
+    setDeleteError(null);
+  };
+
+  const confirmDeleteReceipt = async () => {
+    if (!deleteTarget) return;
+    const receipt = deleteTarget;
+
+    setDeletingReceiptId(receipt.id);
+    setDeleteError(null);
+    try {
+      await deleteIncomeRequest(receipt.id);
+      setArrivals((prev) => prev.filter((r) => r.id !== receipt.id));
+      setDeleteTarget(null);
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : "Не удалось удалить заявку на приход");
+      // возможно, кладовщик уже принял/отклонил её — подтягиваем актуальный список
+      loadArrivals();
+    } finally {
+      setDeletingReceiptId(null);
+    }
+  };
+
   const filteredStock = useMemo(() => {
     return stock
       .filter((item) => {
@@ -1147,12 +1208,37 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
       {showIncomeRequestModal && (
         <IncomeRequestModal
           warehouses={warehouses}
+          stock={stock}
           onClose={() => setShowIncomeRequestModal(false)}
           onSuccess={() => {
             loadArrivals();
             setTab("arrivals");
           }}
         />
+      )}
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Удалить заявку на приход?"
+          description="Кладовщик получит уведомление. Это действие нельзя отменить."
+          confirmLabel="Удалить"
+          loading={deletingReceiptId === deleteTarget.id}
+          error={deleteError}
+          onConfirm={confirmDeleteReceipt}
+          onCancel={closeDeleteReceipt}
+        >
+          <p className="text-xs font-mono text-muted-foreground">{deleteTarget.receiptNumber}</p>
+          <p className="mt-0.5 text-sm font-semibold text-foreground">{deleteTarget.item}</p>
+          <div className="mt-2 flex items-center gap-3 text-xs">
+            <span className="font-mono font-semibold text-foreground">
+              {deleteTarget.qty.toLocaleString("ru-RU")} {deleteTarget.unit}
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2 py-0.5 font-medium text-foreground">
+              <Building2 size={11} className="text-blue-600 dark:text-blue-400" />
+              {deleteTarget.warehouseName}
+            </span>
+          </div>
+        </ConfirmDialog>
       )}
 
       {confirmTarget && (
@@ -1389,7 +1475,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                     <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Количество</th>
                     <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Ед. изм.</th>
                     <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Статус приема</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Действия кладовщика</th>
+                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Действия</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -1507,6 +1593,18 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                                 ) : (
                                   <XCircle size={16} />
                                 )}
+                              </button>
+                            </div>
+                          ) : isPm && a.source === "pm_request" ? (
+                            <div className="flex flex-col items-center gap-1">
+                              <span className="text-xs text-muted-foreground italic">Ожидает кладовщика</span>
+                              <button
+                                onClick={() => openDeleteReceipt(a)}
+                                title="Удалить заявку, если отправили по ошибке"
+                                className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+                              >
+                                <Trash2 size={12} />
+                                Удалить
                               </button>
                             </div>
                           ) : (

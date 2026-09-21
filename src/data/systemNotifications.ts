@@ -24,6 +24,7 @@ export type NotificationCategory =
   | "goods_arrived"
   | "goods_shipped"
   | "income_request_created"
+  | "income_request_deleted"
   | "upload_processed"
   | "deadline"
   | "parse_job_done"

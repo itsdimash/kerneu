@@ -16,38 +16,10 @@ import {
   Trash2,
   PanelLeftClose,
   PanelLeftOpen,
+  UploadCloud,
 } from "lucide-react";
 import { api } from "../api/api";
 import type { Role } from "../types";
-
-/**
- * Полноценная страница AI-ассистента (не Drawer) — встраивается в
- * AppShell так же, как остальные страницы, через page === "ai-chat".
- *
- * Отличия от исходного макета ai-erp-panel.jsx:
- * - убран отдельный "ERP module rail" слева — он дублировал бы уже
- *   существующий Sidebar самого приложения;
- * - убран переключатель ролей в шапке — реальная роль уже управляется
- *   глобально в AppShell (или переключателем admin'а), дублирующий
- *   локальный стейт здесь был бы просто визуальной подделкой;
- * - убраны декоративные цвета по типу задачи (db_query/translation/
- *   web_search) для истории чатов — бэкенд (GET /v1/sessions) отдаёт
- *   только id/title/updated_at, без task_type, так что различать
- *   сессии по цвету нечем;
- * - "Прикрепить файл" поддерживает документы (.docx/.pdf/.xlsx — как раньше,
- *   через /v1/documents/extract, текст вклеивается в prompt) и фото
- *   (image/png, image/jpeg, image/webp — через новый multipart-эндпоинт
- *   /v1/chat/multimodal, изображения передаются нативно, не текстом);
- * - убран сценарий "уточняющий вопрос с кнопками" — это была
- *   демонстрационная заглушка, в реальном ChatResponse такого поля нет;
- * - вместо жёстко зашитой таблицы остатков склада — универсальный
- *   рендер произвольной таблицы из ответа AI-платформы, с эвристическим
- *   скрытием колонок себестоимости/маржи для роли "warehouse" (защитный
- *   UX-слой поверх серверной авторизации, не замена ей).
- *
- * Стриминг по-прежнему фейковый (тайпрайтер поверх готового текста) —
- * см. обсуждение: ai-platform отдаёт ChatResponse одним JSON, без SSE.
- */
 
 interface AiTableRow {
   [key: string]: unknown;
@@ -72,6 +44,7 @@ interface AttachedDocumentItem {
   text: string;
   truncated: boolean;
   charCount: number;
+  fileUrl: string;
 }
 
 interface AttachedImageItem {
@@ -82,10 +55,6 @@ interface AttachedImageItem {
 
 type AttachedItem = AttachedDocumentItem | AttachedImageItem;
 
-// Держим в синхроне с бэкендом (app/routers/chat_multimodal.py):
-// MAX_IMAGES_PER_MESSAGE, MAX_IMAGE_SIZE_BYTES. Проверка на фронте — это
-// только UX-слой (быстрая обратная связь до сетевого запроса), источник
-// истины по лимитам всегда бэкенд.
 const MAX_IMAGES_PER_MESSAGE = 4;
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 const IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"];
@@ -98,20 +67,9 @@ interface AiSession {
 
 const TYPEWRITER_TICK_MS = 15;
 const TYPEWRITER_TOTAL_TICKS = 120;
-// Потолок высоты поля ввода (px) — после него появляется внутренний скролл,
-// как в textarea Claude/ChatGPT, чтобы длинный текст не растягивал поле
-// на весь экран.
 const INPUT_MAX_HEIGHT_PX = 200;
-// Диапазон ширины колонки чата (px). Раньше она была захардкожена через
-// Tailwind-класс max-w-3xl (= 768px всегда) — при сворачивании ЛЮБОГО
-// сайдбара (истории чата или общего меню приложения) освобождалось место,
-// но колонка просто перецентровывалась в той же ширине вместо того, чтобы
-// её занять. MIN — комфортная ширина для чтения на узком экране,
-// MAX — потолок, чтобы строки не становились нечитаемо длинными на широком.
 const CHAT_COLUMN_MIN_WIDTH_PX = 640;
 const CHAT_COLUMN_MAX_WIDTH_PX = 1100;
-// Отступы по бокам колонки (px-6 с каждой стороны у родителя) — вычитаем
-// их из измеренной ширины, чтобы max-width не упирался вплотную в край.
 const CHAT_COLUMN_SIDE_PADDING_PX = 48;
 
 const ROLE_LABELS: Record<Role, string> = {
@@ -122,9 +80,6 @@ const ROLE_LABELS: Record<Role, string> = {
   warehouse: "Кладовщик",
 };
 
-// Значения (кроме "auto") — точные ключи MODEL_FACTORY в
-// ai-platform/app/adapters/registry.py. "auto" отправляется на бэкенд как
-// отсутствие поля model — тогда решает классификатор + config.yaml, как раньше.
 const MODEL_OPTIONS: { value: string; label: string }[] = [
   { value: "auto", label: "Авто" },
   { value: "gemini-flash", label: "Gemini Flash" },
@@ -136,16 +91,8 @@ const MODEL_OPTIONS: { value: string; label: string }[] = [
   { value: "claude-opus", label: "Claude Opus" },
 ];
 
-// Эвристика для эвристического (не серверного!) скрытия чувствительных
-// колонок в таблицах для роли "Склад" — источник истины по правам
-// доступа всегда бэкенд, это только доп. слой UX.
 const SENSITIVE_COLUMN_PATTERN = /cost|price|margin|себестоим|маржа|стоимост|прибыл/i;
 
-// Postgres/asyncpg отдаёт updated_at/created_at в UTC, но isoformat() без
-// смещения не добавляет суффикс "Z". Браузер парсит такую строку как
-// ЛОКАЛЬНОЕ время, а не UTC — время в интерфейсе уезжает ровно на разницу
-// с UTC (например, на +5 в Алматы). Если в строке нет явной таймзоны —
-// принудительно считаем её UTC.
 function parseBackendTimestamp(iso: string): Date {
   const hasTimezone = /Z$|[+-]\d{2}:?\d{2}$/.test(iso);
   return new Date(hasTimezone ? iso : `${iso}Z`);
@@ -211,13 +158,6 @@ function AiResultTable({ rows, role }: { rows: AiTableRow[]; role: Role }) {
   );
 }
 
-// Ответы ассистента приходят как markdown (заголовки, **жирный**, списки,
-// таблицы) — модели пишут именно в этом формате естественно, обрезать это
-// в промпте ненадёжно (см. историю с колонками в _strip_hidden_columns).
-// Проще и правильнее отрендерить markdown на фронте, чем бороться с
-// форматированием на бэкенде. Стили — вручную под существующие CSS-токены
-// приложения (text-foreground/bg-muted/border-border), а не библиотечный
-// @tailwindcss/typography, который не знает про эти переменные.
 function AiMarkdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
@@ -305,6 +245,7 @@ export function AiChatPage({ role }: { role: Role }) {
   const [attachedItems, setAttachedItems] = useState<AttachedItem[]>([]);
   const [isUploadingDocument, setIsUploadingDocument] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
 
   const [sessionPendingDelete, setSessionPendingDelete] = useState<AiSession | null>(null);
   const [isDeletingSession, setIsDeletingSession] = useState(false);
@@ -314,15 +255,8 @@ export function AiChatPage({ role }: { role: Role }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mainColumnRef = useRef<HTMLDivElement>(null);
-  const [chatColumnMaxWidth, setChatColumnMaxWidth] = useState(768); // 768 = старый max-w-3xl, как разумный фолбэк до первого замера
+  const [chatColumnMaxWidth, setChatColumnMaxWidth] = useState(768);
 
-  // Ширина колонки чата подстраивается под реально свободное место, а не
-  // под захардкоженный Tailwind-брейкпоинт (тот реагирует на ширину окна
-  // браузера, а не на то, что внутри страницы свернули сайдбар). ResizeObserver
-  // на главной колонке видит изменение её box-size от ЛЮБОЙ причины —
-  // сворачивания истории чата (isHistoryCollapsed, стейт этого компонента)
-  // или общего сайдбара приложения (AppShell, вне этого компонента) — без
-  // необходимости прокидывать их состояние сюда явно.
   useEffect(() => {
     const el = mainColumnRef.current;
     if (!el) return;
@@ -338,11 +272,6 @@ export function AiChatPage({ role }: { role: Role }) {
     return () => observer.disconnect();
   }, []);
 
-  // Авто-рост поля ввода под контент, как в Claude/ChatGPT: сбрасываем
-  // высоту в "auto", чтобы scrollHeight пересчитался с нуля (иначе он
-  // застревает на максимуме предыдущего кадра и не даёт полю сжаться
-  // обратно при удалении текста), затем ставим её по контенту с потолком
-  // INPUT_MAX_HEIGHT_PX — после него появляется внутренний скролл textarea.
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -356,8 +285,7 @@ export function AiChatPage({ role }: { role: Role }) {
       const response = await api.get<AiSession[]>("/ai/sessions");
       setSessions(response.data);
     } catch {
-      // История не критична для работы чата — молча пропускаем, ошибка
-      // будет видна только если пользователь попытается ей воспользоваться.
+      // Ignored
     } finally {
       setIsLoadingSessions(false);
     }
@@ -370,22 +298,18 @@ export function AiChatPage({ role }: { role: Role }) {
         clearInterval(typewriterTimerRef.current);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Изображения живут через URL.createObjectURL — освобождаем при
-  // размонтировании страницы, чтобы не текла память браузера.
   useEffect(() => {
     return () => {
       attachedItems.forEach((item) => {
         if (item.kind === "image") URL.revokeObjectURL(item.previewUrl);
       });
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const revokeAllImagePreviews = (items: AttachedItem[]) => {
@@ -406,17 +330,8 @@ export function AiChatPage({ role }: { role: Role }) {
     setUploadError(null);
   };
 
-  const handleAttachClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = ""; // чтобы повторный выбор того же файла тоже сработал
-    if (!file) return;
-
+  const processFile = async (file: File) => {
     setUploadError(null);
-
     const isImage = IMAGE_MIME_TYPES.includes(file.type);
 
     if (isImage) {
@@ -435,8 +350,6 @@ export function AiChatPage({ role }: { role: Role }) {
       return;
     }
 
-    // .docx / .pdf / .xlsx — прежний путь через text extraction.
-    // Одновременно можно держать только один такой документ (как раньше).
     setIsUploadingDocument(true);
     try {
       const formData = new FormData();
@@ -447,9 +360,8 @@ export function AiChatPage({ role }: { role: Role }) {
         text: string;
         truncated: boolean;
         char_count: number;
-      }>("/ai/documents/extract", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+        file_url: string;
+      }>("/ai/documents/extract", formData);
 
       const documentItem: AttachedDocumentItem = {
         kind: "document",
@@ -457,12 +369,69 @@ export function AiChatPage({ role }: { role: Role }) {
         text: response.data.text,
         truncated: response.data.truncated,
         charCount: response.data.char_count,
+        fileUrl: response.data.file_url,
       };
       setAttachedItems((prev) => [...prev.filter((item) => item.kind !== "document"), documentItem]);
     } catch {
       setUploadError("Не удалось прочитать файл. Поддерживаются .docx, .pdf, .xlsx.");
     } finally {
       setIsUploadingDocument(false);
+    }
+  };
+
+  const handleAttachClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) {
+      await processFile(file);
+    }
+  };
+
+  // Clipboard (Cmd+V / Ctrl+V) Handler
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === "file") {
+        const file = item.getAsFile();
+        if (file) {
+          event.preventDefault();
+          void processFile(file);
+          break;
+        }
+      }
+    }
+  };
+
+  // Drag & Drop Handlers
+  const handleDragOver = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isDraggingFile) setIsDraggingFile(true);
+  };
+
+  const handleDragLeave = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDraggingFile(false);
+  };
+
+  const handleDrop = async (event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDraggingFile(false);
+
+    const files = event.dataTransfer?.files;
+    if (files && files.length > 0) {
+      for (let i = 0; i < files.length; i++) {
+        await processFile(files[i]);
+      }
     }
   };
 
@@ -476,7 +445,7 @@ export function AiChatPage({ role }: { role: Role }) {
   };
 
   const requestDeleteSession = (session: AiSession, event: React.MouseEvent) => {
-    event.stopPropagation(); // не должно срабатывать выделение сессии под кнопкой
+    event.stopPropagation();
     setSessionPendingDelete(session);
   };
 
@@ -573,9 +542,6 @@ export function AiChatPage({ role }: { role: Role }) {
     );
     const hasImages = imagesForThisMessage.length > 0;
 
-    // Текст документа по-прежнему вклеивается строкой в prompt — так его
-    // видят все модели одинаково. Фото в prompt НЕ вклеивается — оно
-    // передаётся нативно как отдельное вложение (см. ветку multimodal ниже).
     const promptForApi = documentForThisMessage
       ? `Вот текст документа «${documentForThisMessage.filename}»${
           documentForThisMessage.truncated ? " (обрезан по лимиту)" : ""
@@ -593,8 +559,6 @@ export function AiChatPage({ role }: { role: Role }) {
       attachmentLabelParts.length > 0 ? `${attachmentLabelParts.join(" · ")}\n${prompt}` : prompt;
 
     setInput("");
-    // previewUrl больше не нужен после отправки — сообщение хранит только
-    // текст, а не превью изображений.
     revokeAllImagePreviews(itemsForThisMessage);
     setAttachedItems([]);
     setError(null);
@@ -627,9 +591,6 @@ export function AiChatPage({ role }: { role: Role }) {
         ? await (() => {
             const formData = new FormData();
             formData.append("prompt", promptForApi);
-            // FormData не различает null/undefined — приводим явно к
-            // "" (означает "нет сессии") либо к строке с числом, иначе
-            // бэкенд получит буквальную строку "null" и вернёт 400.
             formData.append(
               "session_id",
               activeSessionId != null ? String(activeSessionId) : "",
@@ -637,9 +598,7 @@ export function AiChatPage({ role }: { role: Role }) {
             if (modelForApi) formData.append("model", modelForApi);
             imagesForThisMessage.forEach((image) => formData.append("files", image.file));
 
-            return api.post<ChatApiResponse>("/ai/chat/multimodal", formData, {
-              headers: { "Content-Type": "multipart/form-data" },
-            });
+            return api.post<ChatApiResponse>("/ai/chat/multimodal", formData);
           })()
         : await api.post<ChatApiResponse>("/ai/chat", {
             prompt: promptForApi,
@@ -684,7 +643,6 @@ export function AiChatPage({ role }: { role: Role }) {
       event.preventDefault();
       void sendMessage();
     }
-    // Enter+Shift — обычный перенос строки, отдаём браузеру по умолчанию.
   };
 
   const filteredSessions = sessions.filter((s) =>
@@ -695,8 +653,21 @@ export function AiChatPage({ role }: { role: Role }) {
 
   return (
     <>
-    <div className="flex h-full w-full overflow-hidden bg-background text-foreground">
-      {/* История чатов */}
+    <div 
+      className="relative flex h-full w-full overflow-hidden bg-background text-foreground"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Overlay Dropzone Indicator */}
+      {isDraggingFile && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm border-2 border-dashed border-primary">
+          <UploadCloud size={48} className="text-primary animate-bounce mb-2" />
+          <p className="text-lg font-semibold text-foreground">Перетащите файлы сюда</p>
+          <p className="text-xs text-muted-foreground mt-1">Поддерживаются документы (.pdf, .docx, .xlsx) и фото</p>
+        </div>
+      )}
+
       {!isHistoryCollapsed && (
         <div className="hidden md:flex w-72 shrink-0 flex-col border-r border-border bg-card">
           <div className="px-4 pt-5 pb-4">
@@ -777,7 +748,7 @@ export function AiChatPage({ role }: { role: Role }) {
                     <button
                       type="button"
                       onClick={(event) => requestDeleteSession(session, event)}
-                      className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-colors hover:text-destructive group-hover:opacity-100"
+                      className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-colors hover:text-foreground group-hover:opacity-100 hover:text-destructive"
                       aria-label="Удалить чат"
                       title="Удалить чат"
                     >
@@ -791,7 +762,6 @@ export function AiChatPage({ role }: { role: Role }) {
         </div>
       )}
 
-      {/* Основная колонка */}
       <div ref={mainColumnRef} className="flex min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center justify-between border-b border-border bg-card px-6 py-3.5">
           <div className="flex min-w-0 items-center gap-2">
@@ -932,9 +902,15 @@ export function AiChatPage({ role }: { role: Role }) {
                     className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5"
                   >
                     <Paperclip size={13} className="shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 max-w-[220px] truncate text-[12.5px] text-foreground">
+                    <a 
+                      href={item.fileUrl} 
+                      target="_blank" 
+                      rel="noreferrer" 
+                      className="min-w-0 max-w-[220px] truncate text-[12.5px] text-foreground hover:text-primary hover:underline"
+                    >
                       {item.filename}
-                    </span>
+                    </a>
+
                     <span className="shrink-0 text-[11px] text-muted-foreground">
                       {item.charCount.toLocaleString("ru-RU")} симв.
                       {item.truncated ? " · обрезан" : ""}
@@ -991,10 +967,11 @@ export function AiChatPage({ role }: { role: Role }) {
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               placeholder={
                 isUploadingDocument
                   ? "Читаю файл..."
-                  : "Спросите что угодно — данные компании, перевод, резюме документа…"
+                  : "Спросите что угодно, вставьте файл или скрепите перетаскиванием…"
               }
               disabled={isUploadingDocument}
               rows={1}
@@ -1014,7 +991,7 @@ export function AiChatPage({ role }: { role: Role }) {
           </div>
           <div className="mx-auto mt-2 flex items-center justify-between gap-3" style={{ maxWidth: chatColumnMaxWidth }}>
             <p className="text-[11px] text-muted-foreground">
-              Данные компании — в рамках вашей роли, остальное — без ограничений
+              Вставляйте картинки из буфера (Cmd+V) или перетаскивайте файлы прямо в окно
             </p>
             <select
               value={selectedModel}
