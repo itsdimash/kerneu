@@ -1,5 +1,8 @@
 import type { Page, ProjectState } from "../types";
-export function fmt(n: number) { return n.toLocaleString("ru-RU") + " ₸"; }
+export function fmt(n: number | null | undefined) {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toLocaleString("ru-RU") + " ₸";
+}
 
 export function daysFromNow(deadline: string): number {
   const [d, m, y] = deadline.split(".");

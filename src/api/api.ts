@@ -49,6 +49,11 @@ export interface DashboardStats {
   pending_kp: number;
   planned_revenue: number;
   revenue_growth: number; // например, 18 (%)
+  // Опциональные — старый backend их ещё не отдаёт. "Себестоимость указана
+  // у X из Y позиций": количество project_items с заполненным cost_price
+  // (items_with_cost) из общего числа позиций за период (items_total).
+  items_with_cost?: number;
+  items_total?: number;
 }
 
 export const fetchDashboardStats = async (): Promise<DashboardStats> => {
@@ -238,9 +243,12 @@ export interface MlImportItemUpdate {
 
 export interface MlImportItemCreateProduct {
   product_name: string;
-  supplier_name: string;
+  // Ввод себестоимости/поставщика перенесён на ProcurementPage — см.
+  // handleCreateProduct в ProjectPage.tsx, которая их больше не отправляет;
+  // backend принимает запрос без них и ставит price_cost = 0.
+  supplier_name?: string;
   unit: string;
-  price_cost: number;
+  price_cost?: number;
   price: number;
   // Товар-комплект: состоит из набора других товаров каталога, которые ПМ
   // подбирает отдельно в кит-пикере после создания (см. getKitComponents /
@@ -1109,6 +1117,64 @@ export async function updateProjectItemSupplier(
   try {
     const { data } = await api.patch<ProjectItemResponse>(
       `/project-items/${projectId}/${itemId}/supplier`,
+      payload,
+    );
+    return data;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const detail = error.response?.data?.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        throw new Error(detail);
+      }
+    }
+    throw error;
+  }
+}
+
+export interface UpdateProjectItemCostPricePayload {
+  cost_price: number;
+}
+
+// Себестоимость позиции теперь выставляется в Закупках (ProcurementPage),
+// не на ProjectPage — см. перенос cost_price/supplier. Работает только для
+// проекта в статусе "Активный закуп" (иначе 409) и не для позиции комплекта
+// (kit_group_key — для них 400, см. updateKitGroupCostPrice).
+export async function updateProjectItemCostPrice(
+  projectId: number | string,
+  itemId: number,
+  payload: UpdateProjectItemCostPricePayload,
+): Promise<ProjectItemResponse> {
+  try {
+    const { data } = await api.patch<ProjectItemResponse>(
+      `/project-items/${projectId}/${itemId}/cost-price`,
+      payload,
+    );
+    return data;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const detail = error.response?.data?.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        throw new Error(detail);
+      }
+    }
+    throw error;
+  }
+}
+
+export interface UpdateKitGroupCostPricePayload {
+  cost_price: number;
+}
+
+// Себестоимость комплекта ЦЕЛИКОМ (не по отдельному компоненту) — backend
+// перераспределяет её по компонентам и возвращает их обновлённый массив.
+export async function updateKitGroupCostPrice(
+  projectId: number | string,
+  kitGroupKey: string,
+  payload: UpdateKitGroupCostPricePayload,
+): Promise<ProjectItemResponse[]> {
+  try {
+    const { data } = await api.patch<ProjectItemResponse[]>(
+      `/projects/${projectId}/kit-groups/${encodeURIComponent(kitGroupKey)}/cost-price`,
       payload,
     );
     return data;

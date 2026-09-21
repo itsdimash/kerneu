@@ -1,16 +1,19 @@
 import { useMemo, useState, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { ProcurementSummaryView } from "./ProcurementSummaryView";
 import { fmt } from "../lib/format";
 import type { Role, ProjectState } from "../types";
-import { 
-  getProjectItems, 
-  uploadProjectDocument, 
+import {
+  getProjectItems,
+  uploadProjectDocument,
   fetchProjectDocuments,
   fetchWarehouseList,
   WarehouseInfo,
   fetchSuppliers,
   updateProjectItemSupplier,
+  updateProjectItemCostPrice,
+  updateKitGroupCostPrice,
   SupplierListItem
 } from "../api/api";
 import {
@@ -235,6 +238,11 @@ const getItemStatusName = (item: any) =>
 const getItemName = (item: any) =>
   safeTrim(item.product?.name) || safeTrim(item.item_name) || `Товар №${item.product_id ?? item.id}`;
 
+// Запасное имя группы для позиций без настоящего поставщика — используется
+// и в getSupplierName, и в проверке hasRealSupplier/DEFAULT_SUPPLIER_NAME
+// ниже, чтобы не плодить одну и ту же строку по файлу.
+const DEFAULT_SUPPLIER_NAME = "Без поставщика";
+
 // ОБНОВЛЕНО: Используем правильную иерархию полей для получения имени поставщика
 const getSupplierName = (item: any) => {
   // 1. Приоритет отдаем supplier_raw_name (историческое имя)
@@ -249,8 +257,30 @@ const getSupplierName = (item: any) => {
 
   // 3. Fallbacks для старой структуры или данных из продукта
   const fallback = safeTrim(item.supplier) || safeTrim(item.product?.supplier_raw_name) || safeTrim(item.product?.supplier);
-  return fallback || "Основной поставщик";
+  return fallback || DEFAULT_SUPPLIER_NAME;
 };
+
+// В отличие от getSupplierName (которая всегда возвращает непустую строку,
+// подставляя DEFAULT_SUPPLIER_NAME), это честная проверка "поставщик вообще
+// заполнен" — нужна для бейджа "нет поставщика".
+const hasSupplier = (item: ProcurementProjectItem) =>
+  Boolean(
+    safeTrim(item.supplier_raw_name) ||
+    (item.supplier && typeof item.supplier === "object" && safeTrim(item.supplier.name)) ||
+    safeTrim(typeof item.supplier === "string" ? item.supplier : "") ||
+    safeTrim(item.product?.supplier_raw_name) ||
+    safeTrim(item.product?.supplier)
+  );
+
+// Тот же критерий "настоящего" поставщика, что и у hasSupplier, плюс явная
+// проверка supplier_id — на случай если бэкенд вернёт id без вложенного
+// объекта supplier. Нужен, чтобы решить, можно ли для supplier-группы
+// грузить счёт: если у ВСЕХ позиций группы нет настоящего поставщика, её
+// ключ — DEFAULT_SUPPLIER_NAME, и document.name на бэке создал бы
+// фиктивного общего поставщика для разных контрагентов (см. коммент у
+// isSupplierInvoiceLocked).
+const hasRealSupplier = (item: ProcurementProjectItem) =>
+  hasSupplier(item) || Boolean(item.supplier_id);
 
 const toNumber = (value: number | string | null | undefined) => {
   const parsed = Number(String(value ?? 0).replace(",", "."));
@@ -317,14 +347,28 @@ export function ProcurementPage({
   const [knownSuppliers, setKnownSuppliers] = useState<SupplierListItem[]>([]);
   const [supplierSaveError, setSupplierSaveError] = useState<string | null>(null);
 
+  // NEW: себестоимость позиции теперь вводится здесь (перенос с
+  // ProjectPage) — инлайн-инпут в строке, сохранение по blur/Enter.
+  // savingCostItemId — id позиции, для которой сейчас идёт сохранение
+  // (блокирует инпут и не даёт отправить второй запрос поверх первого).
+  const [savingCostItemId, setSavingCostItemId] = useState<number | null>(null);
+
+  // Себестоимость комплекта правится ЦЕЛИКОМ через отдельный эндпоинт
+  // (updateKitGroupCostPrice) — компоненты комплекта в таблице read-only.
+  const [kitCostModalItem, setKitCostModalItem] = useState<ProcurementProjectItem | null>(null);
+  const [kitCostInput, setKitCostInput] = useState("");
+  const [kitCostSaving, setKitCostSaving] = useState(false);
+  const [kitCostError, setKitCostError] = useState<string | null>(null);
+
   const isDirector = role === "director" || role === "commercial_director";
   const isAccountant = role === "accountant";
   const isPm = role === "pm";
   const isAdmin = role === "admin";
 
-  // Менять поставщика можно только ПМ/Комдиру/админу и только пока
-  // проект в статусе "Активный закуп". Бэкенд проверяет то же самое —
-  // это только для UX.
+  // Менять поставщика и себестоимость (см. cost_price ниже) можно только
+  // ПМ/Комдиру/админу и только пока проект в статусе "Активный закуп".
+  // Бэкенд проверяет то же самое — это только для UX. Один и тот же гейт
+  // для обоих полей намеренно — права на них совпадают, дублировать не надо.
   const canChangeSupplier =
     (isPm || isDirector || isAdmin) &&
     normalizeText(
@@ -520,6 +564,15 @@ export function ProcurementPage({
   const handleFileUpload = async (supplier: string, file: File) => {
     if (!selectedProjectId) return;
 
+    // Группа без настоящего поставщика загружает счёт под именем
+    // DEFAULT_SUPPLIER_NAME — бэк делает find-or-create Supplier по
+    // document.name и схлопнёт разных контрагентов в один фиктивный
+    // Supplier. Дублирует disabled кнопки ниже — на случай вызова не по клику.
+    if (!(groupedItems[supplier] || []).some(hasRealSupplier)) {
+      toast.error("Сначала укажите поставщика для позиций этой группы");
+      return;
+    }
+
     setSupplierWorkflows(prev => ({
       ...prev,
       [supplier]: { ...prev[supplier], isUploading: true }
@@ -662,6 +715,15 @@ export function ProcurementPage({
   const handleOpenSendToIncomeModal = (supplier: string) => {
     const wf = supplierWorkflows[supplier];
     if (!wf || wf.status !== 'approved') return;
+
+    // См. комментарий в handleFileUpload — защита от отправки на приход
+    // группы без настоящего поставщика (на случай если счёт для такой
+    // группы всё же существует из данных, загруженных до этой проверки).
+    if (!(groupedItems[supplier] || []).some(hasRealSupplier)) {
+      toast.error("Сначала укажите поставщика для позиций этой группы");
+      return;
+    }
+
     setIncomeModalSupplier(supplier);
     setIsIncomeModalOpen(true);
 
@@ -702,6 +764,20 @@ export function ProcurementPage({
   const handleConfirmSendToIncome = async () => {
     const supplier = incomeModalSupplier;
     if (!supplier || !selectedWarehouseId) return;
+
+    // Не даём отправить на приход, пока где-то ещё сохраняется себестоимость
+    // (handleCostPriceBlur): purchase_price ниже читается из purchaseItems,
+    // а это state обновится только после ответа PATCH — иначе можем уйти
+    // на бэкенд со старым значением. Дублирует disabled кнопки — та же
+    // защита нужна и не только визуально (на случай вызова не по клику).
+    if (savingCostItemId != null || isSendingToIncome) return;
+
+    // См. комментарий в handleFileUpload — та же защита от отправки на
+    // приход группы без настоящего поставщика.
+    if (!(groupedItems[supplier] || []).some(hasRealSupplier)) {
+      toast.error("Сначала укажите поставщика для позиций этой группы");
+      return;
+    }
 
     const wf = supplierWorkflows[supplier];
     const docId = wf?.docId;
@@ -769,15 +845,28 @@ export function ProcurementPage({
 
   // NEW: смена поставщика через модалку с подтверждением (ПМ/Комдир/админ).
   // Шаги: 'confirm' ("точно хотите менять?") -> 'select' (поиск среди
-  // существующих поставщиков или создание нового). cost_price не
-  // трогаем — только supplier_id/supplier_raw_name.
+  // существующих поставщиков или создание нового). Эта модалка меняет
+  // только supplier_id/supplier_raw_name; cost_price редактируется отдельно
+  // — инлайн в таблице (обычные позиции) или через модалку комплекта
+  // (kitCostModalItem, см. openKitCostModal ниже).
   const [supplierModalItem, setSupplierModalItem] = useState<ProcurementProjectItem | null>(null);
   const [supplierModalStep, setSupplierModalStep] = useState<'confirm' | 'select'>('confirm');
   const [supplierSearchQuery, setSupplierSearchQuery] = useState("");
   const [newSupplierName, setNewSupplierName] = useState("");
   const [supplierModalSaving, setSupplierModalSaving] = useState(false);
 
+  // Счёт по supplier-группе уже загружен (docId проставлен при
+  // handleFileUpload) — document.name на бэке зафиксировал поставщика в
+  // момент загрузки и дальше не синхронизируется с item.supplier, поэтому
+  // после загрузки счёта смену поставщика у его позиций запрещаем.
+  const isSupplierInvoiceLocked = (item: ProcurementProjectItem) =>
+    Boolean(supplierWorkflows[getSupplierName(item)]?.docId);
+
   const openSupplierModal = (item: ProcurementProjectItem) => {
+    if (isSupplierInvoiceLocked(item)) {
+      toast.error("Счёт этого поставщика уже загружен, смена недоступна");
+      return;
+    }
     setSupplierModalItem(item);
     setSupplierModalStep('confirm');
     setSupplierSearchQuery("");
@@ -851,6 +940,92 @@ export function ProcurementPage({
     const name = newSupplierName.trim();
     if (!supplierModalItem || !name) return;
     applySupplierChange(supplierModalItem, { supplier_name: name });
+  };
+
+  // NEW: себестоимость обычной (не кит) позиции — инлайн-сохранение по
+  // blur (Enter тоже триггерит blur, см. onKeyDown у инпута). 0 — валидное
+  // значение (см. контракт бэкенда), поэтому проверяем только "число >= 0".
+  const handleCostPriceBlur = async (
+    item: ProcurementProjectItem,
+    event: React.FocusEvent<HTMLInputElement>,
+  ) => {
+    if (!selectedProject) return;
+
+    const previous = getPurchasePrice(item);
+    const parsed = Number(event.target.value.replace(",", "."));
+
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      toast.error("Себестоимость должна быть числом больше или равным нулю");
+      event.target.value = String(previous);
+      return;
+    }
+    if (parsed === previous) return;
+
+    setSavingCostItemId(item.id);
+    try {
+      const updated = await updateProjectItemCostPrice(selectedProject.id, item.id, {
+        cost_price: parsed,
+      });
+      setPurchaseItems(prev =>
+        prev.map(p => (p.id === item.id ? { ...p, cost_price: updated.cost_price } : p))
+      );
+    } catch (error) {
+      console.error("Cost price update failed", error);
+      toast.error(
+        error instanceof Error ? error.message : "Не удалось сохранить себестоимость"
+      );
+      event.target.value = String(previous);
+    } finally {
+      setSavingCostItemId(null);
+    }
+  };
+
+  // Себестоимость комплекта — отдельный эндпоинт, действует на ВСЕ
+  // компоненты комплекта сразу (backend сам перераспределяет по ним).
+  const openKitCostModal = (item: ProcurementProjectItem) => {
+    setKitCostModalItem(item);
+    setKitCostInput(String(getPurchasePrice(item)));
+    setKitCostError(null);
+  };
+
+  const closeKitCostModal = () => {
+    if (kitCostSaving) return;
+    setKitCostModalItem(null);
+    setKitCostError(null);
+  };
+
+  const handleSaveKitCost = async () => {
+    if (!selectedProject || !kitCostModalItem?.kit_group_key) return;
+
+    const parsed = Number(kitCostInput.replace(",", "."));
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setKitCostError("Себестоимость должна быть числом больше или равным нулю");
+      return;
+    }
+
+    setKitCostSaving(true);
+    setKitCostError(null);
+    try {
+      const updatedItems = await updateKitGroupCostPrice(
+        selectedProject.id,
+        kitCostModalItem.kit_group_key,
+        { cost_price: parsed },
+      );
+      setPurchaseItems(prev =>
+        prev.map(p => {
+          const match = updatedItems.find(u => u.id === p.id);
+          return match ? { ...p, cost_price: match.cost_price } : p;
+        })
+      );
+      closeKitCostModal();
+    } catch (error) {
+      console.error("Kit cost price update failed", error);
+      const message = error instanceof Error ? error.message : "Не удалось сохранить себестоимость комплекта";
+      setKitCostError(message);
+      toast.error(message);
+    } finally {
+      setKitCostSaving(false);
+    }
   };
 
   const allSuppliersIncomed = useMemo(() => {
@@ -962,7 +1137,9 @@ export function ProcurementPage({
         const isExpanded = expandedSuppliers[supplier] || false;
         const wfState = supplierWorkflows[supplier] || { file: null, status: 'draft', directorApproved: false, accountantApproved: false };
         const hasFile = !!(wfState.file || wfState.fileName);
-        
+        const groupHasRealSupplier = items.some(hasRealSupplier);
+        const noSupplierTitle = "Сначала укажите поставщика";
+
         return (
           <div key={supplier} className="bg-card rounded-lg border border-border mb-5 shadow-sm overflow-hidden transition-all duration-200 hover:shadow-md hover:border-primary/20">
             <div 
@@ -1037,18 +1214,28 @@ export function ProcurementPage({
                        </div>
                     ) : !hasFile ? (
                       (isPm || isAccountant) ? (
-                        <label className="flex items-center gap-2 px-4 py-2 bg-background border border-border text-foreground text-sm font-medium rounded-lg cursor-pointer hover:bg-muted transition-colors">
-                          <UploadCloud size={16} className="text-primary" />
-                          Загрузить Счет на оплату
-                          <input 
-                            type="file" 
-                            accept=".pdf,.doc,.docx,.xls,.xlsx" 
-                            className="hidden" 
-                            onChange={(e) => {
-                              if(e.target.files?.[0]) handleFileUpload(supplier, e.target.files[0]);
-                            }} 
-                          />
-                        </label>
+                        groupHasRealSupplier ? (
+                          <label className="flex items-center gap-2 px-4 py-2 bg-background border border-border text-foreground text-sm font-medium rounded-lg cursor-pointer hover:bg-muted transition-colors">
+                            <UploadCloud size={16} className="text-primary" />
+                            Загрузить Счет на оплату
+                            <input
+                              type="file"
+                              accept=".pdf,.doc,.docx,.xls,.xlsx"
+                              className="hidden"
+                              onChange={(e) => {
+                                if(e.target.files?.[0]) handleFileUpload(supplier, e.target.files[0]);
+                              }}
+                            />
+                          </label>
+                        ) : (
+                          <span
+                            title={noSupplierTitle}
+                            className="flex items-center gap-2 px-4 py-2 bg-background border border-border text-muted-foreground text-sm font-medium rounded-lg cursor-not-allowed opacity-50"
+                          >
+                            <UploadCloud size={16} />
+                            Загрузить Счет на оплату
+                          </span>
+                        )
                       ) : (
                         <p className="text-sm text-muted-foreground italic">Счёт на оплату не загружен</p>
                       )
@@ -1157,7 +1344,9 @@ export function ProcurementPage({
                     {isPm && wfState.status === 'approved' && (
                       <button
                         onClick={() => handleOpenSendToIncomeModal(supplier)}
-                        className="flex items-center gap-2.5 px-4 py-2 text-sm font-bold rounded-lg shadow-sm transition-all bg-success hover:bg-success/90 text-success-foreground cursor-pointer shadow-success/30 active:scale-[0.97]"
+                        disabled={!groupHasRealSupplier}
+                        title={groupHasRealSupplier ? undefined : noSupplierTitle}
+                        className="flex items-center gap-2.5 px-4 py-2 text-sm font-bold rounded-lg shadow-sm transition-all bg-success hover:bg-success/90 text-success-foreground cursor-pointer shadow-success/30 active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <PackageCheck size={16} />
                         Отправить на приход
@@ -1184,14 +1373,27 @@ export function ProcurementPage({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {items.map((item) => {
+                      {(() => {
+                        // Ссылка "Себестоимость комплекта" показывается только
+                        // у первого компонента каждого kit_group_key в ЭТОЙ
+                        // supplier-таблице — иначе она дублировалась бы на
+                        // каждой строке комплекта.
+                        const seenKitGroups = new Set<string>();
+
+                        return items.map((item) => {
                         const quantity = toNumber(item.procurement_quantity ?? item.required_quantity ?? item.quantity);
                         const unit = safeTrim(item.product?.unit) || safeTrim(item.unit) || "шт";
                         const costPrice = getPurchasePrice(item);
                         const salePrice = getSalePrice(item);
-                        
+
                         const sum = quantity * costPrice;
                         const marginPercent = salePrice > 0 ? ((salePrice - costPrice) / salePrice) * 100 : 0;
+                        const isKitComponent = Boolean(item.kit_group_key);
+                        const isFirstInKitGroup =
+                          isKitComponent && item.kit_group_key != null && !seenKitGroups.has(item.kit_group_key);
+                        if (isKitComponent && item.kit_group_key != null) seenKitGroups.add(item.kit_group_key);
+                        const isSavingCost = savingCostItemId === item.id;
+                        const itemHasSupplier = hasSupplier(item);
 
                         return (
                           <tr key={item.id} className="hover:bg-background/30 transition-colors">
@@ -1218,18 +1420,29 @@ export function ProcurementPage({
                               </div>
                             </td>
                             <td className="px-5 py-3.5">
-                              {canChangeSupplier ? (
-                                <button
-                                  onClick={() => openSupplierModal(item)}
-                                  className="group inline-flex items-center gap-1.5 text-sm text-foreground px-2 py-1.5 -mx-2 rounded-md hover:bg-muted transition-colors"
-                                  title="Изменить поставщика"
-                                >
-                                  {getSupplierName(item)}
-                                  <Pencil size={12} className="text-muted-foreground opacity-0 group-hover:opacity-70 transition-opacity" />
-                                </button>
-                              ) : (
-                                <span className="text-sm text-foreground px-2 py-1.5">{getSupplierName(item)}</span>
-                              )}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {canChangeSupplier ? (
+                                  <button
+                                    onClick={() => openSupplierModal(item)}
+                                    className="group inline-flex items-center gap-1.5 text-sm text-foreground px-2 py-1.5 -mx-2 rounded-md hover:bg-muted transition-colors"
+                                    title={
+                                      isSupplierInvoiceLocked(item)
+                                        ? "Счёт этого поставщика уже загружен, смена недоступна"
+                                        : "Изменить поставщика"
+                                    }
+                                  >
+                                    {getSupplierName(item)}
+                                    <Pencil size={12} className="text-muted-foreground opacity-0 group-hover:opacity-70 transition-opacity" />
+                                  </button>
+                                ) : (
+                                  <span className="text-sm text-foreground px-2 py-1.5">{getSupplierName(item)}</span>
+                                )}
+                                {!itemHasSupplier && (
+                                  <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200">
+                                    нет поставщика
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="px-5 py-3.5 text-sm font-mono text-foreground">
                               {quantity}
@@ -1238,7 +1451,40 @@ export function ProcurementPage({
                               {unit}
                             </td>
                             <td className="px-5 py-3.5 text-sm font-mono text-foreground">
-                              {fmt(costPrice)}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {isKitComponent ? (
+                                  <span className="text-muted-foreground">{fmt(costPrice)}</span>
+                                ) : canChangeSupplier ? (
+                                  <input
+                                    key={`${item.id}-cost-${costPrice}`}
+                                    type="text"
+                                    inputMode="decimal"
+                                    defaultValue={String(costPrice)}
+                                    disabled={isSavingCost}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") event.currentTarget.blur();
+                                    }}
+                                    onBlur={(event) => handleCostPriceBlur(item, event)}
+                                    className="w-24 px-2 py-1 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
+                                  />
+                                ) : (
+                                  fmt(costPrice)
+                                )}
+                                {costPrice === 0 && (
+                                  <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200">
+                                    нет цены
+                                  </span>
+                                )}
+                                {isFirstInKitGroup && canChangeSupplier && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openKitCostModal(item)}
+                                    className="text-[11px] font-medium text-primary hover:underline whitespace-nowrap"
+                                  >
+                                    Себестоимость комплекта
+                                  </button>
+                                )}
+                              </div>
                             </td>
                             <td className="px-5 py-3.5 text-sm font-mono font-semibold text-foreground">
                               {fmt(sum)}
@@ -1250,7 +1496,8 @@ export function ProcurementPage({
                             </td>
                             </tr>
                           );
-                        })}
+                        });
+                      })()}
                     </tbody>
                   </table>
                 </div>
@@ -1343,7 +1590,8 @@ export function ProcurementPage({
               </button>
               <button
                 onClick={handleConfirmSendToIncome}
-                disabled={isSendingToIncome}
+                disabled={isSendingToIncome || savingCostItemId != null}
+                title={savingCostItemId != null ? "Дождитесь сохранения себестоимости" : undefined}
                 className="flex items-center gap-2 px-5 py-2 text-xs font-semibold bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50"
               >
                 {isSendingToIncome && <Loader2 size={14} className="animate-spin" />}
@@ -1477,6 +1725,69 @@ export function ProcurementPage({
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Модалка себестоимости комплекта ЦЕЛИКОМ — открывается с первого
+          компонента комплекта в таблице (см. isFirstInKitGroup выше).
+          Компоненты по отдельности себестоимость не получают: backend сам
+          перераспределяет её после сохранения. */}
+      {kitCostModalItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md bg-card rounded-xl shadow-xl p-6 border border-border">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2 text-foreground font-bold">
+                <Package className="text-blue-600 dark:text-blue-400" size={20} />
+                <h3>Себестоимость комплекта</h3>
+              </div>
+              <button onClick={closeKitCostModal} className="text-muted-foreground hover:text-muted-foreground">
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-sm text-muted-foreground mb-4">
+              Комплект <span className="font-semibold text-foreground">«{safeTrim(kitCostModalItem.kit_name) || "Комплект"}»</span>.
+              Значение применится ко всем компонентам комплекта — backend распределит его самостоятельно.
+            </p>
+
+            {kitCostError && (
+              <div className="mb-4 flex items-start gap-2 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 text-red-700 dark:text-red-300 px-3 py-2.5 rounded-lg text-sm">
+                <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                {kitCostError}
+              </div>
+            )}
+
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5">
+              Себестоимость комплекта
+            </label>
+            <input
+              type="text"
+              inputMode="decimal"
+              autoFocus
+              value={kitCostInput}
+              onChange={(e) => setKitCostInput(e.target.value)}
+              disabled={kitCostSaving}
+              className="w-full px-3 py-2 text-sm font-mono border border-border rounded-lg bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:opacity-50"
+            />
+
+            <div className="flex justify-end gap-3 mt-5">
+              <button
+                onClick={closeKitCostModal}
+                disabled={kitCostSaving}
+                className="px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted rounded-lg disabled:opacity-50"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={handleSaveKitCost}
+                disabled={kitCostSaving}
+                className="flex items-center gap-2 px-5 py-2 text-xs font-semibold bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors disabled:opacity-50"
+              >
+                {kitCostSaving && <Loader2 size={14} className="animate-spin" />}
+                Сохранить
+              </button>
+            </div>
           </div>
         </div>
       )}
