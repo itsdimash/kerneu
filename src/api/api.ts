@@ -1189,6 +1189,28 @@ export async function updateKitGroupCostPrice(
   }
 }
 
+// cost_price — сырой ответ бэкенда: FastAPI/Pydantic может сериализовать
+// Decimal и как число, и как строку, поэтому здесь оба варианта. Приведение
+// к number — на стороне вызывающего кода (см. loadLastPurchaseHints в
+// ProcurementPage.tsx), не здесь.
+export interface LastPurchaseHint {
+  cost_price: number | string;
+  supplier_name: string;
+  purchased_at: string;
+}
+
+// Подсказка "Последняя закупка" в ячейке цены (ProcurementPage). Контракт
+// может быть ещё не задеплоен на бэке — вызывающая сторона должна сама
+// молча проглатывать ошибку (без toast, без блокировки страницы).
+export async function fetchLastPurchasePrices(
+  projectId: number | string,
+): Promise<Record<string, LastPurchaseHint>> {
+  const { data } = await api.get<{ items: Record<string, LastPurchaseHint> }>(
+    `/projects/${projectId}/last-purchase-prices`,
+  );
+  return data.items;
+}
+
 // ==========================================
 // СВОДНАЯ ЗАКУПКА (одинаковые товары суммируются по всем проектам)
 // ==========================================

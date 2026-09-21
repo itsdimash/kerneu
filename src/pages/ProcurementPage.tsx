@@ -14,6 +14,8 @@ import {
   updateProjectItemSupplier,
   updateProjectItemCostPrice,
   updateKitGroupCostPrice,
+  fetchLastPurchasePrices,
+  LastPurchaseHint,
   SupplierListItem
 } from "../api/api";
 import {
@@ -287,6 +289,14 @@ const toNumber = (value: number | string | null | undefined) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+// LastPurchaseHint (api.ts) хранит cost_price как пришло с бэка — FastAPI/
+// Pydantic может сериализовать Decimal и числом, и строкой. В состоянии
+// держим уже приведённое через toNumber значение, чтобы дальше по коду
+// (сравнение с costPrice, fmt(), saveCostPrice) везде было чистое number.
+type NormalizedLastPurchaseHint = Omit<LastPurchaseHint, "cost_price"> & {
+  cost_price: number;
+};
+
 const getPurchasePrice = (item: ProcurementProjectItem) =>
   toNumber(item.price_cost ?? item.product?.price_cost ?? item.cost_price ?? item.product?.cost_price ?? 0);
 
@@ -318,6 +328,14 @@ export function ProcurementPage({
   const [purchaseItems, setPurchaseItems] = useState<ProcurementProjectItem[]>([]);
   const [purchaseLoading, setPurchaseLoading] = useState(false);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
+
+  // NEW: подсказка "Последняя закупка" в ячейке цены. Намеренно отдельное
+  // состояние, а не поле на ProcurementProjectItem — инпут цены ключуется
+  // как `${item.id}-cost-${costPrice}` (см. рендер ниже), и если подсказку
+  // положить в purchaseItems, любое её обновление меняло бы объект item и
+  // могло бы задеть этот key/defaultValue паттерн. Ключ записи — id позиции
+  // (project_item_id), а не product_id — у контракта бэка именно так.
+  const [lastPurchaseHints, setLastPurchaseHints] = useState<Record<number, NormalizedLastPurchaseHint>>({});
 
   const [expandedSuppliers, setExpandedSuppliers] = useState<Record<string, boolean>>({});
   const [supplierWorkflows, setSupplierWorkflows] = useState<Record<string, SupplierWorkflowState>>({});
@@ -424,10 +442,42 @@ export function ProcurementPage({
       .catch(e => console.error("Ошибка загрузки списка поставщиков:", e));
   }, [isPm, isDirector, isAdmin]);
 
+  // NEW: подсказка "Последняя закупка" — отдельный, не блокирующий основную
+  // загрузку запрос. Контракт может быть ещё не задеплоен на бэке, поэтому
+  // любая ошибка (в т.ч. 404) молча проглатывается — без toast, без влияния
+  // на purchaseLoading/purchaseError. activeHintsProjectIdRef защищает от
+  // устаревшего ответа: если за время запроса выбрали другой проект, более
+  // старый ответ просто отбрасывается.
+  const activeHintsProjectIdRef = useRef<number | string | null>(null);
+
+  const loadLastPurchaseHints = async (projectId: number | string) => {
+    activeHintsProjectIdRef.current = projectId;
+    try {
+      const items = await fetchLastPurchasePrices(projectId);
+      if (activeHintsProjectIdRef.current !== projectId) return;
+
+      const parsed: Record<number, NormalizedLastPurchaseHint> = {};
+      Object.entries(items).forEach(([key, hint]) => {
+        const itemId = Number(key);
+        const costPrice = toNumber(hint.cost_price);
+        // Нечисловое (toNumber даёт 0 и для NaN, и для честного нуля) или
+        // неположительное значение — отбрасываем подсказку целиком, не
+        // кладём в state.
+        if (Number.isFinite(itemId) && costPrice > 0) {
+          parsed[itemId] = { ...hint, cost_price: costPrice };
+        }
+      });
+      setLastPurchaseHints(parsed);
+    } catch (error) {
+      console.error("Не удалось загрузить подсказки последних закупок:", error);
+    }
+  };
+
   const loadProjectPurchases = async (project: ProjectListItem) => {
     try {
       setPurchaseLoading(true);
       setPurchaseError(null);
+      setLastPurchaseHints({});
 
       const [items, docs] = await Promise.all([
         getProjectItems(project.id) as Promise<ProcurementProjectItem[]>,
@@ -440,6 +490,7 @@ export function ProcurementPage({
 
       setSelectedProject(project);
       setPurchaseItems(onlyPurchases);
+      void loadLastPurchaseHints(project.id);
 
       const grouped = groupBySupplier(onlyPurchases);
       const expanded: Record<string, boolean> = {};
@@ -920,6 +971,11 @@ export function ProcurementPage({
         setKnownSuppliers(prev => [...prev, { id: updated.supplier!.id, supplier_name: updated.supplier!.supplier_name }]);
       }
 
+      // Подсказка "Последняя закупка" привязана к поставщику позиции —
+      // после смены поставщика перезапрашиваем её (не блокируя закрытие
+      // модалки), та же защита от устаревшего ответа через ref.
+      void loadLastPurchaseHints(selectedProject.id);
+
       closeSupplierModal();
     } catch (error) {
       console.error("Supplier update failed", error);
@@ -942,8 +998,41 @@ export function ProcurementPage({
     applySupplierChange(supplierModalItem, { supplier_name: name });
   };
 
-  // NEW: себестоимость обычной (не кит) позиции — инлайн-сохранение по
-  // blur (Enter тоже триггерит blur, см. onKeyDown у инпута). 0 — валидное
+  // NEW: общий хелпер сохранения себестоимости — используется и инлайн-blur'ом
+  // (см. ниже), и кнопкой "Применить" у подсказки "Последняя закупка". Сам
+  // инпут не трогает: он неконтролируемый (defaultValue + key по costPrice,
+  // см. рендер ниже) и пересоздастся сам после того, как обновлённый
+  // cost_price попадёт в purchaseItems. Возвращает false при ошибке — вызывающая
+  // сторона решает, нужно ли откатывать что-то своё (у blur'а — значение инпута,
+  // у "Применить" — откатывать нечего, инпут и так покажет текущий costPrice).
+  const saveCostPrice = async (
+    item: ProcurementProjectItem,
+    parsedValue: number,
+  ): Promise<boolean> => {
+    if (!selectedProject) return false;
+
+    setSavingCostItemId(item.id);
+    try {
+      const updated = await updateProjectItemCostPrice(selectedProject.id, item.id, {
+        cost_price: parsedValue,
+      });
+      setPurchaseItems(prev =>
+        prev.map(p => (p.id === item.id ? { ...p, cost_price: updated.cost_price } : p))
+      );
+      return true;
+    } catch (error) {
+      console.error("Cost price update failed", error);
+      toast.error(
+        error instanceof Error ? error.message : "Не удалось сохранить себестоимость"
+      );
+      return false;
+    } finally {
+      setSavingCostItemId(null);
+    }
+  };
+
+  // Себестоимость обычной (не кит) позиции — инлайн-сохранение по blur
+  // (Enter тоже триггерит blur, см. onKeyDown у инпута). 0 — валидное
   // значение (см. контракт бэкенда), поэтому проверяем только "число >= 0".
   const handleCostPriceBlur = async (
     item: ProcurementProjectItem,
@@ -961,23 +1050,20 @@ export function ProcurementPage({
     }
     if (parsed === previous) return;
 
-    setSavingCostItemId(item.id);
-    try {
-      const updated = await updateProjectItemCostPrice(selectedProject.id, item.id, {
-        cost_price: parsed,
-      });
-      setPurchaseItems(prev =>
-        prev.map(p => (p.id === item.id ? { ...p, cost_price: updated.cost_price } : p))
-      );
-    } catch (error) {
-      console.error("Cost price update failed", error);
-      toast.error(
-        error instanceof Error ? error.message : "Не удалось сохранить себестоимость"
-      );
+    const ok = await saveCostPrice(item, parsed);
+    if (!ok) {
       event.target.value = String(previous);
-    } finally {
-      setSavingCostItemId(null);
     }
+  };
+
+  // NEW: кнопка "Применить" у подсказки "Последняя закупка" — подставляет
+  // прошлую cost_price тем же путём, что и обычное сохранение (не пишет
+  // напрямую в DOM инпута — см. saveCostPrice).
+  const handleApplyLastPurchasePrice = (
+    item: ProcurementProjectItem,
+    hint: NormalizedLastPurchaseHint,
+  ) => {
+    void saveCostPrice(item, hint.cost_price);
   };
 
   // Себестоимость комплекта — отдельный эндпоинт, действует на ВСЕ
@@ -1365,7 +1451,7 @@ export function ProcurementPage({
                   <table className="w-full border-collapse">
                     <thead>
                       <tr className="border-b border-border bg-background/40">
-                        {["Продукт", "Поставщик", "Кол.", "Ед.", "Цена", "Сумма", "Маржа"].map((header) => (
+                        {["Продукт", "Поставщик", "Кол.", "Ед.", "Цена (себестоимость)", "Сумма", "Маржа"].map((header) => (
                           <th key={header} className="px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">
                             {header}
                           </th>
@@ -1394,6 +1480,7 @@ export function ProcurementPage({
                         if (isKitComponent && item.kit_group_key != null) seenKitGroups.add(item.kit_group_key);
                         const isSavingCost = savingCostItemId === item.id;
                         const itemHasSupplier = hasSupplier(item);
+                        const lastPurchaseHint = !isKitComponent ? lastPurchaseHints[item.id] : undefined;
 
                         return (
                           <tr key={item.id} className="hover:bg-background/30 transition-colors">
@@ -1473,6 +1560,22 @@ export function ProcurementPage({
                                 {costPrice === 0 && (
                                   <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200">
                                     нет цены
+                                  </span>
+                                )}
+                                {!isKitComponent && canChangeSupplier && lastPurchaseHint && (
+                                  <span className="text-[11px] text-muted-foreground">
+                                    Последняя закупка: {fmt(lastPurchaseHint.cost_price)}, {lastPurchaseHint.supplier_name}, {new Date(lastPurchaseHint.purchased_at).toLocaleDateString("ru-RU")}
+                                    {lastPurchaseHint.cost_price !== costPrice && (
+                                      <button
+                                        type="button"
+                                        disabled={isSavingCost}
+                                        onMouseDown={(event) => event.preventDefault()}
+                                        onClick={() => handleApplyLastPurchasePrice(item, lastPurchaseHint)}
+                                        className="ml-1 text-[11px] font-medium text-primary hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
+                                      >
+                                        Применить
+                                      </button>
+                                    )}
                                   </span>
                                 )}
                                 {isFirstInKitGroup && canChangeSupplier && (
