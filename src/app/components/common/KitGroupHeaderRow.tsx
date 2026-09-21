@@ -17,7 +17,6 @@ interface KitGroupHeaderRowProps {
   // количество, без единого денежного поля и без редактора цены.
   showPrices: boolean;
   kitUnitSalePrice: number;
-  kitUnitCostPrice: number;
   itemsTotalSum: number;
   // Тот же canEditItems (decision === null), что уже гейтит правку цены/
   // себестоимости обычных позиций у Комдира — редактор цены комплекта
@@ -37,20 +36,17 @@ export function KitGroupHeaderRow({
   onToggleExpand,
   showPrices,
   kitUnitSalePrice,
-  kitUnitCostPrice,
   itemsTotalSum,
   canEdit,
   onPricesSaved,
 }: KitGroupHeaderRowProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [saleInput, setSaleInput] = useState("");
-  const [costInput, setCostInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const startEditing = () => {
     setSaleInput(String(kitUnitSalePrice));
-    setCostInput(String(kitUnitCostPrice));
     setError(null);
     setIsEditing(true);
   };
@@ -62,20 +58,17 @@ export function KitGroupHeaderRow({
 
   const handleSave = async () => {
     const newSale = Number(saleInput);
-    const newCost = Number(costInput);
 
     if (!Number.isFinite(newSale) || newSale < 0) {
       setError("Цена комплекта должна быть числом больше или равным нулю");
       return;
     }
-    if (!Number.isFinite(newCost) || newCost < 0) {
-      setError("Себестоимость комплекта должна быть числом больше или равным нулю");
-      return;
-    }
 
-    const payload: { sale_price?: number; cost_price?: number } = {};
+    // cost_price сюда намеренно не отправляется — себестоимость комплекта
+    // теперь правится только в Закупках (см. updateKitGroupCostPrice в
+    // ProcurementPage), чтобы правка цены Комдиром не затирала её.
+    const payload: { sale_price?: number } = {};
     if (newSale !== kitUnitSalePrice) payload.sale_price = newSale;
-    if (newCost !== kitUnitCostPrice) payload.cost_price = newCost;
 
     if (Object.keys(payload).length === 0) {
       setIsEditing(false);
@@ -125,14 +118,9 @@ export function KitGroupHeaderRow({
           <span className="text-xs text-muted-foreground">× {formatQty(kitQuantity)}</span>
 
           {showPrices && (
-            <>
-              <span className="text-xs text-muted-foreground">
-                Цена комплекта: <span className="font-mono text-foreground">{formatQty(kitUnitSalePrice)}</span>
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Себестоимость: <span className="font-mono text-foreground">{formatQty(kitUnitCostPrice)}</span>
-              </span>
-            </>
+            <span className="text-xs text-muted-foreground">
+              Цена комплекта: <span className="font-mono text-foreground">{formatQty(kitUnitSalePrice)}</span>
+            </span>
           )}
 
           <span className="text-xs text-muted-foreground">{itemCount} позиций</span>
@@ -173,18 +161,6 @@ export function KitGroupHeaderRow({
                   disabled={saving}
                   value={saleInput}
                   onChange={(event) => setSaleInput(event.target.value)}
-                  className="w-28 px-2 py-1 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
-              />
-            </label>
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              Себестоимость:
-              <input
-                  type="number"
-                  min={0}
-                  step="1"
-                  disabled={saving}
-                  value={costInput}
-                  onChange={(event) => setCostInput(event.target.value)}
                   className="w-28 px-2 py-1 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
               />
             </label>

@@ -11,6 +11,10 @@ type RevenuePoint = {
 
 type RevenueDynamicsResponse = {
   items: RevenuePoint[];
+  // Опциональные — старый backend их ещё не отдаёт. "Себестоимость указана
+  // у X из Y позиций" под графиком (см. рендер ниже).
+  items_with_cost?: number;
+  items_total?: number;
 };
 
 function formatCompact(value: number): string {
@@ -101,6 +105,12 @@ export function RevenueTrendWidget() {
       )}
 
       {!loading && !error && items.length > 0 && <RevenueLineChart items={items} />}
+
+      {!loading && !error && data?.items_total != null && data.items_total > 0 && (
+        <p className="mt-3 text-[11px] text-muted-foreground">
+          Себестоимость указана у {data.items_with_cost ?? 0} из {data.items_total} позиций
+        </p>
+      )}
     </div>
   );
 }

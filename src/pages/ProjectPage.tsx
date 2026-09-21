@@ -52,16 +52,6 @@ import { StockStatusBadge } from "../app/components/common/StockStatusBadge";
 import { KitGroupHeaderRow } from "../app/components/common/KitGroupHeaderRow";
 import { ML_STATUS_STYLES, UNKNOWN_ML_STATUS_STYLE, normalizeMlStatus } from "../lib/stockStatus";
 import { groupEntriesByKit } from "../lib/kitGroups";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "../app/components/ui/alert-dialog";
 
 // Достаёт читаемые текстовые подсказки из similar_variants — ML отдаёт
 // их из внешнего Excel-файла в произвольном виде (иногда структурированные
@@ -184,7 +174,6 @@ const getMlRowState = (
 
   const quantity = Number(item.final_quantity ?? item.input_quantity ?? 0);
   const price = Number(item.price ?? 0);
-  const priceCost = Number(item.price_cost ?? 0);
   const needsProduct = item.selected_product_id == null;
 
   const reasons: string[] = [];
@@ -198,12 +187,8 @@ const getMlRowState = (
   if (!Number.isFinite(price) || price <= 0) {
     reasons.push("цена продажи должна быть больше нуля");
   }
-  if (!Number.isFinite(priceCost) || priceCost < 0) {
-    reasons.push("себестоимость не может быть отрицательной");
-  }
-  if (!item.supplier_name?.trim()) {
-    reasons.push("не указан поставщик");
-  }
+  // Себестоимость и поставщик больше не вводятся на ProjectPage — их
+  // заполняет Закупка на ProcurementPage (см. cost_price/supplier перенос).
   const kitStatus = getItemKitStatus(item, productCatalog);
   if (kitStatus.isKit && kitStatus.hasEmptyComponents) {
     reasons.push("Комплект: выберите состав");
@@ -373,17 +358,11 @@ export function ProjectPagePM({
     useState<MlImportItemResponse | null>(null);
   const [productModalForm, setProductModalForm] = useState({
     product_name: "",
-    supplier_name: "",
     unit: "шт",
-    price_cost: "",
     price: "",
     is_kit: false,
   });
   const [productModalError, setProductModalError] = useState<string | null>(null);
-  // Продажа ниже себестоимости разрешена (явное решение бизнеса), но перед
-  // тем как ПМ нажмёт «Подтвердить импорт» с такими строками, показываем
-  // предупреждение — чтобы отрицательная маржа не проскакивала случайно.
-  const [showNegativeMarginConfirm, setShowNegativeMarginConfirm] = useState(false);
   // Строка уже привязана к товару, но пользователь хочет создать вместо него
   // новый (ML мог сопоставить уверенно, но неверно). Backend запрещает
   // create-product для привязанной строки, поэтому привязку снимаем сами,
@@ -1260,11 +1239,7 @@ export function ProjectPagePM({
         item.selected_product_id != null
           ? item.input_product
           : item.matched_product?.trim() || item.input_product,
-      supplier_name: item.supplier_name ?? "",
       unit: item.unit?.trim() || "шт",
-      price_cost: Number(item.price_cost ?? 0) > 0
-        ? String(item.price_cost)
-        : "",
       price: Number(item.price ?? 0) > 0 ? String(item.price) : "",
       is_kit: false,
     });
@@ -1284,20 +1259,13 @@ export function ProjectPagePM({
     if (!mlImport || !productModalItem) return;
 
     const productName = productModalForm.product_name.trim();
-    const supplierName = productModalForm.supplier_name.trim();
     const unit = productModalForm.unit.trim();
-    const priceCost = Number(productModalForm.price_cost);
     const price = Number(productModalForm.price);
 
-    if (!productName || !supplierName || !unit) {
+    if (!productName || !unit) {
       setProductModalError(
-        "Заполните название товара, поставщика и единицу измерения.",
+        "Заполните название товара и единицу измерения.",
       );
-      return;
-    }
-
-    if (!Number.isFinite(priceCost) || priceCost <= 0) {
-      setProductModalError("Себестоимость должна быть больше нуля.");
       return;
     }
 
@@ -1308,9 +1276,7 @@ export function ProjectPagePM({
 
     const payload: MlImportItemCreateProduct = {
       product_name: productName,
-      supplier_name: supplierName,
       unit,
-      price_cost: priceCost,
       price,
       is_kit: productModalForm.is_kit,
     };
@@ -1622,21 +1588,6 @@ export function ProjectPagePM({
           .map((row) => `№${row.index + 1} — ${row.state.reasons.join(", ")}`)
           .join("; ") +
         (unresolvedRows.length > 5 ? "; …" : "");
-
-  // Продажа ниже себестоимости не блокирует confirm (бизнес-решение), но
-  // ПМ должен явно подтвердить, что видит такие строки — список считаем
-  // тем же item.margin, что рисует подсветку в таблице.
-  const negativeMarginRows = (mlImport?.items ?? [])
-    .map((item, index) => ({ item, index }))
-    .filter(({ item }) => !item.is_confirmed && Number(item.margin ?? 0) < 0);
-  const negativeMarginNames = negativeMarginRows.map(({ item, index }) => {
-    const selectedProduct =
-      item.selected_product_id != null
-        ? productCatalog.find((p) => p.id === item.selected_product_id)
-        : undefined;
-    const name = selectedProduct?.name || item.matched_product?.trim() || item.input_product;
-    return `№${index + 1} — ${name}`;
-  });
 
   // Для «Заявки на склад» цена/себестоимость/поставщик не нужны — это
   // внутренний запрос по наличию, а не коммерческая позиция. Готовность
@@ -1996,17 +1947,18 @@ export function ProjectPagePM({
             ) : (
               <>
                 {isApproved ? (() => {
+                  // Себестоимость/поставщик/маржа больше не показываются на
+                  // ProjectPage ни одной роли — заполняются и видны только
+                  // на ProcurementPage (см. перенос cost_price/supplier).
                   const liveItemsHeaders = isWarehouseRequest
                     ? ["№", "Наименование", "Кол-во", "Ед.", "Статус"]
-                    : ["№", "Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"];
+                    : ["№", "Наименование", "Кол-во", "Ед.", "Цена", "Сумма", "Статус"];
                   const liveItemsColSpan = liveItemsHeaders.length;
 
                   const renderLiveItemRow = (item: ProjectItemResponse, index: number) => {
                     const qty = Number(item.required_quantity ?? 0);
                     const price = Number(item.sale_price ?? 0);
-                    const priceCost = Number(item.cost_price ?? 0);
                     const total = item.total_sum != null ? Number(item.total_sum) : qty * price;
-                    const margin = price > 0 ? ((price - priceCost) / price) * 100 : 0;
                     const isEditedByDirector = Boolean((item as { edited_by_director?: boolean }).edited_by_director);
                     const stockStatusName = item.status?.status_name ?? "—";
                     const isInStock = stockStatusName === "На складе";
@@ -2028,24 +1980,12 @@ export function ProjectPagePM({
                               </p>
                             )}
                           </td>
-                          {!isWarehouseRequest && (
-                            <td className="px-4 py-3 text-sm text-foreground">
-                              {item.supplier_raw_name ?? item.supplier?.supplier_name ?? "—"}
-                            </td>
-                          )}
                           <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
                           <td className="px-4 py-3 text-xs text-muted-foreground">{item.product?.unit ?? "шт"}</td>
                           {!isWarehouseRequest && (
                             <>
-                              <td className={`px-4 py-3 text-sm font-mono ${isKitComponent ? "text-muted-foreground" : ""}`}>{priceCost.toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2,})}</td>
                               <td className={`px-4 py-3 text-sm font-mono ${isKitComponent ? "text-muted-foreground" : ""}`}>{price.toLocaleString("ru-RU")}</td>
                               <td className={`px-4 py-3 text-sm font-mono font-semibold ${isKitComponent ? "text-muted-foreground font-normal" : ""}`}>{total.toLocaleString("ru-RU")}</td>
-                              <td className="px-4 py-3">
-                              <span
-                                  className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-1 ring-red-200"}`}>
-                                {margin.toFixed(1)}%
-                              </span>
-                              </td>
                             </>
                           )}
                           <td className="px-4 py-3">
@@ -2133,7 +2073,6 @@ export function ProjectPagePM({
                                     }
                                     showPrices={!isWarehouseRequest}
                                     kitUnitSalePrice={Number(first.kit_unit_sale_price ?? 0)}
-                                    kitUnitCostPrice={Number(first.kit_unit_cost_price ?? 0)}
                                     itemsTotalSum={itemsTotalSum}
                                     canEdit={false}
                                     onPricesSaved={() => {}}
@@ -2150,12 +2089,12 @@ export function ProjectPagePM({
                 })() : (
                 <>
                 <div className="bg-card rounded-lg border border-border overflow-x-auto">
-                  <table className={`w-full border-collapse ${isWarehouseRequest ? "min-w-[900px]" : "min-w-[1950px]"}`}>
+                  <table className={`w-full border-collapse ${isWarehouseRequest ? "min-w-[900px]" : "min-w-[1550px]"}`}>
                     <thead>
                       <tr className="border-b border-border bg-background/60">
                         {(isWarehouseRequest
                           ? ["№", "Наименование", "Кол-во", "Совпавший товар", "Ед.", "Доступно", "Комментарий", "Статус", ""]
-                          : ["№", "Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Поставщик", "Себестоимость", "Цена", "Сумма", "Маржа", "Доступно", "Комментарий", "Статус", ""]
+                          : ["№", "Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Цена", "Сумма", "Доступно", "Комментарий", "Статус", ""]
                         ).map((heading, headingIndex) => (
                           <th key={heading || `actions-${headingIndex}`} className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{heading}</th>
                         ))}
@@ -2163,18 +2102,15 @@ export function ProjectPagePM({
                     </thead>
                     <tbody className="divide-y divide-border">
                       {mlImport.items.length === 0 && !isAddingRow && (
-                        <tr><td colSpan={isWarehouseRequest ? 9 : 14} className="px-4 py-10 text-center text-sm text-muted-foreground">В ML-импорте нет товаров</td></tr>
+                        <tr><td colSpan={isWarehouseRequest ? 9 : 11} className="px-4 py-10 text-center text-sm text-muted-foreground">В ML-импорте нет товаров</td></tr>
                       )}
                       {mlImport.items.map((item, index) => {
                           const isUpdating = updatingItemId === item.id;
                           const isDeleting = deletingItemId === item.id;
                           const canDeleteRow =
                             mlImport.status === "draft" && !item.is_confirmed;
-                          const priceCost = Number(item.price_cost ?? 0);
                           const price = Number(item.price ?? 0);
                           const totalAmount = Number(item.total_amount ?? 0);
-                          const margin = Number(item.margin ?? 0);
-                          const marginPercent = margin * 100;
                           const normalizedStatus = normalizeMlStatus(item.ml_status);
                           const rowState = getMlRowState(item, productCatalog);
                           const kitStatus = getItemKitStatus(item, productCatalog);
@@ -2536,100 +2472,6 @@ export function ProjectPagePM({
                                   <>
                                 <td className="px-4 py-3">
                                   <input
-                                      key={`${item.id}-supplier-${item.supplier_name ?? ""}`}
-                                      type="text"
-                                      maxLength={255}
-                                      disabled={mlImport.status !== "draft" || isUpdating || item.is_confirmed}
-                                      defaultValue={item.supplier_name ?? ""}
-                                      placeholder="Укажите поставщика"
-                                      onBlur={(event) => {
-                                        const supplierName = event.target.value.trim() || null;
-                                        if (supplierName !== item.supplier_name) {
-                                          handleMlItemUpdate(item.id, {supplier_name: supplierName});
-                                        }
-                                      }}
-                                      className={`w-44 px-2 py-1.5 text-sm border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted ${
-                                        item.supplier_name?.trim()
-                                          ? "border-border"
-                                          : "border-red-300 dark:border-red-400/30"
-                                      }`}
-                                  />
-                                </td>
-                                <td className="px-4 py-3">
-                                  {(() => {
-                                    const fieldDisabled = mlImport.status !== "draft" || isUpdating || item.is_confirmed;
-
-                                    if (item.is_kit) {
-                                      // Себестоимость кит-строки теперь ВСЕГДА считается backend'ом
-                                      // как сумма себестоимостей компонентов (kit_derived_unit_cost) —
-                                      // ручного price_cost для кит-строк больше нет. ПМ меняет её
-                                      // только через инпуты компонентов в модалке "Состав комплекта"
-                                      // (см. openKitPicker/handleSaveKitComponents), отсюда — чисто
-                                      // read-only отображение с переходом в модалку.
-                                      const hasDerivedCost = item.kit_derived_unit_cost != null && kitComponentsCount > 0;
-                                      const selectedCatalogProduct =
-                                        item.selected_product_id != null
-                                          ? productCatalog.find((p) => p.id === item.selected_product_id)
-                                          : undefined;
-
-                                      return (
-                                        <div>
-                                          <p className="text-sm font-mono text-foreground">
-                                            {hasDerivedCost ? formatMoney(item.kit_derived_unit_cost) : "—"}
-                                          </p>
-                                          <div className="mt-1 flex items-center gap-1.5">
-                                            <span className="text-[11px] text-muted-foreground">
-                                              {hasDerivedCost ? "авто — сумма по составу" : "выберите состав"}
-                                            </span>
-                                            {selectedCatalogProduct && (
-                                              <button
-                                                  type="button"
-                                                  disabled={fieldDisabled}
-                                                  onClick={() => void openKitPicker(item, selectedCatalogProduct)}
-                                                  className="text-[11px] font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline"
-                                              >
-                                                Изменить в составе
-                                              </button>
-                                            )}
-                                          </div>
-                                        </div>
-                                      );
-                                    }
-
-                                    // Достаёт число из текста поля ("1500", "1 200,50") — убираем
-                                    // всё, кроме цифр/точки/запятой/минуса, запятую трактуем как
-                                    // десятичный разделитель. null — если получилось не число или
-                                    // число отрицательное.
-                                    const parseCostFieldValue = (raw: string): number | null => {
-                                      const cleaned = raw.replace(/[^\d,.-]/g, "").replace(",", ".");
-                                      if (cleaned.trim() === "") return 0;
-                                      const value = Number(cleaned);
-                                      if (!Number.isFinite(value) || value < 0) return null;
-                                      return value;
-                                    };
-
-                                    return (
-                                      <input
-                                          key={`${item.id}-cost-${item.price_cost}`}
-                                          type="text"
-                                          inputMode="decimal"
-                                          disabled={fieldDisabled}
-                                          defaultValue={String(priceCost)}
-                                          onBlur={(event) => {
-                                            const parsed = parseCostFieldValue(event.target.value);
-                                            if (parsed === null) {
-                                              setMlImportError("Себестоимость должна быть числом больше или равным нулю");
-                                              return;
-                                            }
-                                            if (parsed !== priceCost) handleMlItemUpdate(item.id, {price_cost: parsed});
-                                          }}
-                                          className="w-32 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
-                                      />
-                                    );
-                                  })()}
-                                </td>
-                                <td className="px-4 py-3">
-                                  <input
                                       key={`${item.id}-price-${item.price}`}
                                       type="number" min={0} step="1"
                                       disabled={mlImport.status !== "draft" || isUpdating || item.is_confirmed}
@@ -2649,17 +2491,6 @@ export function ProjectPagePM({
                                 </td>
                                 <td className="px-4 py-3 whitespace-nowrap"><span
                                     className="text-sm font-semibold font-mono text-foreground">{formatMoney(totalAmount)}</span>
-                                </td>
-                                <td className="px-4 py-3">
-                                <div className="flex flex-col items-start gap-0.5">
-                                  <span
-                                      className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${marginPercent >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : marginPercent > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : marginPercent < 0 ? "bg-amber-50 dark:bg-amber-400/15 text-red-700 dark:text-red-300 ring-1 ring-amber-200" : "bg-muted text-muted-foreground ring-1 ring-slate-200"}`}>
-                                    {marginPercent.toFixed(1)}%
-                                  </span>
-                                  {marginPercent < 0 && (
-                                    <span className="text-[10px] font-medium text-red-700 dark:text-red-300">убыток</span>
-                                  )}
-                                </div>
                                 </td>
                                   </>
                                 )}
@@ -2818,8 +2649,8 @@ export function ProjectPagePM({
                                 className="w-24 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
                             />
                           </td>
-                          <td colSpan={isWarehouseRequest ? 5 : 10} className="px-4 py-3 text-xs text-muted-foreground">
-                            Товар из каталога, поставщика и цены укажите в самой строке
+                          <td colSpan={isWarehouseRequest ? 5 : 7} className="px-4 py-3 text-xs text-muted-foreground">
+                            Товар из каталога и цену продажи укажите в самой строке
                             после её создания.
                           </td>
                           <td className="px-4 py-3">
@@ -2939,13 +2770,7 @@ export function ProjectPagePM({
                     <AppTooltip text={confirmBlockedHint}>
                       <button
                           type="button"
-                          onClick={() => {
-                            if (negativeMarginRows.length > 0) {
-                              setShowNegativeMarginConfirm(true);
-                              return;
-                            }
-                            void handleConfirmMlImport();
-                          }}
+                          onClick={() => void handleConfirmMlImport()}
                           disabled={!canConfirmMlImport || confirmingImport}
                           className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-colors disabled:bg-slate-200 disabled:text-muted-foreground disabled:cursor-not-allowed enabled:bg-primary enabled:text-white enabled:hover:bg-primary/90 enabled:cursor-pointer"
                       >
@@ -2974,38 +2799,6 @@ export function ProjectPagePM({
               </>
             )}
         </div>
-
-        <AlertDialog open={showNegativeMarginConfirm} onOpenChange={setShowNegativeMarginConfirm}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Есть строки с отрицательной маржой</AlertDialogTitle>
-              <AlertDialogDescription asChild>
-                <div className="space-y-1">
-                  <p>Эти строки продаются ниже себестоимости:</p>
-                  <ul className="list-disc pl-5">
-                    {negativeMarginNames.slice(0, 5).map((label) => (
-                      <li key={label}>{label}</li>
-                    ))}
-                  </ul>
-                  {negativeMarginNames.length > 5 && (
-                    <p>и ещё {negativeMarginNames.length - 5}</p>
-                  )}
-                </div>
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Отмена</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => {
-                  setShowNegativeMarginConfirm(false);
-                  void handleConfirmMlImport();
-                }}
-              >
-                Подтвердить всё равно
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
 
         {productModalItem && (
           <div
@@ -3076,24 +2869,6 @@ export function ProjectPagePM({
 
                 <label className="block">
                   <span className="mb-1.5 block text-sm font-medium text-foreground">
-                    Поставщик
-                  </span>
-                  <input
-                      type="text"
-                      required
-                      maxLength={255}
-                      value={productModalForm.supplier_name}
-                      onChange={(event) => setProductModalForm((current) => ({
-                        ...current,
-                        supplier_name: event.target.value,
-                      }))}
-                      placeholder="Введите имя поставщика"
-                      className="w-full rounded-lg border border-input px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-                  />
-                </label>
-
-                <label className="block">
-                  <span className="mb-1.5 block text-sm font-medium text-foreground">
                     Единица измерения
                   </span>
                   <input
@@ -3116,43 +2891,23 @@ export function ProjectPagePM({
                   </datalist>
                 </label>
 
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <label className="block">
-                    <span className="mb-1.5 block text-sm font-medium text-foreground">
-                      Себестоимость
-                    </span>
-                    <input
-                        type="number"
-                        required
-                        min="0.01"
-                        step="0.01"
-                        value={productModalForm.price_cost}
-                        onChange={(event) => setProductModalForm((current) => ({
-                          ...current,
-                          price_cost: event.target.value,
-                        }))}
-                        className="w-full rounded-lg border border-input px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-                    />
-                  </label>
-
-                  <label className="block">
-                    <span className="mb-1.5 block text-sm font-medium text-foreground">
-                      Цена продажи
-                    </span>
-                    <input
-                        type="number"
-                        required
-                        min="0.01"
-                        step="0.01"
-                        value={productModalForm.price}
-                        onChange={(event) => setProductModalForm((current) => ({
-                          ...current,
-                          price: event.target.value,
-                        }))}
-                        className="w-full rounded-lg border border-input px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-                    />
-                  </label>
-                </div>
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-foreground">
+                    Цена продажи
+                  </span>
+                  <input
+                      type="number"
+                      required
+                      min="0.01"
+                      step="0.01"
+                      value={productModalForm.price}
+                      onChange={(event) => setProductModalForm((current) => ({
+                        ...current,
+                        price: event.target.value,
+                      }))}
+                      className="w-full rounded-lg border border-input px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+                  />
+                </label>
 
                 <label className="flex items-center gap-2 text-sm text-foreground">
                   <Checkbox
@@ -3664,9 +3419,13 @@ const [itemSaveError, setItemSaveError] =
 
   const PROJECT_ITEMS_API_BASE = "/api/v1/project-items";
 
+  // Единственное поле, которое Комдир правит на ProjectPage, — sale_price.
+  // cost_price/supplier теперь заполняются в Закупках (см. перенос); сигнатура
+  // сужена намеренно, чтобы сюда нельзя было случайно передать другое поле
+  // и затереть значение, проставленное Закупкой.
   const handleItemFieldUpdate = async (
     itemId: number,
-    payload: Record<string, number | string | null>,
+    payload: { sale_price: number },
   ) => {
     if (!project) return;
 
@@ -3833,17 +3592,18 @@ const [itemSaveError, setItemSaveError] =
             </div>
           )}
           {(() => {
+            // Себестоимость/поставщик/маржа больше не показываются и не
+            // редактируются на ProjectPage — заполняются на ProcurementPage.
+            // Комдир правит только sale_price (см. handleItemFieldUpdate).
             const directorHeaders = isWarehouseRequest
               ? ["№", "Наименование", "Кол-во", "Ед.", "Статус"]
-              : ["№", "Наименование", "Поставщик", "Кол-во", "Ед.", "Себестоимость", "Цена", "Сумма", "Маржа", "Статус"];
+              : ["№", "Наименование", "Кол-во", "Ед.", "Цена", "Сумма", "Статус"];
             const directorColSpan = directorHeaders.length;
 
             const renderDirectorItemRow = (item: ProjectItemResponse, index: number) => {
               const qty = Number(item.required_quantity ?? 0);
               const price = Number(item.sale_price ?? 0);
-              const priceCost = Number(item.cost_price ?? 0);
               const total = item.total_sum != null ? Number(item.total_sum) : qty * price;
-              const margin = price > 0 ? ((price - priceCost) / price) * 100 : 0;
               const isEditedByDirector = Boolean((item as { edited_by_director?: boolean }).edited_by_director);
               const isSaving = updatingItemId === item.id;
               const disabled = !canEditItems || isSaving;
@@ -3866,56 +3626,10 @@ const [itemSaveError, setItemSaveError] =
                         </p>
                       )}
                     </td>
-                    {!isWarehouseRequest && (
-                      <td className="px-4 py-3">
-                        <input
-                            key={`${item.id}-supplier-${item.supplier_raw_name ?? ""}`}
-                            type="text"
-                            maxLength={255}
-                            disabled={disabled}
-                            defaultValue={item.supplier_raw_name ?? item.supplier?.supplier_name ?? ""}
-                            placeholder="Укажите поставщика"
-                            onBlur={(event) => {
-                              const supplierName = event.target.value.trim() || null;
-                              if (supplierName !== (item.supplier_raw_name ?? null)) {
-                                handleItemFieldUpdate(item.id, { supplier_raw_name: supplierName });
-                              }
-                            }}
-                            className="w-36 px-2 py-1.5 text-sm border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
-                        />
-                      </td>
-                    )}
                     <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">{item.product?.unit ?? "шт"}</td>
                     {!isWarehouseRequest && (
                       <>
-                        <td className="px-4 py-3">
-                          {isKitComponent ? (
-                            <span className="inline-block w-28 px-2 py-1.5 text-sm font-mono text-muted-foreground">
-                              {priceCost.toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2,})}
-                            </span>
-                          ) : (
-                            <input
-                                key={`${item.id}-cost-${priceCost}`}
-                                type="number"
-                                min={0}
-                                step="1"
-                                disabled={disabled}
-                                defaultValue={priceCost}
-                                onBlur={(event) => {
-                                  const newCost = Number(event.target.value);
-                                  if (!Number.isFinite(newCost) || newCost < 0) {
-                                    setItemSaveError("Себестоимость должна быть числом больше или равным нулю");
-                                    return;
-                                  }
-                                  if (newCost !== priceCost) {
-                                    handleItemFieldUpdate(item.id, { cost_price: newCost });
-                                  }
-                                }}
-                                className="w-28 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
-                            />
-                          )}
-                        </td>
                         <td className="px-4 py-3">
                           {isKitComponent ? (
                             <span className="inline-block w-28 px-2 py-1.5 text-sm font-mono text-muted-foreground">
@@ -3944,12 +3658,6 @@ const [itemSaveError, setItemSaveError] =
                           )}
                         </td>
                         <td className={`px-4 py-3 text-sm font-mono whitespace-nowrap ${isKitComponent ? "text-muted-foreground" : "font-semibold"}`}>{total.toLocaleString("ru-RU")}</td>
-                        <td className="px-4 py-3">
-                        <span
-                            className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded whitespace-nowrap ${margin >= 20 ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : margin > 0 ? "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200" : "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 ring-1 ring-red-200"}`}>
-                          {margin.toFixed(1)}%
-                        </span>
-                        </td>
                       </>
                     )}
                     <td className="px-4 py-3">
@@ -4038,7 +3746,6 @@ const [itemSaveError, setItemSaveError] =
                             }
                             showPrices={!isWarehouseRequest}
                             kitUnitSalePrice={Number(first.kit_unit_sale_price ?? 0)}
-                            kitUnitCostPrice={Number(first.kit_unit_cost_price ?? 0)}
                             itemsTotalSum={itemsTotalSum}
                             canEdit={canEditItems}
                             onPricesSaved={() => { void refreshProjectItems(); }}
