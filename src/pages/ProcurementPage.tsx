@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { PageWrap } from "../app/components/common/PageWrap";
+import { ProcurementSummaryView } from "./ProcurementSummaryView";
 import { fmt } from "../lib/format";
 import type { Role, ProjectState } from "../types";
 import { 
@@ -279,6 +280,11 @@ export function ProcurementPage({
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [selectedProject, setSelectedProject] = useState<ProjectListItem | null>(null);
 
+  // NEW: переключатель «По проектам / Сводно» — сводный режим только
+  // читает агрегированные по товару данные (см. ProcurementSummaryView),
+  // весь workflow счетов ниже относится только к режиму "projects".
+  const [viewMode, setViewMode] = useState<"projects" | "summary">("projects");
+
   const [purchaseItems, setPurchaseItems] = useState<ProcurementProjectItem[]>([]);
   const [purchaseLoading, setPurchaseLoading] = useState(false);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
@@ -439,6 +445,18 @@ export function ProcurementPage({
       setSelectedProject(null);
       setPurchaseItems([]);
     }
+  };
+
+  // NEW: клик по проекту в подтаблице сводного режима — переключает
+  // обратно на "По проектам" и открывает закупку этого проекта. Если
+  // проекта нет в текущем (отфильтрованном) списке `projects` — грузим
+  // по одному id, которого хватает loadProjectPurchases.
+  const handleOpenProjectFromSummary = (projectId: number) => {
+    const idStr = String(projectId);
+    setSelectedProjectId(idStr);
+    setViewMode("projects");
+    const match = projects.find(p => p.id === projectId);
+    loadProjectPurchases(match ?? { id: projectId });
   };
 
   // NEW: применяем initialProjectId, как только список проектов загрузится.
@@ -694,18 +712,17 @@ export function ProcurementPage({
 
     setIsSendingToIncome(true);
     try {
+      // NEW: позиции без указанной себестоимости (0/пусто) больше не
+      // блокируют отправку на приход — раньше здесь была проверка
+      // itemWithoutPurchasePrice, которая бросала alert и не пускала
+      // дальше. purchase_price для таких позиций уходит на бэкенд как 0
+      // (getPurchasePrice/toNumber уже безопасно приводят пустую цену к
+      // 0, NaN здесь не возникает).
       const items = (groupedItems[supplier] || []).map(item => ({
         product_id: Number(item.product_id ?? item.product?.id ?? item.id),
         quantity: toNumber(item.procurement_quantity ?? item.required_quantity ?? item.quantity),
         purchase_price: getPurchasePrice(item),
       }));
-
-      const itemWithoutPurchasePrice = items.find(item => item.purchase_price <= 0);
-      if (itemWithoutPurchasePrice) {
-        throw new Error(
-          `Не указана себестоимость товара №${itemWithoutPurchasePrice.product_id}`
-        );
-      }
 
       await sendInvoiceToIncomeApi(docId, selectedWarehouseId, items);
 
@@ -843,6 +860,37 @@ export function ProcurementPage({
 
   return (
     <PageWrap title="Закупки" subtitle="Оформление счетов и отправка на приход">
+      <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-card p-1 shadow-sm mb-6">
+        <button
+          type="button"
+          onClick={() => setViewMode("projects")}
+          className={`px-3.5 py-1.5 rounded-md text-sm font-medium transition-colors ${
+            viewMode === "projects"
+              ? "bg-primary text-white shadow-sm"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted"
+          }`}
+        >
+          По проектам
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewMode("summary")}
+          className={`px-3.5 py-1.5 rounded-md text-sm font-medium transition-colors ${
+            viewMode === "summary"
+              ? "bg-primary text-white shadow-sm"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted"
+          }`}
+        >
+          Сводно
+        </button>
+      </div>
+
+      {viewMode === "summary" && (
+        <ProcurementSummaryView onOpenProject={handleOpenProjectFromSummary} />
+      )}
+
+      {viewMode === "projects" && (
+      <>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 bg-card p-4 rounded-lg border border-border shadow-sm">
         <div className="flex-1">
           <label className="block text-xs font-medium text-muted-foreground mb-1.5">Выберите активный проект</label>
@@ -1431,6 +1479,8 @@ export function ProcurementPage({
             )}
           </div>
         </div>
+      )}
+      </>
       )}
     </PageWrap>
   );

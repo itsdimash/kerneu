@@ -1123,6 +1123,48 @@ export async function updateProjectItemSupplier(
   }
 }
 
+// ==========================================
+// СВОДНАЯ ЗАКУПКА (одинаковые товары суммируются по всем проектам)
+// ==========================================
+
+export interface ProcurementSummaryProjectRow {
+  project_id: number;
+  project_name: string;
+  item_id: number;
+  quantity: number;
+  supplier: string | null;
+  price_cost: number | string | null;
+  kit_name?: string | null;
+  kit_quantity?: number | string | null;
+}
+
+export interface ProcurementSummaryItem {
+  product_id: number;
+  product_name: string;
+  unit: string | null;
+  total_quantity: number;
+  projects_count: number;
+  price_min: number;
+  price_max: number;
+  suppliers: string[];
+  available_stock: number;
+  unit_conflict: boolean;
+  projects: ProcurementSummaryProjectRow[];
+}
+
+export interface ProcurementSummaryResponse {
+  items: ProcurementSummaryItem[];
+  totals: {
+    products_count: number;
+    projects_count: number;
+  };
+}
+
+export const fetchProcurementSummary = async (): Promise<ProcurementSummaryResponse> => {
+  const { data } = await api.get<ProcurementSummaryResponse>("/procurement/summary");
+  return data;
+};
+
 export interface PatchKitGroupPricesPayload {
   sale_price?: number;
   cost_price?: number;
