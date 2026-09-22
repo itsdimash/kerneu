@@ -47,6 +47,7 @@ import type {
   ConfirmMlImportKitSelection,
 } from "../api/api";
 import { MultiSelectCombobox } from "../app/components/ui/multi-select";
+import { ProductSearchCombobox } from "../app/components/ui/product-search-combobox";
 import { Checkbox } from "../app/components/ui/checkbox";
 import { StockStatusBadge } from "../app/components/common/StockStatusBadge";
 import { KitGroupHeaderRow } from "../app/components/common/KitGroupHeaderRow";
@@ -347,6 +348,8 @@ export function ProjectPagePM({
   const [newRowForm, setNewRowForm] = useState({
     input_product: "",
     input_quantity: "1",
+    selected_product_id: null as number | null,
+    unit: null as string | null,
   });
   const [confirmingImport, setConfirmingImport] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -1157,13 +1160,15 @@ export function ProjectPagePM({
     if (!target || target.status !== "draft") return;
 
     setMlImportError(null);
-    setNewRowForm({ input_product: "", input_quantity: "1" });
+    setNewRowForm({ input_product: "", input_quantity: "1", selected_product_id: null, unit: null });
     setIsAddingRow(true);
   };
 
   // Ручное добавление позиции: backend требует только наименование и
-  // количество, остальное (товар из каталога, поставщик, цены) заполняется
-  // прямо в таблице теми же контролами, что и у распарсенных строк.
+  // количество; товар из каталога теперь можно сразу привязать через
+  // комбобокс поиска (selected_product_id), либо оставить как кастомную
+  // позицию без привязки — остальное (поставщик, цены) заполняется
+  // в таблице теми же контролами, что и у распарсенных строк.
   const handleCreateMlItem = async () => {
     if (!mlImport || mlImport.status !== "draft") return;
 
@@ -1183,6 +1188,8 @@ export function ProjectPagePM({
     const payload: MlImportItemCreate = {
       input_product: inputProduct,
       input_quantity: Math.trunc(inputQuantity),
+      selected_product_id: newRowForm.selected_product_id,
+      unit: newRowForm.unit,
     };
 
     try {
@@ -1194,7 +1201,7 @@ export function ProjectPagePM({
         return { ...current, items: [...current.items, createdItem] };
       });
       // Форму оставляем открытой: позиции обычно добавляют пачкой.
-      setNewRowForm({ input_product: "", input_quantity: "1" });
+      setNewRowForm({ input_product: "", input_quantity: "1", selected_product_id: null, unit: null });
     } catch (error) {
       setMlImportError(error instanceof Error ? error.message : "Не удалось добавить позицию");
     } finally {
@@ -2607,25 +2614,19 @@ export function ProjectPagePM({
                             {mlImport.items.length + 1}
                           </td>
                           <td className="px-4 py-3">
-                            <input
-                                type="text"
-                                autoFocus
-                                maxLength={1000}
+                            <ProductSearchCombobox
                                 disabled={savingNewRow}
-                                value={newRowForm.input_product}
-                                placeholder="Наименование позиции"
-                                onChange={(event) => setNewRowForm((current) => ({
-                                  ...current,
-                                  input_product: event.target.value,
-                                }))}
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter") {
-                                    event.preventDefault();
-                                    handleCreateMlItem();
-                                  }
-                                  if (event.key === "Escape") setIsAddingRow(false);
+                                value={{
+                                  productId: newRowForm.selected_product_id,
+                                  name: newRowForm.input_product,
+                                  unit: newRowForm.unit,
                                 }}
-                                className="w-64 px-2 py-1.5 text-sm border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
+                                onChange={(next) => setNewRowForm((current) => ({
+                                  ...current,
+                                  input_product: next.name,
+                                  selected_product_id: next.productId,
+                                  unit: next.unit,
+                                }))}
                             />
                           </td>
                           <td className="px-4 py-3">

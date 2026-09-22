@@ -181,7 +181,7 @@ export function MultiSelectCombobox({
               setCreateError(null);
             }}
           />
-          <CommandList>
+          <CommandList className="max-h-64 overflow-y-auto">
             <CommandEmpty>{emptyText}</CommandEmpty>
             <CommandGroup>
               {options.map((option) => {

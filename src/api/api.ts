@@ -266,6 +266,7 @@ export interface MlImportItemCreateProduct {
 // проставляет дефолтами.
 export interface ProductCreate {
   product_name: string;
+  unit?: string;
 }
 
 export interface ProductOut {
@@ -273,6 +274,7 @@ export interface ProductOut {
   name: string;
   description?: string | null;
   is_kit: boolean;
+  unit?: string | null;
 }
 
 export async function createProduct(
@@ -1764,4 +1766,25 @@ export async function deleteNote(noteId: string): Promise<void> {
 export async function fetchProducts(): Promise<ProductInfo[]> {
   const { data } = await api.get<ProductInfo[]>("/products/");
   return data;
+}
+
+export interface ProductSearchResult {
+  id: number;
+  name: string;
+  unit: string | null;
+  available_quantity: number;
+}
+
+// Поиск товара по названию для комбобокса «Заявка на склад» — в отличие от
+// fetchProducts (весь каталог целиком), фильтрует и считает остаток на
+// бэкенде.
+export async function searchProducts(query: string): Promise<ProductSearchResult[]> {
+  try {
+    const { data } = await api.get<ProductSearchResult[]>("/products/search", {
+      params: { q: query },
+    });
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось выполнить поиск товара");
+  }
 }
