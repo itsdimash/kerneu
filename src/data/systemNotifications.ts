@@ -12,6 +12,9 @@ export type NotificationCategory =
   | "kp_rejected"
   | "kp_approved"
   | "kp_pending"
+  | "warehouse_request_pending"
+  | "warehouse_request_approved"
+  | "warehouse_request_rejected"
   | "client_approved"
   | "invoice_pending_director"
   | "invoice_approved"
@@ -89,12 +92,12 @@ export const MOCK_SYSTEM_NOTIFICATIONS: SystemNotification[] = [
     projectName: "Android",
     actorName: "Admin",
     actorRole: "PM",
-    title: "Новое КП ждёт вашего согласования",
+    title: "Новый проект ждёт вашего согласования",
     detail: "Проект «Android» · Sulpak",
     createdAt: new Date(Date.now() - 1000 * 60 * 55).toISOString(),
     read: false,
     page: "project",
-    ctaLabel: "Рассмотреть КП",
+    ctaLabel: "Рассмотреть проект",
   },
   {
     id: "n-client-approved-1",

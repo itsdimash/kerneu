@@ -1,5 +1,6 @@
 import { ChevronDown, LogOut, Menu, Moon, Sun, User } from "lucide-react";
 import { Page, Role } from "../../../types";
+import type { ApprovalsTabId } from "../../../pages/ApprovalsPage";
 import { ROLES } from "../../../data/roles";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuLabel,
@@ -19,7 +20,7 @@ type UserData = {
 
 export function TopBar({ role, user, onNavigate, onLogout, onOpenProject, onSelectProject, onOpenMobileNav }: {
   role: Role;
-  onNavigate: (p: Page) => void;
+  onNavigate: (p: Page, approvalsTab?: ApprovalsTabId) => void;
   onLogout: () => void;
   user: UserData | null;
   /** Same lookup AppShell already uses for the sidebar search — reused here so
@@ -60,13 +61,17 @@ export function TopBar({ role, user, onNavigate, onLogout, onOpenProject, onSele
 
         <div className="h-5 w-px bg-border" />
 
-        <NotificationBell
-          role={role}
-          onNavigate={onNavigate}
-          onSelectProject={onSelectProject}
-        />
+        {role !== "commercial_director" && role !== "admin" && (
+          <>
+            <NotificationBell
+              role={role}
+              onNavigate={onNavigate}
+              onSelectProject={onSelectProject}
+            />
 
-        <div className="h-5 w-px bg-border" />
+            <div className="h-5 w-px bg-border" />
+          </>
+        )}
 
         {/* User profile — opens downward */}
         <DropdownMenu>
