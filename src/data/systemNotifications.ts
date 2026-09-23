@@ -150,7 +150,7 @@ export const MOCK_SYSTEM_NOTIFICATIONS: SystemNotification[] = [
     projectName: "beat",
     actorName: "Марат Ж.",
     actorRole: "Комдир",
-    title: "Комдир одобрил КП по проекту «beat»",
+    title: "Комдир одобрил проект «beat»",
     createdAt: new Date(Date.now() - 1000 * 60 * 60 * 20).toISOString(),
     read: true,
     page: "contract",

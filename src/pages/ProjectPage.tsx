@@ -3494,8 +3494,8 @@ const [itemSaveError, setItemSaveError] =
 
   const title = project?.name ?? "Офисный комплекс «Башня»";
   const subtitle = project
-      ? `${project.client?.client_name ?? "—"} · Проверка КП`
-      : "ООО «СтройТех» · Проверка КП";
+      ? `${project.client?.client_name ?? "—"} · Проверка проекта`
+      : "ООО «СтройТех» · Проверка проекта";
   const sidebarDetails: [string, string][] = [
   [
     "Создан",
@@ -3763,7 +3763,7 @@ const [itemSaveError, setItemSaveError] =
           })()}
 
           <div className="bg-card rounded-lg border border-border p-5">
-            <h3 className="text-sm font-semibold text-foreground mb-4">Решение по КП</h3>
+            <h3 className="text-sm font-semibold text-foreground mb-4">Решение по проекту</h3>
             {deciding ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 size={15}
                                                                                          className="animate-spin text-primary"/>Сохранение
