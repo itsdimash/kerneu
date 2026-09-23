@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Loader2, X, Plus, Trash2, ChevronDown, Check } from "lucide-react";
+import { AlertTriangle, Loader2, X, Plus, Trash2, ChevronDown, Check, FolderKanban } from "lucide-react";
 import { postWarehouseIncomeRequest, WarehouseInfo } from "../../../api/api";
 import {
   ExistingProductPicker,
@@ -21,9 +21,40 @@ type RequestRow = {
   // товар, который уже есть на складе (склад определяется самим товаром)
   existing: ExistingProductSelection | null;
   quantity: string;
+  // Строка проекта, которую эта позиция закрывает (только у строки,
+  // созданной из prefill — вручную добавленные строки этого не несут).
+  sourceProjectItemId?: number | null;
+  // true только у строки, собранной prefillRow() — её склад заблокирован
+  // (см. lockWarehouse у ExistingProductPicker), т.к. должен совпадать со
+  // складом, на котором произошёл деньг.
+  isReorderRow?: boolean;
 };
 
-type RequestItem = { product_name: string; quantity: number; product_id?: number };
+type RequestItem = {
+  product_name: string;
+  quantity: number;
+  product_id?: number;
+  project_id?: number;
+  project_item_id?: number;
+};
+
+// Заявка, открытая из отклонённой позиции прихода на WarehousePage (деньга
+// "Отклонить" → пересоздать заявку тем же товаром/количеством/складом).
+// projectId — обязателен (это и есть признак того, что заявка project-linked);
+// productId отсутствует, если отклонённая позиция была "новым" товаром без
+// привязки к каталогу — тогда строка заполняется как свободный текст.
+// projectItemId сейчас не заполняется на WarehousePage (backend его пока не
+// отдаёт в ArrivalRow) — поле готово принять его, когда появится.
+export type IncomeRequestPrefill = {
+  projectId: number;
+  projectName?: string | null;
+  projectItemId?: number | null;
+  productId: number | null;
+  productName: string;
+  quantity: number;
+  unit?: string | null;
+  warehouseId: number;
+};
 
 // Нормализация названия для сравнения: регистр, лишние пробелы, ё/е
 const normName = (s: string) => s.trim().toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ");
@@ -34,19 +65,63 @@ function emptyRow(): RequestRow {
   return { key: rowKeySeq, mode: "new", name: "", existing: null, quantity: "" };
 }
 
+// Строит первую строку заявки из prefill: если товар есть в каталоге
+// (productId задан) и мы нашли его в остатках склада — выбираем его через
+// ExistingProductPicker (buildSelection), иначе — обычная "новая" строка со
+// свободным текстом названия.
+function prefillRow(prefill: IncomeRequestPrefill, stock: StockOption[], warehouses: WarehouseInfo[]): RequestRow {
+  rowKeySeq += 1;
+  const quantity = prefill.quantity > 0 ? String(prefill.quantity) : "";
+
+  if (prefill.productId != null) {
+    const stockItem = stock.find((s) => s.productId === prefill.productId);
+    const selection = stockItem
+      ? buildSelection(stockItem, warehouses)
+      : { productId: prefill.productId, name: prefill.productName, unit: prefill.unit || "шт", warehouseId: prefill.warehouseId };
+    if (selection) {
+      return {
+        key: rowKeySeq,
+        mode: "existing",
+        name: "",
+        existing: { ...selection, warehouseId: prefill.warehouseId },
+        quantity,
+        sourceProjectItemId: prefill.projectItemId ?? null,
+        isReorderRow: true,
+      };
+    }
+  }
+
+  return {
+    key: rowKeySeq,
+    mode: "new",
+    name: prefill.productName,
+    existing: null,
+    quantity,
+    sourceProjectItemId: prefill.projectItemId ?? null,
+    isReorderRow: true,
+  };
+}
+
 export function IncomeRequestModal({
   warehouses,
   stock = [],
+  prefill = null,
   onClose,
   onSuccess,
 }: {
   warehouses: WarehouseInfo[];
   stock?: StockOption[];
+  prefill?: IncomeRequestPrefill | null;
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const [warehouseId, setWarehouseId] = useState<string>("");
-  const [rows, setRows] = useState<RequestRow[]>([emptyRow()]);
+  // Инициализация из prefill происходит один раз при монтировании: модалка
+  // открывается из деньга через {condition && <IncomeRequestModal .../>},
+  // поэтому каждый новый деньг = новый key = новый маунт = свежий useState.
+  // Пересборки prefill "на лету" в уже открытой модалке не бывает.
+  const isProjectLinked = prefill != null;
+  const [warehouseId, setWarehouseId] = useState<string>(prefill ? String(prefill.warehouseId) : "");
+  const [rows, setRows] = useState<RequestRow[]>(() => (prefill ? [prefillRow(prefill, stock, warehouses)] : [emptyRow()]));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -205,14 +280,22 @@ export function IncomeRequestModal({
         return;
       }
 
+      // Заявка целиком открыта из деньга на конкретном проекте — привязываем
+      // project_id ко всем позициям, включая вручную дописанные строки,
+      // раз badge проекта в модалке показан на весь список. project_item_id
+      // идёт только той строке, что реально закрывает эту позицию проекта.
+      const projectFields = isProjectLinked
+        ? { project_id: prefill!.projectId, project_item_id: row.sourceProjectItemId ?? undefined }
+        : {};
+
       if (row.mode === "existing" && row.existing) {
         addToGroup(
           row.existing.warehouseId,
-          { product_name: row.existing.name, product_id: row.existing.productId, quantity: qty },
+          { product_name: row.existing.name, product_id: row.existing.productId, quantity: qty, ...projectFields },
           row.key,
         );
       } else {
-        addToGroup(Number(warehouseId), { product_name: row.name.trim(), quantity: qty }, row.key);
+        addToGroup(Number(warehouseId), { product_name: row.name.trim(), quantity: qty, ...projectFields }, row.key);
       }
     }
 
@@ -269,6 +352,18 @@ export function IncomeRequestModal({
           </div>
         )}
 
+        {isProjectLinked && (
+          <div className="flex items-start gap-2 p-3 mb-3 bg-blue-50 dark:bg-blue-400/10 border border-blue-200 dark:border-blue-400/25 rounded-lg">
+            <FolderKanban size={14} className="text-primary mt-0.5 shrink-0" />
+            <p className="text-xs text-foreground">
+              Заявка привязана к проекту{" "}
+              <span className="font-semibold">{prefill!.projectName || `#${prefill!.projectId}`}</span>
+              {" "}— так пересоздаётся отклонённая позиция прихода. Товар/количество и склад ниже уже заполнены;
+              при необходимости их можно изменить перед отправкой.
+            </p>
+          </div>
+        )}
+
         <div className="space-y-3">
           {hasNewRows && (
           <div>
@@ -277,10 +372,11 @@ export function IncomeRequestModal({
               <button
                 type="button"
                 onClick={() => {
-                  if (warehouses.length === 0) return;
+                  if (warehouses.length === 0 || isProjectLinked) return;
                   setWarehouseDropdownOpen((v) => !v);
                 }}
-                disabled={warehouses.length === 0}
+                disabled={warehouses.length === 0 || isProjectLinked}
+                title={isProjectLinked ? "Склад зафиксирован — совпадает со складом отклонённого прихода" : undefined}
                 aria-haspopup="listbox"
                 aria-expanded={warehouseDropdownOpen}
                 className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-sm border rounded-lg focus:outline-none focus:border-primary bg-card text-foreground disabled:opacity-50 disabled:cursor-not-allowed ${
@@ -447,6 +543,7 @@ export function IncomeRequestModal({
                           value={row.existing}
                           onChange={(existing) => updateRow(row.key, { existing })}
                           disabled={submitting}
+                          lockWarehouse={!!row.isReorderRow}
                         />
                       )}
                     </div>

@@ -75,7 +75,7 @@ export const MOCK_SYSTEM_NOTIFICATIONS: SystemNotification[] = [
     projectName: "beat",
     actorName: "Марат Ж.",
     actorRole: "Комдир",
-    title: "Комдир отклонил КП по проекту «beat»",
+    title: "Комдир отклонил проект «beat»",
     detail: "Маржа 20.0% ниже порога 25%",
     comment:
       "Подними маржу минимум до 25% — пересчитай себестоимость по клавиатурам, у Bazar есть скидка от 20 шт.",

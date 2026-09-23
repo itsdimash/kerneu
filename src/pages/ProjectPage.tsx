@@ -1810,7 +1810,7 @@ export function ProjectPagePM({
             <div className="mb-6 rounded-lg border p-5 bg-red-50 dark:bg-red-400/15 border-red-200 dark:border-red-400/25">
                 <div className="flex items-center gap-2 text-sm text-red-700 dark:text-red-300">
                   <XCircle size={14}/>
-                  КП отклонено Комдиром. Отредактируйте товары ниже и отправьте повторно.
+                  Проект отклонён Комдиром. Отредактируйте товары ниже и отправьте повторно.
                 </div>
             </div>
         )}
@@ -1916,9 +1916,9 @@ export function ProjectPagePM({
                           "bg-muted text-muted-foreground cursor-not-allowed"
                       }`}>
                       {sending ? <><Loader2 size={14} className="animate-spin"/>Отправка…</> :
-                          sent ? <><CheckCircle2 size={14}/>КП на согласовании</> :
+                          sent ? <><CheckCircle2 size={14}/>Проект на согласовании</> :
                           isPastApprovalWindow ? <><CheckCircle2 size={14}/>Клиент принял КП</> :
-                          isApproved ? <><CheckCircle2 size={14}/>КП одобрено</> :
+                          isApproved ? <><CheckCircle2 size={14}/>Проект одобрен</> :
                           isRejected ? <><XCircle size={14}/>Отправить повторно</> :
                               <><Send size={14}/>Отправить Комдиру</>}
                     </button>
@@ -3415,7 +3415,7 @@ const [itemSaveError, setItemSaveError] =
     if (!project) return;
 
     if (!approve && !showRejectForm) {
-      // Первый клик по "Отклонить КП" просто открывает форму с комментарием.
+      // Первый клик по "Отклонить проект" просто открывает форму с комментарием.
       setShowRejectForm(true);
       return;
     }
@@ -3825,18 +3825,18 @@ const [itemSaveError, setItemSaveError] =
                     </button>
                     <button onClick={() => decide(false)} disabled={!project}
                             className="flex items-center gap-2 px-5 py-2.5 bg-card text-destructive text-sm font-medium rounded-lg border border-border hover:bg-red-50 dark:bg-red-400/15 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
-                      <XCircle size={15}/> Отклонить КП
+                      <XCircle size={15}/> Отклонить проект
                     </button>
                   </div>
                 )
             ) : decision ? (
                 <div className="flex items-center gap-2 px-4 py-3 bg-green-50 dark:bg-green-400/15 rounded-lg border border-green-200 dark:border-green-400/25">
                   <CheckCircle2 size={16} className="text-green-600 dark:text-green-400"/><span
-                    className="text-sm font-medium text-green-700 dark:text-green-300">КП подтверждено</span></div>
+                    className="text-sm font-medium text-green-700 dark:text-green-300">Проект подтверждён</span></div>
             ) : (
                 <div className="flex items-center gap-2 px-4 py-3 bg-red-50 dark:bg-red-400/15 rounded-lg border border-red-200 dark:border-red-400/25"><XCircle
                     size={16} className="text-destructive"/><span
-                    className="text-sm font-medium text-red-700 dark:text-red-300">КП отклонено</span></div>
+                    className="text-sm font-medium text-red-700 dark:text-red-300">Проект отклонён</span></div>
             )}
           </div>
         </div>
