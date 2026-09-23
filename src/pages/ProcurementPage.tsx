@@ -13,7 +13,6 @@ import {
   fetchSuppliers,
   updateProjectItemSupplier,
   updateProjectItemCostPrice,
-  updateKitGroupCostPrice,
   fetchLastPurchasePrices,
   LastPurchaseHint,
   SupplierListItem
@@ -180,7 +179,7 @@ const directorApproveInvoice = (documentId: number) => postInvoiceAction(documen
 const directorRejectInvoice = (documentId: number, reason: string) =>
   postInvoiceAction(documentId, "director-reject", { reason });
 
-const sendInvoiceToIncomeApi = (documentId: number, warehouseId: number, items: Array<{ product_id: number; quantity: number; purchase_price: number }>) =>
+const sendInvoiceToIncomeApi = (documentId: number, warehouseId: number, items: Array<{ product_id: number; quantity: number; purchase_price: number; project_item_id: number | null }>) =>
   postInvoiceAction(documentId, "send-to-income", { warehouse_id: warehouseId, items });
 
 // TODO(backend): эндпоинт ещё не реализован — предполагаемый контракт:
@@ -372,11 +371,10 @@ export function ProcurementPage({
   const [savingCostItemId, setSavingCostItemId] = useState<number | null>(null);
 
   // Себестоимость комплекта правится ЦЕЛИКОМ через отдельный эндпоинт
-  // (updateKitGroupCostPrice) — компоненты комплекта в таблице read-only.
-  const [kitCostModalItem, setKitCostModalItem] = useState<ProcurementProjectItem | null>(null);
-  const [kitCostInput, setKitCostInput] = useState("");
-  const [kitCostSaving, setKitCostSaving] = useState(false);
-  const [kitCostError, setKitCostError] = useState<string | null>(null);
+  // CHANGED: компоненты комплекта больше не read-only — себестоимость
+  // каждого компонента вводится прямо в строке, как у обычной позиции
+  // (см. handleCostPriceBlur), а kit_unit_cost_price бэкенд пересчитывает
+  // сам как сумму компонентов.
 
   const isDirector = role === "director" || role === "commercial_director";
   const isAccountant = role === "accountant";
@@ -849,6 +847,7 @@ export function ProcurementPage({
         product_id: Number(item.product_id ?? item.product?.id ?? item.id),
         quantity: toNumber(item.procurement_quantity ?? item.required_quantity ?? item.quantity),
         purchase_price: getPurchasePrice(item),
+        project_item_id: item.id,
       }));
 
       await sendInvoiceToIncomeApi(docId, selectedWarehouseId, items);
@@ -898,8 +897,8 @@ export function ProcurementPage({
   // Шаги: 'confirm' ("точно хотите менять?") -> 'select' (поиск среди
   // существующих поставщиков или создание нового). Эта модалка меняет
   // только supplier_id/supplier_raw_name; cost_price редактируется отдельно
-  // — инлайн в таблице (обычные позиции) или через модалку комплекта
-  // (kitCostModalItem, см. openKitCostModal ниже).
+  // — инлайн в таблице, одинаково для обычных позиций и компонентов
+  // комплекта (см. handleCostPriceBlur).
   const [supplierModalItem, setSupplierModalItem] = useState<ProcurementProjectItem | null>(null);
   const [supplierModalStep, setSupplierModalStep] = useState<'confirm' | 'select'>('confirm');
   const [supplierSearchQuery, setSupplierSearchQuery] = useState("");
@@ -1064,54 +1063,6 @@ export function ProcurementPage({
     hint: NormalizedLastPurchaseHint,
   ) => {
     void saveCostPrice(item, hint.cost_price);
-  };
-
-  // Себестоимость комплекта — отдельный эндпоинт, действует на ВСЕ
-  // компоненты комплекта сразу (backend сам перераспределяет по ним).
-  const openKitCostModal = (item: ProcurementProjectItem) => {
-    setKitCostModalItem(item);
-    setKitCostInput(String(getPurchasePrice(item)));
-    setKitCostError(null);
-  };
-
-  const closeKitCostModal = () => {
-    if (kitCostSaving) return;
-    setKitCostModalItem(null);
-    setKitCostError(null);
-  };
-
-  const handleSaveKitCost = async () => {
-    if (!selectedProject || !kitCostModalItem?.kit_group_key) return;
-
-    const parsed = Number(kitCostInput.replace(",", "."));
-    if (!Number.isFinite(parsed) || parsed < 0) {
-      setKitCostError("Себестоимость должна быть числом больше или равным нулю");
-      return;
-    }
-
-    setKitCostSaving(true);
-    setKitCostError(null);
-    try {
-      const updatedItems = await updateKitGroupCostPrice(
-        selectedProject.id,
-        kitCostModalItem.kit_group_key,
-        { cost_price: parsed },
-      );
-      setPurchaseItems(prev =>
-        prev.map(p => {
-          const match = updatedItems.find(u => u.id === p.id);
-          return match ? { ...p, cost_price: match.cost_price } : p;
-        })
-      );
-      closeKitCostModal();
-    } catch (error) {
-      console.error("Kit cost price update failed", error);
-      const message = error instanceof Error ? error.message : "Не удалось сохранить себестоимость комплекта";
-      setKitCostError(message);
-      toast.error(message);
-    } finally {
-      setKitCostSaving(false);
-    }
   };
 
   const allSuppliersIncomed = useMemo(() => {
@@ -1460,12 +1411,6 @@ export function ProcurementPage({
                     </thead>
                     <tbody className="divide-y divide-border">
                       {(() => {
-                        // Ссылка "Себестоимость комплекта" показывается только
-                        // у первого компонента каждого kit_group_key в ЭТОЙ
-                        // supplier-таблице — иначе она дублировалась бы на
-                        // каждой строке комплекта.
-                        const seenKitGroups = new Set<string>();
-
                         return items.map((item) => {
                         const quantity = toNumber(item.procurement_quantity ?? item.required_quantity ?? item.quantity);
                         const unit = safeTrim(item.product?.unit) || safeTrim(item.unit) || "шт";
@@ -1475,9 +1420,6 @@ export function ProcurementPage({
                         const sum = quantity * costPrice;
                         const marginPercent = salePrice > 0 ? ((salePrice - costPrice) / salePrice) * 100 : 0;
                         const isKitComponent = Boolean(item.kit_group_key);
-                        const isFirstInKitGroup =
-                          isKitComponent && item.kit_group_key != null && !seenKitGroups.has(item.kit_group_key);
-                        if (isKitComponent && item.kit_group_key != null) seenKitGroups.add(item.kit_group_key);
                         const isSavingCost = savingCostItemId === item.id;
                         const itemHasSupplier = hasSupplier(item);
                         const lastPurchaseHint = !isKitComponent ? lastPurchaseHints[item.id] : undefined;
@@ -1539,9 +1481,7 @@ export function ProcurementPage({
                             </td>
                             <td className="px-5 py-3.5 text-sm font-mono text-foreground">
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                {isKitComponent ? (
-                                  <span className="text-muted-foreground">{fmt(costPrice)}</span>
-                                ) : canChangeSupplier ? (
+                                {canChangeSupplier ? (
                                   <input
                                     key={`${item.id}-cost-${costPrice}`}
                                     type="text"
@@ -1577,15 +1517,6 @@ export function ProcurementPage({
                                       </button>
                                     )}
                                   </span>
-                                )}
-                                {isFirstInKitGroup && canChangeSupplier && (
-                                  <button
-                                    type="button"
-                                    onClick={() => openKitCostModal(item)}
-                                    className="text-[11px] font-medium text-primary hover:underline whitespace-nowrap"
-                                  >
-                                    Себестоимость комплекта
-                                  </button>
                                 )}
                               </div>
                             </td>
@@ -1832,68 +1763,6 @@ export function ProcurementPage({
         </div>
       )}
 
-      {/* Модалка себестоимости комплекта ЦЕЛИКОМ — открывается с первого
-          компонента комплекта в таблице (см. isFirstInKitGroup выше).
-          Компоненты по отдельности себестоимость не получают: backend сам
-          перераспределяет её после сохранения. */}
-      {kitCostModalItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-md bg-card rounded-xl shadow-xl p-6 border border-border">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 text-foreground font-bold">
-                <Package className="text-blue-600 dark:text-blue-400" size={20} />
-                <h3>Себестоимость комплекта</h3>
-              </div>
-              <button onClick={closeKitCostModal} className="text-muted-foreground hover:text-muted-foreground">
-                <X size={18} />
-              </button>
-            </div>
-
-            <p className="text-sm text-muted-foreground mb-4">
-              Комплект <span className="font-semibold text-foreground">«{safeTrim(kitCostModalItem.kit_name) || "Комплект"}»</span>.
-              Значение применится ко всем компонентам комплекта — backend распределит его самостоятельно.
-            </p>
-
-            {kitCostError && (
-              <div className="mb-4 flex items-start gap-2 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 text-red-700 dark:text-red-300 px-3 py-2.5 rounded-lg text-sm">
-                <AlertCircle size={16} className="mt-0.5 shrink-0" />
-                {kitCostError}
-              </div>
-            )}
-
-            <label className="block text-xs font-medium text-muted-foreground mb-1.5">
-              Себестоимость комплекта
-            </label>
-            <input
-              type="text"
-              inputMode="decimal"
-              autoFocus
-              value={kitCostInput}
-              onChange={(e) => setKitCostInput(e.target.value)}
-              disabled={kitCostSaving}
-              className="w-full px-3 py-2 text-sm font-mono border border-border rounded-lg bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:opacity-50"
-            />
-
-            <div className="flex justify-end gap-3 mt-5">
-              <button
-                onClick={closeKitCostModal}
-                disabled={kitCostSaving}
-                className="px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted rounded-lg disabled:opacity-50"
-              >
-                Отмена
-              </button>
-              <button
-                onClick={handleSaveKitCost}
-                disabled={kitCostSaving}
-                className="flex items-center gap-2 px-5 py-2 text-xs font-semibold bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors disabled:opacity-50"
-              >
-                {kitCostSaving && <Loader2 size={14} className="animate-spin" />}
-                Сохранить
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       </>
       )}
     </PageWrap>

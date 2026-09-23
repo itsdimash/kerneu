@@ -21,6 +21,7 @@ import {
   PackagePlus,
   Trash2,
   ChevronDown,
+  Package,
 } from "lucide-react";
 import type { ProjectState, Role } from "../types";
 import {
@@ -93,6 +94,9 @@ type ArrivalRow = {
   defectResolved: boolean;
   // источник прихода: "pm_request" — создан через «Заявку на приход»
   source: string | null;
+  kit_group_key: string | null;
+  kit_name: string | null;
+  kit_quantity: number | string | null;
 };
 
 // Группа вкладки "Приход" по проекту. NO_PROJECT_GROUP_KEY — записи без
@@ -139,6 +143,10 @@ type PendingShipmentItemRow = {
   warehouseId: number | null;
   availableWarehouses: { warehouseId: number; warehouseName: string }[];
   photo: File | null;
+  kitGroupKey: string | null;
+  kitName: string | null;
+  kitQuantity: number | string | null;
+  quantityPerKit: number | string | null;
 };
 
 type PendingShipmentProjectRow = {
@@ -273,6 +281,9 @@ function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
     defectiveQuantity: item.defective_quantity ?? 0,
     defectResolved: item.defect_resolved ?? false,
     source: (item as any).source ?? null,
+    kit_group_key: item.kit_group_key ?? null,
+    kit_name: item.kit_name ?? null,
+    kit_quantity: item.kit_quantity ?? null,
   };
 }
 
@@ -907,6 +918,10 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
               warehouseId: availableWarehouses[0]?.warehouseId ?? null,
               availableWarehouses,
               photo: null,
+              kitGroupKey: it.kit_group_key ?? null,
+              kitName: it.kit_name ?? null,
+              kitQuantity: it.kit_quantity ?? null,
+              quantityPerKit: it.quantity_per_kit ?? null,
             };
           }),
         }))
@@ -1650,7 +1665,21 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                                   </td>
 
                                   <td className="px-4 py-3.5 text-sm text-foreground font-medium">
-                                    {a.item}
+                                    <div className="flex flex-col gap-1">
+                                      <span>{a.item}</span>
+                                      {a.kit_group_key ? (
+                                        <span
+                                          className="inline-flex w-fit max-w-[220px] items-center gap-1 rounded-md bg-blue-100 dark:bg-blue-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                                          title={`из комплекта «${(a.kit_name || "").trim() || "Комплект"}»${a.kit_quantity != null ? ` ×${a.kit_quantity}` : ""}`}
+                                        >
+                                          <Package size={10} className="shrink-0" />
+                                          <span className="truncate">
+                                            из комплекта «{(a.kit_name || "").trim() || "Комплект"}»
+                                            {a.kit_quantity != null ? ` ×${a.kit_quantity}` : ""}
+                                          </span>
+                                        </span>
+                                      ) : null}
+                                    </div>
                                   </td>
 
                                   <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">
@@ -1878,7 +1907,28 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                               />
                               )}
                               </td>
-                              <td className="px-5 py-3 text-sm font-medium text-foreground">{it.productName}</td>
+                              <td className="px-5 py-3 text-sm font-medium text-foreground">
+                                <div className="flex flex-col gap-1">
+                                  <span>{it.productName}</span>
+                                  {it.kitGroupKey ? (
+                                    <span
+                                      className="inline-flex w-fit max-w-[220px] items-center gap-1 rounded-md bg-blue-100 dark:bg-blue-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                                      title={`из комплекта «${(it.kitName || "").trim() || "Комплект"}»${it.kitQuantity != null ? ` ×${it.kitQuantity}` : ""}`}
+                                    >
+                                      <Package size={10} className="shrink-0" />
+                                      <span className="truncate">
+                                        из комплекта «{(it.kitName || "").trim() || "Комплект"}»
+                                        {it.kitQuantity != null ? ` ×${it.kitQuantity}` : ""}
+                                      </span>
+                                    </span>
+                                  ) : null}
+                                  {it.kitGroupKey && it.quantityPerKit != null ? (
+                                    <span className="text-[11px] text-muted-foreground">
+                                      {it.quantityPerKit} на комплект
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </td>
                               <td className="px-5 py-3 text-sm font-mono text-foreground text-center">{it.quantity}</td>
                               <td className="px-5 py-3 text-xs text-muted-foreground">{it.unit}</td>
                               <td className="px-5 py-3">
