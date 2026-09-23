@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { KerneuLogo, KerneuFullLogo } from "../app/components/common/KerneuLogo";
-import { AlertCircle, AlertTriangle, ArrowRight, Eye, EyeOff, Loader2, Cpu, Mail, Lock, Warehouse } from "lucide-react";
+import { AlertCircle, AlertTriangle, ArrowRight, Eye, EyeOff, Loader2, Cpu, Mail, Lock } from "lucide-react";
 import designImg from "../assets/robot-cutout.png";
 import { ROLES, ROLE_EMAILS } from "../data/roles";
 import type { Role } from "../types";
 import { useCallback, useEffect, useRef } from "react";
 import {api} from "../api/api";
 import axios from "axios";
-export function LoginPage({ onLogin, onOpenPublicStock }: { onLogin: (r: Role) => void; onOpenPublicStock?: () => void }) {
+export function LoginPage({ onLogin }: { onLogin: (r: Role) => void }) {
   const [role, setRole] = useState<Role>("pm");
   const [email, setEmail] = useState(ROLE_EMAILS["pm"]);
   const [password, setPassword] = useState("");
@@ -201,20 +201,6 @@ const handleSignIn = async (e?: React.FormEvent) => {
               {loading ? (<><Loader2 size={15} className="animate-spin" />Signing in...</>) : (<>Sign In<ArrowRight size={15} className="transition-transform group-hover:translate-x-0.5" /></>)}
             </button>
           </form>
-
-          {onOpenPublicStock && (
-            <>
-              <div className="flex items-center gap-3 my-5">
-                <div className="h-px flex-1 bg-border" />
-                <span className="text-xs text-muted-foreground">или</span>
-                <div className="h-px flex-1 bg-border" />
-              </div>
-              <button type="button" onClick={onOpenPublicStock}
-                className="w-full py-2.5 border border-border bg-card hover:bg-muted text-foreground text-sm font-medium rounded-lg transition-all active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/30">
-                <Warehouse size={15} />Посмотреть остатки склада
-              </button>
-            </>
-          )}
 
           <div className="lg:hidden mt-8 pt-6 border-t border-border text-center">
             <p className="text-xs text-muted-foreground">© 2026 Kerneu Group · Internal ERP System</p>

@@ -70,12 +70,13 @@ function loadPersistedState() {
 
 const persisted = loadPersistedState();
 
-// Публичная страница остатков склада — доступна по /stock без логина.
-// Роутера в приложении нет, поэтому смотрим на pathname напрямую и
-// переключаем через history.pushState (кнопки браузера «назад/вперёд»
-// обрабатываются через popstate ниже).
-const PUBLIC_STOCK_PATH = "/stock";
-const isPublicStockPath = () => window.location.pathname.replace(/\/+$/, "") === PUBLIC_STOCK_PATH;
+// Роль "guest" — гостевой аккаунт, который видит ТОЛЬКО остатки склада
+// (PublicStockPage), без меню ERP. В union-тип Role её сознательно не
+// добавляем, чтобы не трогать места, где Role перечисляется целиком
+// (справочник ролей, сайдбар, переключатель ролей админа). Guest в
+// AppShell никогда не попадает, поэтому сравниваем строкой.
+const GUEST_ROLE = "guest";
+const isGuestRole = (r: string | null | undefined) => r === GUEST_ROLE;
 
 export default function App() {
     const [loggedIn, setLoggedIn] = useState(persisted?.loggedIn ?? false);
@@ -102,24 +103,6 @@ export default function App() {
     const [receipts, setReceipts] = useState<ReceiptType[]>([]);
 
     const [user, setUser] = useState<UserData | null>(null);
-
-    const [showPublicStock, setShowPublicStock] = useState<boolean>(isPublicStockPath);
-
-    useEffect(() => {
-        const onPopState = () => setShowPublicStock(isPublicStockPath());
-        window.addEventListener("popstate", onPopState);
-        return () => window.removeEventListener("popstate", onPopState);
-    }, []);
-
-    const openPublicStock = useCallback(() => {
-        window.history.pushState(null, "", PUBLIC_STOCK_PATH);
-        setShowPublicStock(true);
-    }, []);
-
-    const closePublicStock = useCallback(() => {
-        window.history.pushState(null, "", "/");
-        setShowPublicStock(false);
-    }, []);
 
     // Сохраняем ключевое состояние при каждом изменении —
     // именно это восстанавливает экран после F5
@@ -206,19 +189,13 @@ export default function App() {
         setPage("project");
     }, []);
 
-    // Открывается и без логина, и залогиненным — страница только для чтения.
-    if (showPublicStock) {
-        return <PublicStockPage onBack={closePublicStock} backLabel={loggedIn ? "Вернуться в ERP" : "Войти в ERP"} />;
-    }
-
     if (!loggedIn) {
         return (
             <LoginPage
-                onOpenPublicStock={openPublicStock}
                 onLogin={(r) => {
                     setRole(r);
                     setLoggedIn(true);
-                    
+
                     // Route users to their allowed default page
                     if (r === "warehouse") {
                         setPage("warehouse");
@@ -230,6 +207,13 @@ export default function App() {
                 }}
             />
         );
+    }
+
+    // Гость видит только остатки склада — без AppShell, сайдбара и
+    // остальных страниц ERP. Проверяем и role (выставляется сразу при
+    // логине), и realRole (то, что вернул /auth/me после F5).
+    if (isGuestRole(role) || isGuestRole(realRole)) {
+        return <PublicStockPage userName={user?.name} onLogout={handleLogout} />;
     }
 
     return (
