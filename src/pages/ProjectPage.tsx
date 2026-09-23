@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import axios from "axios";
+import { toast } from "sonner";
 import type { Role, Page, ProjectState, Receipt } from "../types";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { Chip } from "../app/components/common/Chip";
@@ -13,6 +14,7 @@ import {
   fetchProjectDetails,
   fetchProjectItems,
   getMlImport,
+  findMlImportsByProject,
   createEmptyMlImport,
   updateMlImportItem,
   createMlImportItem,
@@ -492,30 +494,49 @@ export function ProjectPagePM({
       return;
     }
     const storageKey = `project:${resolvedProjectId}:mlImportId`;
-    const savedImportId = localStorage.getItem(storageKey);
-    if (!savedImportId) {
-      setMlImport(null);
-      setMlImportError(null);
-      setMlImportLoading(false);
-      return;
-    }
-    const importId = Number(savedImportId);
-    if (!Number.isInteger(importId) || importId <= 0) {
-      setMlImport(null);
-      setMlImportLoading(false);
-      setMlImportError(`Некорректный ID ML-импорта: ${savedImportId}`);
-      return;
-    }
     let cancelled = false;
+
+    // Резолвит id ML-импорта для открытого проекта. Обычный путь —
+    // localStorage, записанный на этом же устройстве в момент завершения
+    // парсинга (см. BackgroundJobsContext.tsx). Если записи нет — например,
+    // проект открыт на другом устройстве под тем же аккаунтом, где парсинг
+    // не запускался — идём на backend и ищем черновик по project_id
+    // (GET /ml-imports?project_id=), а найденный id сохраняем в localStorage
+    // и на этом устройстве, чтобы повторные открытия были быстрыми.
+    async function resolveImportId(): Promise<number | null> {
+      const savedImportId = localStorage.getItem(storageKey);
+      if (savedImportId) {
+        const parsed = Number(savedImportId);
+        if (!Number.isInteger(parsed) || parsed <= 0) {
+          throw new Error(`Некорректный ID ML-импорта: ${savedImportId}`);
+        }
+        return parsed;
+      }
+
+      const found = await findMlImportsByProject(resolvedProjectId);
+      if (found.length === 0) return null;
+
+      const importId = found[0].id;
+      localStorage.setItem(storageKey, String(importId));
+      return importId;
+    }
+
     setMlImportLoading(true);
     setMlImportError(null);
-    getMlImport(importId)
+    resolveImportId()
+      .then((importId) => {
+        if (cancelled || importId === null) return null;
+        return getMlImport(importId).then((data) => {
+          if (data.project_id !== resolvedProjectId) {
+            throw new Error(`ML-импорт ${importId} относится к проекту ${data.project_id}, а открыт проект ${resolvedProjectId}`);
+          }
+          return data;
+        });
+      })
       .then((data) => {
         if (cancelled) return;
-        if (data.project_id !== resolvedProjectId) {
-          throw new Error(`ML-импорт ${importId} относится к проекту ${data.project_id}, а открыт проект ${resolvedProjectId}`);
-        }
-        setMlImport(data);
+        setMlImport(data ?? null);
+        if (data === null) setMlImportError(null);
       })
       .catch((error) => {
         if (cancelled) return;
@@ -531,7 +552,7 @@ export function ProjectPagePM({
           (axios.isAxiosError(error) && error.response?.status === 404) ||
           (error instanceof Error && error.message.includes("относится к проекту"));
 
-        localStorage.removeItem(storageKey);
+        if (isStaleReference) localStorage.removeItem(storageKey);
         setMlImport(null);
         setMlImportError(isStaleReference ? null : (error instanceof Error ? error.message : "Не удалось загрузить ML-импорт"));
       })
@@ -561,7 +582,10 @@ export function ProjectPagePM({
           : [];
         setProductCatalog(list);
       })
-      .catch((error) => { console.error("Не удалось загрузить каталог товаров:", error); })
+      .catch((error) => {
+        console.error("Не удалось загрузить каталог товаров:", error);
+        if (!cancelled) toast.error("Не удалось загрузить каталог товаров");
+      })
       .finally(() => { if (!cancelled) setProductCatalogLoading(false); });
     return () => { cancelled = true; };
   }, []);

@@ -433,6 +433,23 @@ export async function getMlImport(
   return data;
 }
 
+// Поиск черновика ML-импорта по project_id — используется, когда связка
+// project_id → mlImportId, которую фронт обычно кэширует в localStorage
+// устройства-создателя (см. BackgroundJobsContext.tsx), отсутствует на
+// текущем устройстве (открытие проекта в другом браузере/с другого
+// устройства под тем же аккаунтом). Backend возвращает массив, отсортированный
+// так, что самый свежий черновик — первый элемент; пустой массив — черновика
+// у проекта нет.
+export async function findMlImportsByProject(
+  projectId: number | string,
+): Promise<MlImportCreateResponse[]> {
+  const { data } = await api.get<MlImportCreateResponse[]>("/ml-imports", {
+    params: { project_id: projectId },
+  });
+
+  return data;
+}
+
 export async function updateMlImportItem(
   importId: number,
   itemId: number,
