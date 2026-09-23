@@ -40,6 +40,7 @@ import { ProjectHeader } from "./components/layout/ProjectHeader";
 import { TopBar } from "./components/layout/TopBar";
 import { AppShell } from "./components/layout/AppShell";
 import { LoginPage } from "../pages/LoginPage";
+import { PublicStockPage } from "../pages/PublicStockPage";
 import type { Receipt as ReceiptType } from "../types";
 import { getMe, logout } from "../api/user";
 import { BackgroundJobsProvider } from "./context/BackgroundJobsContext";
@@ -69,6 +70,13 @@ function loadPersistedState() {
 
 const persisted = loadPersistedState();
 
+// Публичная страница остатков склада — доступна по /stock без логина.
+// Роутера в приложении нет, поэтому смотрим на pathname напрямую и
+// переключаем через history.pushState (кнопки браузера «назад/вперёд»
+// обрабатываются через popstate ниже).
+const PUBLIC_STOCK_PATH = "/stock";
+const isPublicStockPath = () => window.location.pathname.replace(/\/+$/, "") === PUBLIC_STOCK_PATH;
+
 export default function App() {
     const [loggedIn, setLoggedIn] = useState(persisted?.loggedIn ?? false);
     const [role, setRole] = useState<Role>(persisted?.role ?? "pm");
@@ -94,6 +102,24 @@ export default function App() {
     const [receipts, setReceipts] = useState<ReceiptType[]>([]);
 
     const [user, setUser] = useState<UserData | null>(null);
+
+    const [showPublicStock, setShowPublicStock] = useState<boolean>(isPublicStockPath);
+
+    useEffect(() => {
+        const onPopState = () => setShowPublicStock(isPublicStockPath());
+        window.addEventListener("popstate", onPopState);
+        return () => window.removeEventListener("popstate", onPopState);
+    }, []);
+
+    const openPublicStock = useCallback(() => {
+        window.history.pushState(null, "", PUBLIC_STOCK_PATH);
+        setShowPublicStock(true);
+    }, []);
+
+    const closePublicStock = useCallback(() => {
+        window.history.pushState(null, "", "/");
+        setShowPublicStock(false);
+    }, []);
 
     // Сохраняем ключевое состояние при каждом изменении —
     // именно это восстанавливает экран после F5
@@ -180,9 +206,15 @@ export default function App() {
         setPage("project");
     }, []);
 
+    // Открывается и без логина, и залогиненным — страница только для чтения.
+    if (showPublicStock) {
+        return <PublicStockPage onBack={closePublicStock} backLabel={loggedIn ? "Вернуться в ERP" : "Войти в ERP"} />;
+    }
+
     if (!loggedIn) {
         return (
             <LoginPage
+                onOpenPublicStock={openPublicStock}
                 onLogin={(r) => {
                     setRole(r);
                     setLoggedIn(true);
