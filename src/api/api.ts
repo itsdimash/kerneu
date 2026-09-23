@@ -957,7 +957,11 @@ export async function fetchProjectDocuments(
 }
 export async function uploadProjectDocument(
   projectId: string | number,
-  category: "contract" | "invoice" | "power_of_attorney",
+  // ИСПРАВЛЕНО: раньше тип не включал "waybill", хотя DocumentsPage.tsx уже
+  // вызывал с ним (незаметно, т.к. esbuild не делает строгую проверку
+  // присваиваемости типов). Добавлен также "payment_invoice" — счёт на
+  // оплату клиенту (новая категория, см. onec_document_links).
+  category: "contract" | "invoice" | "power_of_attorney" | "waybill" | "payment_invoice",
   file: File,
   name?: string,
 ): Promise<ProjectDocumentResponse> {
