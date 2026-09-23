@@ -1367,6 +1367,9 @@ export interface WarehouseReceiptResponse {
   defect_resolved?: boolean;        // добавить, если нет
   supplier_raw_name?: string | null; // заявка на приход: поставщик ещё не назначен, только сырое название
   source?: string | null;            // например, "income_request" — заявка ПМ, а не обычный приход
+  kit_group_key?: string | null;
+  kit_name?: string | null;
+  kit_quantity?: number | string | null;
   supplier?: {
     id: number;
     supplier_name: string;
@@ -1499,6 +1502,10 @@ export interface ShipmentPendingItem {
   quantity: number;
   unit: string;
   available_warehouses: ShipmentPendingWarehouseOption[];
+  kit_group_key?: string | null;
+  kit_name?: string | null;
+  kit_quantity?: number | string | null;
+  quantity_per_kit?: number | string | null;
 }
 
 export interface ShipmentPendingProject {
