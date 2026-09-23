@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { ShipmentModal } from "../app/components/modals/ShipmentModal";
-import { IncomeRequestModal } from "../app/components/modals/IncomeRequestModal";
+import { IncomeRequestModal, IncomeRequestPrefill } from "../app/components/modals/IncomeRequestModal";
 import { ConfirmDialog } from "../app/components/modals/ConfirmDialog";
 import {
   Search,
@@ -29,6 +29,7 @@ import {
   fetchWarehouseReceipts,
   postWarehouseIncome,
   setReceiptCancelled,
+  denyIncomeReceipt,
   confirmReceipt,
   updateReceiptDetails,
   reserveProjectItems,
@@ -44,6 +45,7 @@ import {
   WarehouseReceiptResponse,
   WarehouseInfo,
   ShipmentPendingProject,
+  ReceiptStatus,
 } from "../api/api";
 
 type StockQuantityField = "total" | "reserved" | "defective" | "available";
@@ -80,12 +82,14 @@ type ArrivalRow = {
   projectId: number | null;
   date: string;
   warehouseName: string;
+  warehouseId: number | null;
   supplier: string;
   sku: string;
   item: string;
+  productId: number | null;
   qty: number;
   unit: string;
-  status: string;
+  status: ReceiptStatus;
   actualQuantity: number | null;
   warehouseComment: string | null;
   photoPath: string | null;
@@ -97,6 +101,7 @@ type ArrivalRow = {
   kit_group_key: string | null;
   kit_name: string | null;
   kit_quantity: number | string | null;
+  quantity_per_kit: number | string | null;
 };
 
 // Группа вкладки "Приход" по проекту. NO_PROJECT_GROUP_KEY — записи без
@@ -111,6 +116,9 @@ type ArrivalGroup = {
   pendingCount: number;
   arrivedCount: number;
   cancelledCount: number;
+  // Отдельно от cancelledCount: "denied" — это ПМ отклонил заявку, а не
+  // кладовщик отменил приход (ReceiptStatus.DENIED на бэкенде).
+  deniedCount: number;
   lastMovementLabel: string;
 };
 
@@ -264,6 +272,7 @@ function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
     projectId: item.project_id ?? null,
     date: item.date ? new Date(item.date).toLocaleDateString("ru-RU") : "—",
     warehouseName: item.warehouse?.name || (item.warehouse_id ? `Склад №${item.warehouse_id}` : "—"),
+    warehouseId: item.warehouse_id ?? null,
     supplier:
       item.supplier?.supplier_name ||
       item.supplier?.name ||
@@ -271,6 +280,7 @@ function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
       (item.supplier_id ? `Поставщик #${item.supplier_id}` : "—"),
     sku: (item as any).product?.sku || (item.product_id ? `P-${item.product_id}` : "—"),
     item: item.product?.name || (item.product_id ? `Товар #${item.product_id}` : "—"),
+    productId: item.product_id ?? null,
     qty: item.quantity ?? 0,
     unit: item.product?.unit || "шт",
     status: item.status?.toLowerCase() || "pending",
@@ -284,6 +294,7 @@ function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
     kit_group_key: item.kit_group_key ?? null,
     kit_name: item.kit_name ?? null,
     kit_quantity: item.kit_quantity ?? null,
+    quantity_per_kit: item.quantity_per_kit ?? null,
   };
 }
 
@@ -797,6 +808,19 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   const [deletingReceiptId, setDeletingReceiptId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  // ПМ отклоняет позицию прихода (в отличие от handleToggleCancel выше —
+  // тот для кладовщика). После успешного отклонения, если позиция была
+  // привязана к проекту, сразу открываем «Заявку на приход» с
+  // предзаполненными товаром/количеством/складом — см. handleDenySuccess.
+  const [denyTarget, setDenyTarget] = useState<ArrivalRow | null>(null);
+  const [denyingReceiptId, setDenyingReceiptId] = useState<number | null>(null);
+  const [denyError, setDenyError] = useState<string | null>(null);
+
+  // Заявка на приход, открытая из деньга — держим вместе с id исходного
+  // прихода, чтобы принудительно пересоздавать модалку (через key) при
+  // повторных деньгах подряд, а не полагаться только на условный рендер.
+  const [reorderRequest, setReorderRequest] = useState<{ prefill: IncomeRequestPrefill; sourceReceiptId: number } | null>(null);
+
   // NEW: раскрытие групп-проектов на вкладках "Приход"/"Отгрузка". Ключ —
   // String(projectId) или NO_PROJECT_GROUP_KEY; отсутствие ключа = свёрнута
   // (по умолчанию всё свёрнуто). Обновляется только точечным
@@ -1116,7 +1140,13 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
             <td style="text-align:center">${a.qty}</td>
             <td>${a.unit}</td>
             <td style="text-align:center">${
-              a.status === "cancelled" ? "Отклонено" : a.status === "arrived" ? "Принято" : "В пути"
+              a.status === "cancelled"
+                ? "Отклонено"
+                : a.status === "denied"
+                  ? "Отклонено ПМ"
+                  : a.status === "arrived"
+                    ? "Принято"
+                    : "В пути"
             }</td>
           </tr>`
       )
@@ -1218,6 +1248,56 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     }
   };
 
+  // ПМ отклоняет позицию прихода — в отличие от handleToggleCancel (склад)
+  // это отдельное действие, доступное самому ПМ прямо из карточки прихода.
+  const openDenyReceipt = (receipt: ArrivalRow) => {
+    setDenyError(null);
+    setDenyTarget(receipt);
+  };
+
+  const closeDenyReceipt = () => {
+    if (denyingReceiptId !== null) return;
+    setDenyTarget(null);
+    setDenyError(null);
+  };
+
+  const confirmDenyReceipt = async () => {
+    if (!denyTarget) return;
+    const receipt = denyTarget;
+
+    setDenyingReceiptId(receipt.id);
+    setDenyError(null);
+    try {
+      const updated = await denyIncomeReceipt(receipt.id);
+      setArrivals((prev) => prev.map((r) => (r.id === updated.id ? mapReceipt(updated) : r)));
+      setDenyTarget(null);
+
+      // Позиция была привязана к проекту — сразу предлагаем пересоздать её
+      // через «Заявку на приход», предзаполненную тем же товаром/кол-вом/
+      // складом. Без projectId (ручной приход кладовщика без проекта)
+      // предлагать пересоздание через project-linked заявку не имеет смысла.
+      if (receipt.projectId != null && receipt.warehouseId != null) {
+        setReorderRequest({
+          sourceReceiptId: receipt.id,
+          prefill: {
+            projectId: receipt.projectId,
+            projectName: receipt.project,
+            productId: receipt.productId,
+            productName: receipt.item,
+            quantity: receipt.qty,
+            unit: receipt.unit,
+            warehouseId: receipt.warehouseId,
+          },
+        });
+      }
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail;
+      setDenyError(typeof detail === "string" ? detail : e instanceof Error ? e.message : "Не удалось отклонить приход");
+    } finally {
+      setDenyingReceiptId(null);
+    }
+  };
+
   // NEW: группировка вкладки "Приход" по проекту. Порядок групп — сначала
   // те, где есть pending-позиции (по убыванию их числа), затем остальные в
   // порядке первого появления в arrivals (Array.sort стабилен, при равенстве
@@ -1236,12 +1316,14 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
           pendingCount: 0,
           arrivedCount: 0,
           cancelledCount: 0,
+          deniedCount: 0,
           lastMovementLabel: "—",
         };
         map.set(key, group);
       }
       group.items.push(a);
       if (a.status === "cancelled") group.cancelledCount += 1;
+      else if (a.status === "denied") group.deniedCount += 1;
       else if (a.status === "arrived") group.arrivedCount += 1;
       else group.pendingCount += 1;
     });
@@ -1322,6 +1404,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
 
       {showIncomeRequestModal && (
         <IncomeRequestModal
+          key="manual"
           warehouses={warehouses}
           stock={stock}
           onClose={() => setShowIncomeRequestModal(false)}
@@ -1330,6 +1413,53 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
             setTab("arrivals");
           }}
         />
+      )}
+
+      {reorderRequest && (
+        <IncomeRequestModal
+          // Разные деньги подряд должны каждый раз давать чистый маунт —
+          // ключ на id исходного прихода гарантирует это, даже если бы
+          // условный рендер сам по себе этого не обеспечил (см. Step 4).
+          key={`reorder-${reorderRequest.sourceReceiptId}`}
+          warehouses={warehouses}
+          stock={stock}
+          prefill={reorderRequest.prefill}
+          onClose={() => setReorderRequest(null)}
+          onSuccess={() => {
+            setReorderRequest(null);
+            loadArrivals();
+            setTab("arrivals");
+          }}
+        />
+      )}
+
+      {denyTarget && (
+        <ConfirmDialog
+          title="Отклонить эту позицию прихода?"
+          description="Позиция будет помечена отклонённой. Если она привязана к проекту, сразу откроется заявка на приход для пересоздания."
+          confirmLabel="Отклонить"
+          loading={denyingReceiptId === denyTarget.id}
+          error={denyError}
+          onConfirm={confirmDenyReceipt}
+          onCancel={closeDenyReceipt}
+        >
+          <p className="text-xs font-mono text-muted-foreground">{denyTarget.receiptNumber}</p>
+          <p className="mt-0.5 text-sm font-semibold text-foreground">{denyTarget.item}</p>
+          <div className="mt-2 flex items-center gap-3 text-xs">
+            <span className="font-mono font-semibold text-foreground">
+              {denyTarget.qty.toLocaleString("ru-RU")} {denyTarget.unit}
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2 py-0.5 font-medium text-foreground">
+              <Building2 size={11} className="text-blue-600 dark:text-blue-400" />
+              {denyTarget.warehouseName}
+            </span>
+          </div>
+          {denyTarget.projectId != null && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Проект: <span className="font-medium text-foreground">{denyTarget.project}</span>
+            </p>
+          )}
+        </ConfirmDialog>
       )}
 
       {deleteTarget && (
@@ -1613,6 +1743,11 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                             <XCircle size={12} /> отклонено {group.cancelledCount}
                           </span>
                         )}
+                        {group.deniedCount > 0 && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 dark:bg-rose-400/20 text-rose-700 dark:text-rose-300 whitespace-nowrap">
+                            <XCircle size={12} /> отклонено ПМ {group.deniedCount}
+                          </span>
+                        )}
                         <span className="text-xs text-muted-foreground whitespace-nowrap">{group.lastMovementLabel}</span>
                       </div>
                     </div>
@@ -1637,10 +1772,11 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                           <tbody className="divide-y divide-border">
                             {group.items.map((a) => {
                               const isCancelled = a.status === "cancelled";
+                              const isDenied = a.status === "denied";
                               const isArrived = a.status === "arrived";
 
                               return (
-                                <tr key={a.id} className={`hover:bg-background/50 transition-colors ${isCancelled ? "opacity-50 bg-background" : ""}`}>
+                                <tr key={a.id} className={`hover:bg-background/50 transition-colors ${isCancelled || isDenied ? "opacity-50 bg-background" : ""}`}>
                                   <td className="px-4 py-3.5 text-xs font-mono font-medium text-foreground">
                                     {a.receiptNumber}
                                   </td>
@@ -1670,13 +1806,18 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                                       {a.kit_group_key ? (
                                         <span
                                           className="inline-flex w-fit max-w-[220px] items-center gap-1 rounded-md bg-blue-100 dark:bg-blue-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
-                                          title={`из комплекта «${(a.kit_name || "").trim() || "Комплект"}»${a.kit_quantity != null ? ` ×${a.kit_quantity}` : ""}`}
+                                          title={`из комплекта «${(a.kit_name || "").trim() || "Комплект"}»${a.quantity_per_kit != null ? ` ×${a.quantity_per_kit}` : ""}`}
                                         >
                                           <Package size={10} className="shrink-0" />
                                           <span className="truncate">
                                             из комплекта «{(a.kit_name || "").trim() || "Комплект"}»
-                                            {a.kit_quantity != null ? ` ×${a.kit_quantity}` : ""}
+                                            {a.quantity_per_kit != null ? ` ×${a.quantity_per_kit}` : ""}
                                           </span>
+                                        </span>
+                                      ) : null}
+                                      {a.kit_group_key && a.kit_quantity != null ? (
+                                        <span className="text-[11px] text-muted-foreground">
+                                          комплектов в проекте: {a.kit_quantity}
                                         </span>
                                       ) : null}
                                     </div>
@@ -1697,6 +1838,10 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                                     {isCancelled ? (
                                       <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 whitespace-nowrap" title="Отменено">
                                         <XCircle size={14} /> Отклонено
+                                      </span>
+                                    ) : isDenied ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 dark:bg-rose-400/20 text-rose-700 dark:text-rose-300 whitespace-nowrap" title="Отклонено ПМ">
+                                        <XCircle size={14} /> Отклонено ПМ
                                       </span>
                                     ) : isArrived ? (
                                       <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 whitespace-nowrap" title="Принято кладовщиком">
@@ -1724,6 +1869,8 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                                           </button>
                                         )}
                                       </div>
+                                    ) : isDenied ? (
+                                      <span className="text-xs text-muted-foreground italic">Заявка отклонена ПМ</span>
                                     ) : isArrived ? (
                                       <button
                                         onClick={() => setDetailsTarget(a)}
@@ -1761,17 +1908,29 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                                           )}
                                         </button>
                                       </div>
-                                    ) : isPm && a.source === "pm_request" ? (
+                                    ) : isPm ? (
                                       <div className="flex flex-col items-center gap-1">
                                         <span className="text-xs text-muted-foreground italic">Ожидает кладовщика</span>
-                                        <button
-                                          onClick={() => openDeleteReceipt(a)}
-                                          title="Удалить заявку, если отправили по ошибке"
-                                          className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
-                                        >
-                                          <Trash2 size={12} />
-                                          Удалить
-                                        </button>
+                                        <div className="flex items-center gap-2">
+                                          {a.source === "pm_request" && (
+                                            <button
+                                              onClick={() => openDeleteReceipt(a)}
+                                              title="Удалить заявку, если отправили по ошибке"
+                                              className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+                                            >
+                                              <Trash2 size={12} />
+                                              Удалить
+                                            </button>
+                                          )}
+                                          <button
+                                            onClick={() => openDenyReceipt(a)}
+                                            title="Отклонить эту позицию прихода"
+                                            className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+                                          >
+                                            <XCircle size={12} />
+                                            Отклонить
+                                          </button>
+                                        </div>
                                       </div>
                                     ) : (
                                       <span className="text-xs text-muted-foreground italic">Ожидает кладовщика</span>
@@ -1913,18 +2072,18 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                                   {it.kitGroupKey ? (
                                     <span
                                       className="inline-flex w-fit max-w-[220px] items-center gap-1 rounded-md bg-blue-100 dark:bg-blue-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
-                                      title={`из комплекта «${(it.kitName || "").trim() || "Комплект"}»${it.kitQuantity != null ? ` ×${it.kitQuantity}` : ""}`}
+                                      title={`из комплекта «${(it.kitName || "").trim() || "Комплект"}»${it.quantityPerKit != null ? ` ×${it.quantityPerKit}` : ""}`}
                                     >
                                       <Package size={10} className="shrink-0" />
                                       <span className="truncate">
                                         из комплекта «{(it.kitName || "").trim() || "Комплект"}»
-                                        {it.kitQuantity != null ? ` ×${it.kitQuantity}` : ""}
+                                        {it.quantityPerKit != null ? ` ×${it.quantityPerKit}` : ""}
                                       </span>
                                     </span>
                                   ) : null}
-                                  {it.kitGroupKey && it.quantityPerKit != null ? (
+                                  {it.kitGroupKey && it.kitQuantity != null ? (
                                     <span className="text-[11px] text-muted-foreground">
-                                      {it.quantityPerKit} на комплект
+                                      комплектов в проекте: {it.kitQuantity}
                                     </span>
                                   ) : null}
                                 </div>

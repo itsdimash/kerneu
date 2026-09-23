@@ -35,8 +35,8 @@ export const CATEGORY_META: Record<
   NotificationCategory,
   { icon: typeof Bell; fg: string; bg: string; label: string }
 > = {
-  kp_rejected: { icon: FileX2, ...DESTRUCTIVE, label: "Проект отклонено" },
-  kp_approved: { icon: ThumbsUp, ...SUCCESS, label: "Проект одобрено" },
+  kp_rejected: { icon: FileX2, ...DESTRUCTIVE, label: "Проект отклонён" },
+  kp_approved: { icon: ThumbsUp, ...SUCCESS, label: "Проект одобрен" },
   kp_pending: { icon: Inbox, ...WARNING, label: "Проект на согласование" },
   warehouse_request_pending: { icon: Boxes, ...TEAL, label: "Заявка на склад" },
   warehouse_request_approved: { icon: ThumbsUp, ...SUCCESS, label: "Заявка на склад одобрена" },

@@ -767,6 +767,12 @@ export const postWarehouseIncome = async (payload: WarehouseIncomeInput) => {
 export interface WarehouseIncomeRequestItem {
   product_name: string;
   quantity: number;
+  // Заполняются, когда заявка создаётся из отклонённой позиции прихода
+  // (см. WarehousePage: deny → IncomeRequestModal с prefill) — связывают
+  // новую заявку с проектом/строкой проекта, ради которой её пересоздают.
+  // Опциональны: обычная "Заявка на приход" с дашборда их не передаёт.
+  project_id?: number;
+  project_item_id?: number;
 }
 
 export interface WarehouseIncomeRequestInput {
@@ -1348,6 +1354,12 @@ export const signProjectContract = async (projectId: number) => {
   return data;
 };
 
+// Известные значения статуса прихода — "denied" отдельный от "cancelled":
+// cancelled выставляет кладовщик (handleToggleCancel), denied — ПМ через
+// новую кнопку "Отклонить" (denyIncomeReceipt). string & {} сохраняет
+// автодополнение по литералам, не запрещая прочие значения с бэкенда.
+export type ReceiptStatus = "pending" | "arrived" | "cancelled" | "denied" | (string & {});
+
 export interface WarehouseReceiptResponse {
   id: number;
   receipt_number?: string;
@@ -1358,7 +1370,7 @@ export interface WarehouseReceiptResponse {
   product_id: number | null;
   warehouse_id?: number | null;
   quantity: number;
-  status: string;
+  status: ReceiptStatus;
   actual_quantity?: number | null;
   photo_path?: string | null;
   warehouse_comment?: string | null;
@@ -1370,6 +1382,7 @@ export interface WarehouseReceiptResponse {
   kit_group_key?: string | null;
   kit_name?: string | null;
   kit_quantity?: number | string | null;
+  quantity_per_kit?: number | string | null;
   supplier?: {
     id: number;
     supplier_name: string;
@@ -1403,6 +1416,21 @@ export async function setReceiptCancelled(
   const { data } = await api.patch<WarehouseReceiptResponse>(
     `/warehouse/receipts/${receiptId}/cancel`,
     { is_cancelled: isCancelled }
+  );
+  return data;
+}
+
+// ==========================================
+// ОТКЛОНЕНИЕ ПРИХОДА ПМ-ом (для роли "pm"/"admin", в отличие от отмены
+// кладовщиком выше)
+// Подтверждено бэкендом: эндпоинт без тела — только id в пути.
+// ==========================================
+
+export async function denyIncomeReceipt(
+  receiptId: number
+): Promise<WarehouseReceiptResponse> {
+  const { data } = await api.patch<WarehouseReceiptResponse>(
+    `/warehouse/receipts/${receiptId}/deny`
   );
   return data;
 }

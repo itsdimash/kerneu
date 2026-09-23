@@ -51,13 +51,18 @@ type Props = {
   value: ExistingProductSelection | null;
   onChange: (value: ExistingProductSelection | null) => void;
   disabled?: boolean;
+  // Склад в value.warehouseId зафиксирован (например, строка пришла из
+  // деньга на конкретном складе) — кнопки выбора другого склада рисуются,
+  // но недоступны. В отличие от `disabled`, товар при этом всё ещё можно
+  // сменить/очистить.
+  lockWarehouse?: boolean;
 };
 
 /**
  * Выбор УЖЕ существующего на складе товара.
  * Показывает, на каких складах он лежит (с количеством), и не даёт выбрать другой склад.
  */
-export function ExistingProductPicker({ stock, warehouses, value, onChange, disabled }: Props) {
+export function ExistingProductPicker({ stock, warehouses, value, onChange, disabled, lockWarehouse }: Props) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -129,17 +134,19 @@ export function ExistingProductPicker({ stock, warehouses, value, onChange, disa
             {allowed.map((id) => {
               const active = value.warehouseId === id;
               const qty = selectedItem.perWarehouse[id];
+              const locked = lockWarehouse && !active;
               return (
                 <button
                   key={id}
                   type="button"
-                  disabled={disabled || allowed.length === 1}
+                  disabled={disabled || allowed.length === 1 || locked}
                   onClick={() => onChange({ ...value, warehouseId: id })}
+                  title={locked ? "Склад зафиксирован — совпадает со складом отклонённого прихода" : undefined}
                   className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border transition-colors ${
                     active
                       ? "border-primary bg-primary text-white"
                       : "border-border bg-card text-foreground hover:bg-background"
-                  } ${allowed.length === 1 ? "cursor-default" : ""}`}
+                  } ${allowed.length === 1 || locked ? "cursor-default" : ""} ${locked ? "opacity-40" : ""}`}
                 >
                   {active ? <Check size={13} /> : <Building2 size={13} className="text-muted-foreground" />}
                   <span className="font-medium">{whName(id)}</span>
@@ -153,7 +160,12 @@ export function ExistingProductPicker({ stock, warehouses, value, onChange, disa
             })}
           </div>
 
-          {!nowhere && (
+          {lockWarehouse ? (
+            <p className="mt-2 flex items-start gap-1.5 text-[11px] text-muted-foreground">
+              <Info size={12} className="mt-0.5 shrink-0" />
+              Склад зафиксирован — совпадает со складом, на котором отклонили приход.
+            </p>
+          ) : !nowhere && (
             <p className="mt-2 flex items-start gap-1.5 text-[11px] text-muted-foreground">
               <Info size={12} className="mt-0.5 shrink-0" />
               Приход можно оформить только на склад, где этот товар уже хранится.
