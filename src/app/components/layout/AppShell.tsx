@@ -22,6 +22,8 @@ import { WarehousePage } from "../../../pages/WarehousePage";
 import { DocumentsPage } from "../../../pages/DocumentsPage";
 import { SupplierHistoryPage } from "../../../pages/SupplierHistoryPage";
 import { OneCPage } from "../../../pages/OneCPage";
+import { ApprovalsPage, type ApprovalsTabId } from "../../../pages/ApprovalsPage";
+import { NotificationsProvider } from "../../notifications/NotificationsContext";
 
 type UserData = {
   id: number;
@@ -88,6 +90,21 @@ export function AppShell({
   setReceipts,
 }: AppShellProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  // Какая вкладка "Заявок на согласование" должна открыться при переходе
+  // туда — по умолчанию первая, но CTA из колокольчика (см. navigate ниже)
+  // может указать конкретную (Закупки/Документы) под категорию уведомления.
+  const [approvalsTab, setApprovalsTab] = useState<ApprovalsTabId>("projects");
+
+  // Обёртка над onPage, которая умеет заодно выставить нужную вкладку
+  // "Заявок на согласование" — единственный экран, которому сейчас нужен
+  // параметр помимо самой страницы.
+  const navigate = (p: Page, approvalsTabTarget?: ApprovalsTabId) => {
+    if (p === "approvals" && approvalsTabTarget) {
+      setApprovalsTab(approvalsTabTarget);
+    }
+    onPage(p);
+  };
 
   // Свёрнутое состояние Sidebar (только иконки) — сохраняем между
   // сессиями, чтобы не приходилось сворачивать заново при каждом заходе.
@@ -203,6 +220,7 @@ export function AppShell({
   };
 
   return (
+    <NotificationsProvider>
     <div className="flex h-screen bg-background overflow-hidden">
       <Sidebar
         page={page}
@@ -220,7 +238,7 @@ export function AppShell({
         <TopBar
           role={role}
           user={user}
-          onNavigate={onPage}
+          onNavigate={navigate}
           onLogout={onLogout}
           onOpenProject={handleFindProject}
           onSelectProject={resolveAndSelectProject}
@@ -337,6 +355,15 @@ export function AppShell({
               прокси-роут ERP_Bakend (/api/v1/ai/...), а не напрямую в
               ai-platform — см. app/api/v1/routers/ai_chat.py на бэке. */}
           {page === "ai-chat" && <AiChatPage role={role} />}
+
+          {page === "approvals" && (
+            <ApprovalsPage
+              role={role}
+              onNavigate={onPage}
+              onSelectProject={resolveAndSelectProject}
+              initialTab={approvalsTab}
+            />
+          )}
         </main>
       </div>
 
@@ -366,5 +393,6 @@ export function AppShell({
         </div>
       )}
     </div>
+    </NotificationsProvider>
   );
 }

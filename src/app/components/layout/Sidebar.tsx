@@ -1,11 +1,25 @@
-import { useState } from "react";
-import { FolderOpen, FileText, ShoppingCart, Package, CheckSquare, Receipt, LayoutDashboard, X, Search, History, Landmark, Sparkles, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { FolderOpen, FileText, ShoppingCart, Package, CheckSquare, Receipt, LayoutDashboard, X, Search, History, Landmark, Sparkles, PanelLeftClose, PanelLeftOpen, ListChecks } from "lucide-react";
 import type { Page, Role, ProjectState } from "../../../types";
+import type { NotificationCategory } from "../../../data/systemNotifications";
+import { useNotifications } from "../../notifications/NotificationsContext";
 import { KerneuLogo } from "../common/KerneuLogo";
 import ProductsCatalog from "../common/ProductsCatalog";
 
+// Категории, которые на странице "Заявки на согласование" требуют внимания
+// директора — те же, что учитываются на самой странице как pending. Держим
+// список в одном месте, чтобы бейдж и анимация в сайдбаре не разъезжались
+// со счётчиком на самой странице.
+const APPROVALS_PENDING_CATEGORIES = new Set<NotificationCategory>([
+  "kp_pending",
+  "warehouse_request_pending",
+  "invoice_pending_director",
+  "docs_pending_director",
+]);
+
 export const NAV: { id: Page; label: string; icon: React.ElementType; badge?: number; roles: Role[] }[] = [
   { id: "dashboard",   label: "Дашборд",    icon: LayoutDashboard, roles: ["commercial_director", "pm"] },
+  { id: "approvals",   label: "Заявки на согласование", icon: ListChecks, roles: ["commercial_director", "admin"] },
   { id: "project",     label: "Проекты",    icon: FolderOpen,      roles: ["commercial_director", "pm"] },
   { id: "contract",    label: "Договор",    icon: FileText,        roles: ["commercial_director", "pm", "accountant"] },
   { id: "procurement", label: "Закупки",    icon: ShoppingCart,    roles: ["commercial_director", "pm", "accountant"] },
@@ -32,6 +46,31 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject, mobil
 }) {
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [projectIdInput, setProjectIdInput] = useState("");
+
+  // Живой счётчик и анимация на пункте "Заявки на согласование" — данные
+  // берутся из того же NotificationsProvider, что и (для остальных ролей)
+  // сам колокольчик, так что WS-подписка не дублируется.
+  const { items: notificationItems, lastArrived } = useNotifications();
+  const approvalsUnreadCount = notificationItems.filter(
+    (n) => !n.read && APPROVALS_PENDING_CATEGORIES.has(n.category),
+  ).length;
+
+  const [approvalsPulse, setApprovalsPulse] = useState(false);
+  const pulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!lastArrived || !APPROVALS_PENDING_CATEGORIES.has(lastArrived.category)) return;
+
+    // Один короткий разряд анимации на каждое новое релевантное уведомление —
+    // не бесконечный мигающий индикатор, поэтому таймер, а не CSS-класс "навсегда".
+    setApprovalsPulse(true);
+    if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
+    pulseTimeoutRef.current = setTimeout(() => setApprovalsPulse(false), 900);
+
+    return () => {
+      if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
+    };
+  }, [lastArrived]);
 
   // Свёрнутость — это desktop-only концепция (как в VS Code/Notion). Пока
   // открыт мобильный drawer, всегда показываем полную версию с подписями —
@@ -110,6 +149,9 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject, mobil
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {NAV.filter(item => !item.roles || item.roles.includes(role)).map(({ id, label, icon: Icon, badge }, i) => {
             const active = page === id;
+            const isApprovals = id === "approvals";
+            const effectiveBadge = isApprovals ? approvalsUnreadCount : badge;
+            const pulsing = isApprovals && approvalsPulse;
             return (
               <button key={id} onClick={() => handleNavClick(id)}
                 style={{ animationDelay: `${i * 40}ms` }}
@@ -118,14 +160,25 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject, mobil
                   effectiveCollapsed ? "justify-center px-0" : "pl-3.5 pr-3"
                 } ${
                   active ? "bg-sidebar-accent text-sidebar-primary font-medium" : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-                }`}>
+                } ${pulsing ? "animate-pulse bg-sidebar-accent" : ""}`}>
                 {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-sidebar-primary shadow-[0_0_8px_var(--sidebar-primary)]" />}
-                <Icon size={16} className={`transition-transform duration-200 ${active ? "text-sidebar-primary" : "text-muted-foreground group-hover:scale-110"}`} />
+                <Icon size={16} className={`transition-transform duration-200 ${active ? "text-sidebar-primary" : "text-muted-foreground group-hover:scale-110"} ${pulsing ? "text-sidebar-primary" : ""}`} />
                 {!effectiveCollapsed && <span className="flex-1 text-left">{label}</span>}
-                {!effectiveCollapsed && badge && badge > 0 && (
-                  <span className="flex-shrink-0 w-4 h-4 bg-warning text-warning-foreground text-[10px] font-bold rounded-full flex items-center justify-center">
-                    {badge}
+                {!effectiveCollapsed && effectiveBadge != null && effectiveBadge > 0 && (
+                  <span
+                    className={`flex-shrink-0 min-w-4 h-4 px-1 bg-destructive text-destructive-foreground text-[10px] font-bold rounded-full flex items-center justify-center transition-transform duration-300 ${
+                      pulsing ? "scale-125" : "scale-100"
+                    }`}
+                  >
+                    {effectiveBadge}
                   </span>
+                )}
+                {effectiveCollapsed && effectiveBadge != null && effectiveBadge > 0 && (
+                  <span
+                    className={`absolute top-1 right-1.5 h-2 w-2 rounded-full bg-destructive transition-transform duration-300 ${
+                      pulsing ? "scale-150" : "scale-100"
+                    }`}
+                  />
                 )}
               </button>
             );

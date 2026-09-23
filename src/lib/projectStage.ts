@@ -23,7 +23,7 @@ const STAGE_META: Record<string, StageMeta> = {
     cls: "bg-amber-50 text-amber-700 ring-1 ring-amber-200/80",
   },
   "Отклонено Комдиром": {
-    label: "КП отклонено (правки)",
+    label: "Проект отклонён (правки)",
     cls: "bg-red-50 text-red-700 ring-1 ring-red-200/80",
   },
   "Одобрено Комдиром": {

@@ -5,7 +5,7 @@ export const api = axios.create({
     withCredentials: true, // очень важно для Cookie
 });
 
-export interface ProjectItem {
+export interface ProjectItem extends ProjectItemKitFields {
   id: number;
   project_id: number;
   product_id: number;
@@ -49,6 +49,11 @@ export interface DashboardStats {
   pending_kp: number;
   planned_revenue: number;
   revenue_growth: number; // например, 18 (%)
+  // Опциональные — старый backend их ещё не отдаёт. "Себестоимость указана
+  // у X из Y позиций": количество project_items с заполненным cost_price
+  // (items_with_cost) из общего числа позиций за период (items_total).
+  items_with_cost?: number;
+  items_total?: number;
 }
 
 export const fetchDashboardStats = async (): Promise<DashboardStats> => {
@@ -78,6 +83,13 @@ export interface ProjectResponse {
    * прячет блоки КП и согласования и показывает короткий степпер.
    */
   is_express?: boolean;
+  /**
+   * «Заявка на склад», созданная одноимённой кнопкой на дашборде: внутренний
+   * запрос по наличию, а не коммерческое предложение клиенту. По этому флагу
+   * ProjectPage/ProjectPageDirector скрывают цену/себестоимость/поставщика
+   * и укорачивают степпер (клиент и подписание договора не нужны).
+   */
+  is_warehouse_request?: boolean;
 }
 
 const API_BASE = "/api/v1";
@@ -117,6 +129,29 @@ export interface MlSimilarVariant {
   [key: string]: unknown;
 }
 
+// Статус наличия одного компонента комплекта — тот же набор значений,
+// что и MlStatus в src/lib/stockStatus.ts, но backend всегда отдаёт для
+// компонента ровно одно из этих двух ("Нет в системе" и т.п. компонентам
+// не присваиваются: если товара-компонента вообще нет в системе, это
+// ошибка подбора состава, а не статус наличия).
+export interface KitComponentStatus {
+  component_product_id: number;
+  product_name: string;
+  unit: string | null;
+  quantity_per_kit: number;
+  required_quantity: number;
+  available_quantity: number;
+  shortfall_quantity: number;
+  ml_status: "На складе" | "Есть в системе (недостаточно)";
+  // Себестоимость компонента, введённая ПМ вручную (null = "не введена" —
+  // backend использует цену из каталога). Typed 0 — валидное значение
+  // (бесплатный компонент), отличное от "не введена".
+  price_cost?: number | string | null;
+  // Эффективная себестоимость, фактически использованная backend'ом
+  // (введённая ПМ либо цена из каталога) — присутствует всегда.
+  unit_cost?: number | string | null;
+}
+
 export interface MlImportItemResponse {
   id: number;
 
@@ -152,6 +187,30 @@ export interface MlImportItemResponse {
 
   created_at: string;
   updated_at: string | null;
+
+  // Опциональные — старый backend их ещё не отдаёт. Отсутствие трактуется
+  // на фронте как is_kit=false / kit_components=[] (см. ProjectPage.tsx),
+  // чтобы UI не падал на более старом контракте.
+  is_kit?: boolean;
+  kit_components?: KitComponentStatus[];
+  // Себестоимость комплекта, посчитанная backend'ом из компонентов —
+  // подсказка ПМ рядом с полем "Себестоимость", когда он ставит 0
+  // (0 = "считается из состава"). null, если backend не смог посчитать.
+  kit_derived_unit_cost?: number | string | null;
+}
+
+// Поля комплекта на позиции проекта (ProjectItem/ProjectItemResponse) —
+// backend проставляет их всем компонентам одного комплекта после confirm
+// ML-импорта (см. explode комплекта на backend). Для обычных позиций и
+// старых проектов все поля — null.
+export interface ProjectItemKitFields {
+  kit_group_key?: string | null;
+  kit_product_id?: number | null;
+  kit_name?: string | null;
+  kit_quantity?: number | string | null;
+  quantity_per_kit?: number | string | null;
+  kit_unit_sale_price?: number | string | null;
+  kit_unit_cost_price?: number | string | null;
 }
 
 export interface MlImportDetailResponse {
@@ -184,10 +243,124 @@ export interface MlImportItemUpdate {
 
 export interface MlImportItemCreateProduct {
   product_name: string;
-  supplier_name: string;
+  // Ввод себестоимости/поставщика перенесён на ProcurementPage — см.
+  // handleCreateProduct в ProjectPage.tsx, которая их больше не отправляет;
+  // backend принимает запрос без них и ставит price_cost = 0.
+  supplier_name?: string;
   unit: string;
-  price_cost: number;
+  price_cost?: number;
   price: number;
+  // Товар-комплект: состоит из набора других товаров каталога, которые ПМ
+  // подбирает отдельно в кит-пикере после создания (см. getKitComponents /
+  // confirmMlImport ниже). Опционально — по умолчанию backend должен
+  // трактовать отсутствие поля как false.
+  is_kit?: boolean;
+}
+
+// Отдельный от ML-импорта эндпоинт: создаёт товар сам по себе, не трогая
+// никакую строку импорта (в отличие от createProductForMlImportItem,
+// который привязан к конкретному item и переписывает его
+// selected_product_id). Нужен, чтобы кит-пикер мог создать товар-компонент
+// "на лету", не имея под рукой ml_import_item. Единственное обязательное
+// поле — имя; остальное (поставщик/единица/себестоимость/цена) backend
+// проставляет дефолтами.
+export interface ProductCreate {
+  product_name: string;
+  unit?: string;
+}
+
+export interface ProductOut {
+  id: number;
+  name: string;
+  description?: string | null;
+  is_kit: boolean;
+  unit?: string | null;
+}
+
+export async function createProduct(
+  payload: ProductCreate,
+): Promise<ProductOut> {
+  try {
+    const { data } = await api.post<ProductOut>("/products/", payload);
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось создать товар");
+  }
+}
+
+// Отмечая чекбоксами несколько товаров сразу в дропдауне «Совпавший
+// товар», ПМ фактически говорит "эта строка — комплект из этих товаров".
+// /products/resolve-kit по сырому названию строки (name) сам решает,
+// переиспользовать ли уже существующий товар-комплект с таким именем
+// (reused: true) или создать новый — при коллизии имени backend
+// уникализирует его и возвращает reused: false с итоговым name, которое
+// может отличаться от переданного.
+export interface ResolveKitProductRequest {
+  name: string;
+}
+
+export interface ResolveKitProductResponse {
+  id: number;
+  name: string;
+  is_kit: boolean;
+  reused: boolean;
+}
+
+export async function resolveKitProduct(
+  payload: ResolveKitProductRequest,
+): Promise<ResolveKitProductResponse> {
+  try {
+    const { data } = await api.post<ResolveKitProductResponse>(
+      "/products/resolve-kit",
+      payload,
+    );
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось создать комплект");
+  }
+}
+
+// Состав комплекта, "запомненный" за товаром-комплектом с прошлого раза —
+// backend отдаёт его, чтобы кит-пикер мог предзаполнить выбор, а ПМ мог его
+// скорректировать перед подтверждением строки ML-импорта.
+//
+// ПРЕДПОЛОЖЕНИЕ (backend реализуется отдельно): GET /products/{id}/kit-components
+// возвращает массив { component_product_id, default_quantity }. Если реальная
+// форма ответа отличается, сузить типизацию и разбор в getKitComponents.
+export interface KitComponentResponse {
+  component_product_id: number;
+  default_quantity: number;
+}
+
+export async function getKitComponents(
+  productId: number,
+): Promise<KitComponentResponse[]> {
+  try {
+    const { data } = await api.get<KitComponentResponse[]>(
+      `/products/${productId}/kit-components`,
+    );
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось загрузить состав комплекта");
+  }
+}
+
+// ПРЕДПОЛОЖЕНИЕ: PATCH /products/{id}/kit-flag принимает { is_kit } и
+// возвращает обновлённый товар (используем только то, что реально нужно
+// фронту — id и is_kit).
+export async function updateProductKitFlag(
+  productId: number,
+  isKit: boolean,
+): Promise<{ id: number; is_kit: boolean }> {
+  try {
+    const { data } = await api.patch<{ id: number; is_kit: boolean }>(
+      `/products/${productId}/kit-flag`,
+      { is_kit: isKit },
+    );
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось изменить признак комплекта");
+  }
 }
 
 // Ручное добавление строки в черновик импорта. Обязательны только
@@ -260,6 +433,23 @@ export async function getMlImport(
   return data;
 }
 
+// Поиск черновика ML-импорта по project_id — используется, когда связка
+// project_id → mlImportId, которую фронт обычно кэширует в localStorage
+// устройства-создателя (см. BackgroundJobsContext.tsx), отсутствует на
+// текущем устройстве (открытие проекта в другом браузере/с другого
+// устройства под тем же аккаунтом). Backend возвращает массив, отсортированный
+// так, что самый свежий черновик — первый элемент; пустой массив — черновика
+// у проекта нет.
+export async function findMlImportsByProject(
+  projectId: number | string,
+): Promise<MlImportCreateResponse[]> {
+  const { data } = await api.get<MlImportCreateResponse[]>("/ml-imports", {
+    params: { project_id: projectId },
+  });
+
+  return data;
+}
+
 export async function updateMlImportItem(
   importId: number,
   itemId: number,
@@ -271,6 +461,66 @@ export async function updateMlImportItem(
   );
 
   return data;
+}
+
+// Заменяет весь черновой состав комплекта для конкретной строки ML-импорта
+// (пустой массив — очищает состав). В ответе backend сразу пересчитывает
+// available_quantity/ml_status/kit_components строки по актуальным
+// остаткам, поэтому дальше просто заменяем строку в mlImport.items тем,
+// что вернул этот запрос — отдельно ничего пересчитывать не нужно.
+export async function saveMlImportKitComponents(
+  importId: number,
+  itemId: number,
+  components: {
+    component_product_id: number;
+    quantity: number;
+    // Опциональная себестоимость компонента. Отсутствие поля = "не введена"
+    // (backend возьмёт цену из каталога); typed 0 отправляется как 0.
+    price_cost?: number | null;
+  }[],
+): Promise<MlImportItemResponse> {
+  try {
+    const { data } = await api.put<MlImportItemResponse>(
+      `/ml-imports/${importId}/items/${itemId}/kit-components`,
+      { components },
+    );
+    return data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 409) {
+      const detail = error.response?.data?.detail;
+      throw new Error(
+        typeof detail === "string" && detail.trim()
+          ? detail
+          : "Импорт больше нельзя редактировать — он уже подтверждён",
+      );
+    }
+    throwWithDetail(error, "Не удалось сохранить состав комплекта");
+  }
+}
+
+export interface ProductAvailability {
+  product_id: number;
+  available_quantity: number;
+}
+
+// Живые остатки по товарам (без разбивки по складам, в отличие от
+// fetchWarehouseStocks) — используется кит-пикером, чтобы показать
+// реальный статус наличия компонента вместо ml_status из каталога
+// товаров, которого там фактически нет. Id, отсутствующие в ответе,
+// трактуются на фронте как остаток 0 (см. контракт эндпоинта).
+export async function fetchProductsAvailability(
+  productIds: number[],
+): Promise<ProductAvailability[]> {
+  if (productIds.length === 0) return [];
+  try {
+    const { data } = await api.post<{ items: ProductAvailability[] }>(
+      "/products/availability",
+      { product_ids: productIds },
+    );
+    return data.items ?? [];
+  } catch (error) {
+    throwWithDetail(error, "Не удалось получить остатки по товарам");
+  }
 }
 
 // Backend отдаёт понятную человеку причину в detail (строкой). Без этой
@@ -332,11 +582,41 @@ export async function deleteMlImportItem(
   }
 }
 
+// Состав комплекта, выбранный ПМ для конкретной строки ML-импорта (строка
+// привязана к товару-комплекту через selected_product_id, а этот массив —
+// то, из чего комплект фактически собран в этом заказе).
+//
+// ПОДТВЕРЖДЕНО backend'ом: ключ строки — item_id (не ml_import_item_id, как
+// предполагалось изначально).
+export interface ConfirmMlImportKitSelection {
+  item_id: number;
+  components: {
+    component_product_id: number;
+    quantity: number;
+    // Себестоимость компонента > 0 в теле confirm побеждает сохранённую в
+    // черновике — см. приоритет на backend в ConfirmMlImportPayload.
+    price_cost?: number | null;
+  }[];
+}
+
+// ПОДТВЕРЖДЕНО backend'ом: confirm_ml_import ожидает kit_selections с ровно
+// одной записью на КАЖДУЮ строку черновика, у которой selected_product_id
+// указывает на товар с is_kit=true — backend не подставляет состав
+// комплекта по умолчанию сам и отвечает 400, если строка-комплект осталась
+// без записи. Поэтому ProjectPage.tsx обязан прислать запись для каждой
+// такой строки, даже если ПМ не трогал кит-пикер и строка осталась на
+// предзаполненном по умолчанию составе (см. buildKitSelectionsPayload).
+export interface ConfirmMlImportPayload {
+  kit_selections?: ConfirmMlImportKitSelection[];
+}
+
 export async function confirmMlImport(
   importId: number,
+  payload?: ConfirmMlImportPayload,
 ): Promise<MlImportCreateResponse> {
   const { data } = await api.post<MlImportCreateResponse>(
     `/ml-imports/${importId}/confirm`,
+    payload ?? {},
   );
 
   return data;
@@ -477,6 +757,33 @@ export interface WarehouseIncomeInput {
 
 export const postWarehouseIncome = async (payload: WarehouseIncomeInput) => {
   const { data } = await api.post("/warehouse/income", payload);
+  return data;
+};
+
+// ==========================================
+// ЗАЯВКА НА ПРИХОД (ПМ вносит товары без ID, кладовщик подтверждает как обычный приход)
+// ==========================================
+
+export interface WarehouseIncomeRequestItem {
+  product_name: string;
+  quantity: number;
+  // Заполняются, когда заявка создаётся из отклонённой позиции прихода
+  // (см. WarehousePage: deny → IncomeRequestModal с prefill) — связывают
+  // новую заявку с проектом/строкой проекта, ради которой её пересоздают.
+  // Опциональны: обычная "Заявка на приход" с дашборда их не передаёт.
+  project_id?: number;
+  project_item_id?: number;
+}
+
+export interface WarehouseIncomeRequestInput {
+  warehouse_id: number;
+  items: WarehouseIncomeRequestItem[];
+}
+
+export const postWarehouseIncomeRequest = async (
+  payload: WarehouseIncomeRequestInput
+): Promise<WarehouseReceiptResponse[]> => {
+  const { data } = await api.post<WarehouseReceiptResponse[]>("/warehouse/income-request", payload);
   return data;
 };
 
@@ -785,7 +1092,7 @@ export interface SupplierInfo {
   supplier_name: string;
 }
 
-export interface ProjectItemResponse {
+export interface ProjectItemResponse extends ProjectItemKitFields {
   id: number;
   required_quantity: number | null;
   cost_price: number | string;
@@ -853,6 +1160,171 @@ export async function updateProjectItemSupplier(
   }
 }
 
+export interface UpdateProjectItemCostPricePayload {
+  cost_price: number;
+}
+
+// Себестоимость позиции теперь выставляется в Закупках (ProcurementPage),
+// не на ProjectPage — см. перенос cost_price/supplier. Работает только для
+// проекта в статусе "Активный закуп" (иначе 409) и не для позиции комплекта
+// (kit_group_key — для них 400, см. updateKitGroupCostPrice).
+export async function updateProjectItemCostPrice(
+  projectId: number | string,
+  itemId: number,
+  payload: UpdateProjectItemCostPricePayload,
+): Promise<ProjectItemResponse> {
+  try {
+    const { data } = await api.patch<ProjectItemResponse>(
+      `/project-items/${projectId}/${itemId}/cost-price`,
+      payload,
+    );
+    return data;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const detail = error.response?.data?.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        throw new Error(detail);
+      }
+    }
+    throw error;
+  }
+}
+
+export interface UpdateKitGroupCostPricePayload {
+  cost_price: number;
+}
+
+// Себестоимость комплекта ЦЕЛИКОМ (не по отдельному компоненту) — backend
+// перераспределяет её по компонентам и возвращает их обновлённый массив.
+export async function updateKitGroupCostPrice(
+  projectId: number | string,
+  kitGroupKey: string,
+  payload: UpdateKitGroupCostPricePayload,
+): Promise<ProjectItemResponse[]> {
+  try {
+    const { data } = await api.patch<ProjectItemResponse[]>(
+      `/projects/${projectId}/kit-groups/${encodeURIComponent(kitGroupKey)}/cost-price`,
+      payload,
+    );
+    return data;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const detail = error.response?.data?.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        throw new Error(detail);
+      }
+    }
+    throw error;
+  }
+}
+
+// cost_price — сырой ответ бэкенда: FastAPI/Pydantic может сериализовать
+// Decimal и как число, и как строку, поэтому здесь оба варианта. Приведение
+// к number — на стороне вызывающего кода (см. loadLastPurchaseHints в
+// ProcurementPage.tsx), не здесь.
+export interface LastPurchaseHint {
+  cost_price: number | string;
+  supplier_name: string;
+  purchased_at: string;
+}
+
+// Подсказка "Последняя закупка" в ячейке цены (ProcurementPage). Контракт
+// может быть ещё не задеплоен на бэке — вызывающая сторона должна сама
+// молча проглатывать ошибку (без toast, без блокировки страницы).
+export async function fetchLastPurchasePrices(
+  projectId: number | string,
+): Promise<Record<string, LastPurchaseHint>> {
+  const { data } = await api.get<{ items: Record<string, LastPurchaseHint> }>(
+    `/projects/${projectId}/last-purchase-prices`,
+  );
+  return data.items;
+}
+
+// ==========================================
+// СВОДНАЯ ЗАКУПКА (одинаковые товары суммируются по всем проектам)
+// ==========================================
+
+export type ProcurementSummaryStage = "to_buy" | "partially_ordered" | "ordered";
+
+export interface ProcurementSummaryProjectRow {
+  project_id: number;
+  project_name: string;
+  item_id: number;
+  quantity: number;
+  supplier: string | null;
+  price_cost: number | string | null;
+  kit_name?: string | null;
+  kit_quantity?: number | string | null;
+  ordered_quantity?: number | string | null;
+  to_buy_quantity?: number | string | null;
+  stage?: ProcurementSummaryStage;
+}
+
+export interface ProcurementSummaryItem {
+  product_id: number;
+  product_name: string;
+  unit: string | null;
+  total_quantity: number;
+  projects_count: number;
+  price_min: number;
+  price_max: number;
+  suppliers: string[];
+  available_stock: number;
+  unit_conflict: boolean;
+  projects: ProcurementSummaryProjectRow[];
+  ordered_quantity?: number | string | null;
+  to_buy_quantity?: number | string | null;
+}
+
+export interface ProcurementSummaryResponse {
+  items: ProcurementSummaryItem[];
+  totals: {
+    products_count: number;
+    projects_count: number;
+    hidden_ordered_products?: number;
+  };
+}
+
+export const fetchProcurementSummary = async (
+  includeOrdered = false
+): Promise<ProcurementSummaryResponse> => {
+  const { data } = await api.get<ProcurementSummaryResponse>("/procurement/summary", {
+    params: { include_ordered: includeOrdered },
+  });
+  return data;
+};
+
+export interface PatchKitGroupPricesPayload {
+  sale_price?: number;
+  cost_price?: number;
+}
+
+// Комдир правит цену/себестоимость комплекта ЦЕЛИКОМ (не по отдельному
+// компоненту) — backend сам перераспределяет их по компонентам. Форма
+// ответа не гарантирована, поэтому после успеха всегда перечитываем позиции
+// проекта заново (см. вызовы fetchProjectItems в ProjectPage.tsx), а не
+// полагаемся на тело этого ответа.
+export async function patchKitGroupPrices(
+  projectId: number | string,
+  kitGroupKey: string,
+  payload: PatchKitGroupPricesPayload,
+): Promise<void> {
+  try {
+    await api.patch(
+      `/projects/${projectId}/kit-groups/${encodeURIComponent(kitGroupKey)}/prices`,
+      payload,
+    );
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const detail = error.response?.data?.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        throw new Error(detail);
+      }
+    }
+    throw error;
+  }
+}
+
 // ==========================================
 // DASHBOARD WIDGETS
 // ==========================================
@@ -886,23 +1358,35 @@ export const signProjectContract = async (projectId: number) => {
   return data;
 };
 
+// Известные значения статуса прихода — "denied" отдельный от "cancelled":
+// cancelled выставляет кладовщик (handleToggleCancel), denied — ПМ через
+// новую кнопку "Отклонить" (denyIncomeReceipt). string & {} сохраняет
+// автодополнение по литералам, не запрещая прочие значения с бэкенда.
+export type ReceiptStatus = "pending" | "arrived" | "cancelled" | "denied" | (string & {});
+
 export interface WarehouseReceiptResponse {
   id: number;
   receipt_number?: string;
   project_id?: number;
   project_name?: string;
   date: string;
-  supplier_id: number;
-  product_id: number;
+  supplier_id: number | null;
+  product_id: number | null;
   warehouse_id?: number | null;
   quantity: number;
-  status: string;
+  status: ReceiptStatus;
   actual_quantity?: number | null;
   photo_path?: string | null;
   warehouse_comment?: string | null;
   confirmed_at?: string | null;
   defective_quantity?: number;      // добавить, если нет
   defect_resolved?: boolean;        // добавить, если нет
+  supplier_raw_name?: string | null; // заявка на приход: поставщик ещё не назначен, только сырое название
+  source?: string | null;            // например, "income_request" — заявка ПМ, а не обычный приход
+  kit_group_key?: string | null;
+  kit_name?: string | null;
+  kit_quantity?: number | string | null;
+  quantity_per_kit?: number | string | null;
   supplier?: {
     id: number;
     supplier_name: string;
@@ -936,6 +1420,21 @@ export async function setReceiptCancelled(
   const { data } = await api.patch<WarehouseReceiptResponse>(
     `/warehouse/receipts/${receiptId}/cancel`,
     { is_cancelled: isCancelled }
+  );
+  return data;
+}
+
+// ==========================================
+// ОТКЛОНЕНИЕ ПРИХОДА ПМ-ом (для роли "pm"/"admin", в отличие от отмены
+// кладовщиком выше)
+// Подтверждено бэкендом: эндпоинт без тела — только id в пути.
+// ==========================================
+
+export async function denyIncomeReceipt(
+  receiptId: number
+): Promise<WarehouseReceiptResponse> {
+  const { data } = await api.patch<WarehouseReceiptResponse>(
+    `/warehouse/receipts/${receiptId}/deny`
   );
   return data;
 }
@@ -1035,6 +1534,10 @@ export interface ShipmentPendingItem {
   quantity: number;
   unit: string;
   available_warehouses: ShipmentPendingWarehouseOption[];
+  kit_group_key?: string | null;
+  kit_name?: string | null;
+  kit_quantity?: number | string | null;
+  quantity_per_kit?: number | string | null;
 }
 
 export interface ShipmentPendingProject {
@@ -1319,4 +1822,25 @@ export async function deleteNote(noteId: string): Promise<void> {
 export async function fetchProducts(): Promise<ProductInfo[]> {
   const { data } = await api.get<ProductInfo[]>("/products/");
   return data;
+}
+
+export interface ProductSearchResult {
+  id: number;
+  name: string;
+  unit: string | null;
+  available_quantity: number;
+}
+
+// Поиск товара по названию для комбобокса «Заявка на склад» — в отличие от
+// fetchProducts (весь каталог целиком), фильтрует и считает остаток на
+// бэкенде.
+export async function searchProducts(query: string): Promise<ProductSearchResult[]> {
+  try {
+    const { data } = await api.get<ProductSearchResult[]>("/products/search", {
+      params: { q: query },
+    });
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось выполнить поиск товара");
+  }
 }

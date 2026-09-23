@@ -430,6 +430,7 @@ const handleSave = async () => {
           planned_margin: 0,
           deadline: projectForm.deadline,
           is_express: isContractMode,
+          is_warehouse_request: isManualMode,
         }
       : {
           is_new_client: false,
@@ -443,6 +444,7 @@ const handleSave = async () => {
           planned_margin: 0,
           deadline: projectForm.deadline,
           is_express: isContractMode,
+          is_warehouse_request: isManualMode,
         };
 
     console.log("Создание проекта, payload:", payload);
@@ -629,7 +631,7 @@ const handleSave = async () => {
               onClick={() => { setModalMode("manual"); setIsKpModalOpen(true); }}
               className="flex items-center gap-1.5 px-4 py-2 bg-card border border-border text-foreground text-sm font-medium rounded-lg hover:bg-muted transition-colors"
             >
-              <FilePlus size={14} /> Пустой проект
+              <FilePlus size={14} /> Заявка на склад
             </button>
             {/* NEW: экспресс-поток. Договор уже подписан и согласован —
                 проект минует КП, Комдира и клиента и после подтверждения
@@ -984,6 +986,11 @@ const handleSave = async () => {
       {statsError && (
         <p className="text-xs text-destructive mb-4">{statsError}</p>
       )}
+      {stats?.items_total != null && stats.items_total > 0 && (
+        <p className="text-xs text-muted-foreground -mt-3 mb-4">
+          Себестоимость указана у {stats.items_with_cost ?? 0} из {stats.items_total} позиций
+        </p>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         <RevenueTrendWidget />
@@ -1119,9 +1126,14 @@ const handleSave = async () => {
 
                           {/* Бюджет: сумма (кол-во * себестоимость) по позициям проекта —
                               считается на бэкенде (project_service._get_budget_map),
-                              а не invoice.amount (тот всегда 0, см. handleSave payload) */}
+                              а не invoice.amount (тот всегда 0, см. handleSave payload).
+                              0/отсутствует — себестоимость ещё не проставлена в Закупках. */}
                           <td className="px-4 py-3 text-sm text-foreground font-mono text-right">
-                              {fmt(Number(p.budget ?? 0))}
+                              {Number(p.budget ?? 0) > 0 ? (
+                                  fmt(Number(p.budget))
+                              ) : (
+                                  <span title="Себестоимость ещё не указана">—</span>
+                              )}
                           </td>
 
                           {/* Дедлайн */}
