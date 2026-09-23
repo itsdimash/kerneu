@@ -18,7 +18,10 @@ import {
   uploadProjectDocument,
   deleteProjectDocument,
   markContractUploaded,
+  type ProjectDocumentResponse,
 } from "../api/api";
+import { type OnecDocType } from "../api/onec";
+import { OnecDocumentSearchModal } from "./OnecDocumentSearchModal";
 
 const API_BASE = "/api/v1";
 
@@ -79,6 +82,9 @@ export function DocumentsPage({
 
   const [uploadingPoa, setUploadingPoa] = useState(false);
   const [uploadingWaybill, setUploadingWaybill] = useState(false);
+  // Счёт на оплату покупателю — новая, необязательная категория (см.
+  // paymentInvoicePlaceholder ниже).
+  const [uploadingPaymentInvoice, setUploadingPaymentInvoice] = useState(false);
   // Финальный (проверенный/исправленный) файл договора загружается здесь, а
   // не на странице "Договор". Генерация черновика происходит на странице
   // "Договор" (PM, бухгалтер, директор), а сюда приносят уже готовый,
@@ -364,6 +370,10 @@ export function DocumentsPage({
   const poaDocs     = allDocs.filter(d => d.category === "power_of_attorney");
   const waybillDocs = allDocs.filter(d => d.category === "waybill");
   const invoiceDocs = allDocs.filter(d => d.category === "invoice");
+  // Счета на оплату покупателю — необязательный документ (см. комментарий
+  // у paymentInvoicePlaceholder), поэтому в отличие от invoiceDocs не
+  // участвует ни в invoiceRequired, ни в requiredDocCount/doneDocCount ниже.
+  const paymentInvoiceDocs = allDocs.filter(d => d.category === "payment_invoice");
 
   // ИСПРАВЛЕНО: было ниже, но использовалось выше (displayDocs) — const не
   // хостится в TS/JS, нужно объявить перед первым использованием.
@@ -400,8 +410,27 @@ export function DocumentsPage({
   const invoicePlaceholder: ProjectDocument = {
     id: "invoice-placeholder",
     projectId: selectedProjectId,
-    name: "Счета на оплату",
+    // ПЕРЕИМЕНОВАНО: было "Счета на оплату" — путалось с новой категорией
+    // "payment_invoice" (счёт на оплату ПОКУПАТЕЛЮ, см. paymentInvoicePlaceholder
+    // ниже). Этот документ приходит из закупки у поставщика, поэтому теперь
+    // явно назван "поставщику".
+    name: "Существующий счет на оплату поставщику",
     category: "invoice" as DocCategory,
+    status: "pending" as DocStatus,
+    date: "",
+    required: false,
+  };
+  // НОВОЕ: счёт на оплату ПОКУПАТЕЛЮ (category="payment_invoice") — в
+  // отличие от invoicePlaceholder выше (счёт от поставщика, приходит из
+  // закупки автоматически), этот загружается тем же способом, что и
+  // доверенность/накладная — вручную или из 1С (Document_СчетНаОплатуПокупателю,
+  // см. generator.py/client.py). НЕ входит в requiredDocCount/doneDocCount —
+  // необязателен для завершения проекта.
+  const paymentInvoicePlaceholder: ProjectDocument = {
+    id: "payment-invoice-placeholder",
+    projectId: selectedProjectId,
+    name: "Счет на оплату",
+    category: "payment_invoice" as DocCategory,
     status: "pending" as DocStatus,
     date: "",
     required: false,
@@ -424,6 +453,11 @@ export function DocumentsPage({
   // никогда не закроется.
   if (invoiceDocs.length === 0 && invoiceRequired) displayDocs.push(invoicePlaceholder);
   if (waybillDocs.length === 0) displayDocs.push(waybillPlaceholder);
+  // Показываем строку "Счет на оплату" в общем списке всегда (как
+  // накладные/доверенности) — но, в отличие от них, этот документ
+  // необязателен, поэтому не участвует в прогрессе/блокировке завершения
+  // проекта (см. requiredDocCount/doneDocCount ниже).
+  if (paymentInvoiceDocs.length === 0) displayDocs.push(paymentInvoicePlaceholder);
 
   const contractUploaded = contractDoc?.status === "uploaded";
   const poaUploaded      = poaDocs.some(d => d.status === "uploaded");
@@ -465,6 +499,7 @@ export function DocumentsPage({
 
   const poaFileRef = useRef<HTMLInputElement>(null);
   const waybillFileRef = useRef<HTMLInputElement>(null);
+  const paymentInvoiceFileRef = useRef<HTMLInputElement>(null);
   const contractFileRef = useRef<HTMLInputElement>(null);
 
   const today = () => new Date().toLocaleDateString("ru-RU");
@@ -472,6 +507,23 @@ export function DocumentsPage({
   // Кастомное модальное окно подтверждения удаления (вместо window.confirm)
   const [docToDelete, setDocToDelete] = useState<ProjectDocument | null>(null);
   const [deletingDoc, setDeletingDoc] = useState(false);
+
+  // Модалка «Загрузить из 1С» — общая для накладной/доверенности/счёта,
+  // тип и подпись передаются при открытии в зависимости от того, какую
+  // карточку нажали.
+  const [onecModal, setOnecModal] = useState<{ docType: OnecDocType; docLabel: string } | null>(null);
+
+  const handleOnecDocumentLinked = (docType: OnecDocType, doc: ProjectDocumentResponse) => {
+    documentsStore.addDocument(selectedProjectId, {
+      id: `backend-${doc.id}`,
+      name: doc.name,
+      category: docType as DocCategory,
+      status: "uploaded",
+      date: today(),
+      fileName: doc.file_name,
+      backendDocument: doc,
+    });
+  };
 
   const handleDeleteDoc = (doc: ProjectDocument) => {
     if (docsLocked) return;
@@ -548,6 +600,19 @@ export function DocumentsPage({
     const file = e.target.files?.[0];
     if (file) await handleDocUpload(file, "waybill", "Накладная", waybillDocs.length, setUploadingWaybill);
     if (waybillFileRef.current) waybillFileRef.current.value = "";
+  };
+
+  const handlePaymentInvoiceDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    if (docsLocked || uploadingPaymentInvoice) return;
+    const file = e.dataTransfer.files?.[0];
+    if (file) await handleDocUpload(file, "payment_invoice", "Счет на оплату", paymentInvoiceDocs.length, setUploadingPaymentInvoice);
+  };
+  const handlePaymentInvoiceInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (docsLocked || uploadingPaymentInvoice) return;
+    const file = e.target.files?.[0];
+    if (file) await handleDocUpload(file, "payment_invoice", "Счет на оплату", paymentInvoiceDocs.length, setUploadingPaymentInvoice);
+    if (paymentInvoiceFileRef.current) paymentInvoiceFileRef.current.value = "";
   };
 
   // Финальный (проверенный/отредактированный) файл договора загружается
@@ -726,6 +791,7 @@ export function DocumentsPage({
     if (category === "contract")          return <Handshake  size={14} className="text-emerald-500 dark:text-emerald-400"/>;
     if (category === "invoice")           return <FileCheck  size={14} className="text-amber-500 dark:text-amber-400"  />;
     if (category === "waybill")           return <ReceiptIcon size={14} className="text-purple-500 dark:text-purple-400" />;
+    if (category === "payment_invoice")   return <FileCheck  size={14} className="text-teal-500 dark:text-teal-400"   />;
     if (category === "power_of_attorney") return <Lock       size={14} className="text-destructive"    />;
     return <FileText size={14} className="text-muted-foreground" />;
   };
@@ -1085,11 +1151,22 @@ export function DocumentsPage({
           </div>
 
           {!reviewInFlight && reviewStage !== "approved" && !completed && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {/* Доверенность: Dropzone */}
             <div className="bg-card rounded-lg border border-border p-4">
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                <Lock size={14} className="text-destructive" />Доверенности
+              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2">
+                  <Lock size={14} className="text-destructive" />Доверенности
+                </span>
+                {!docsLocked && (
+                  <button
+                    type="button"
+                    onClick={() => setOnecModal({ docType: "power_of_attorney", docLabel: "Доверенность" })}
+                    className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                  >
+                    <Download size={12} />Из 1С
+                  </button>
+                )}
               </h3>
               <div className="relative w-full group">
               <div
@@ -1132,8 +1209,19 @@ export function DocumentsPage({
 
             {/* Накладные: Dropzone */}
             <div className="bg-card rounded-lg border border-border p-4">
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                <ReceiptIcon size={14} className="text-purple-500 dark:text-purple-400" />Накладные
+              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2">
+                  <ReceiptIcon size={14} className="text-purple-500 dark:text-purple-400" />Накладные
+                </span>
+                {!docsLocked && (
+                  <button
+                    type="button"
+                    onClick={() => setOnecModal({ docType: "waybill", docLabel: "Накладная" })}
+                    className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                  >
+                    <Download size={12} />Из 1С
+                  </button>
+                )}
               </h3>
               <div className="relative w-full group">
               <div
@@ -1157,6 +1245,63 @@ export function DocumentsPage({
                     {uploadsLocked ? "до подписания договора" : "проверка документов"}
                   </p>
                 ) : uploadingWaybill ? (
+                  <p className="text-xs text-muted-foreground">Загрузка...</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    <span className="text-primary">Выберите файл</span>
+                    <br />
+                    или перетащите — можно несколько
+                  </p>
+                )}
+              </div>
+              {uploadsLocked && (
+                <div className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 -translate-y-[calc(100%+8px)] whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 z-10">
+                  Доступно только после подписания договора
+                </div>
+              )}
+              </div>
+            </div>
+
+            {/* Счет на оплату (покупателю): Dropzone — необязательный документ,
+                не входит в прогресс/блокировку завершения проекта, в отличие
+                от доверенности и накладной выше. */}
+            <div className="bg-card rounded-lg border border-border p-4">
+              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2">
+                  <FileCheck size={14} className="text-teal-500 dark:text-teal-400" />Счет на оплату покупателю
+                </span>
+                {!docsLocked && (
+                  <button
+                    type="button"
+                    onClick={() => setOnecModal({ docType: "payment_invoice", docLabel: "Счет на оплату покупателю" })}
+                    className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                  >
+                    <Download size={12} />Из 1С
+                  </button>
+                )}
+              </h3>
+              <div className="relative w-full group">
+              <div
+                onDragOver={e => { if (!docsLocked) e.preventDefault(); }}
+                onDrop={handlePaymentInvoiceDrop}
+                onClick={() => !docsLocked && paymentInvoiceFileRef.current?.click()}
+                className={`flex flex-col items-center justify-center gap-1.5 min-h-[112px] w-full px-4 rounded-lg border-2 border-dashed text-center transition-all ${
+                  docsLocked || uploadingPaymentInvoice
+                    ? "border-border bg-background cursor-not-allowed"
+                    : "border-border hover:border-primary/40 hover:bg-accent/40 cursor-pointer"
+                }`}
+              >
+                <input ref={paymentInvoiceFileRef} type="file" className="hidden" onChange={handlePaymentInvoiceInput} />
+                {docsLocked || uploadingPaymentInvoice
+                  ? (uploadingPaymentInvoice ? <Loader2 size={18} className="text-blue-500 dark:text-blue-400 animate-spin" /> : <Lock size={18} className="text-muted-foreground" />)
+                  : <Upload size={18} className="text-muted-foreground" />}
+                {docsLocked ? (
+                  <p className="text-xs text-muted-foreground">
+                    <span className="font-medium text-muted-foreground">Недоступно</span>
+                    <br />
+                    {uploadsLocked ? "до подписания договора" : "проверка документов"}
+                  </p>
+                ) : uploadingPaymentInvoice ? (
                   <p className="text-xs text-muted-foreground">Загрузка...</p>
                 ) : (
                   <p className="text-xs text-muted-foreground">
@@ -1338,6 +1483,24 @@ export function DocumentsPage({
           </div>
         </div>
       </div>
+    )}
+
+    {onecModal && (
+      <OnecDocumentSearchModal
+        open
+        onClose={() => setOnecModal(null)}
+        docType={onecModal.docType}
+        docLabel={onecModal.docLabel}
+        projectId={selectedProjectId}
+        // БИН клиента нигде не доступен на фронте прямо сейчас (project.name —
+        // это имя проекта, не БИН). ПМ вводит вручную, пока не появится
+        // источник (см. design doc, п.1 — модель Project/Client).
+        defaultBinIin=""
+        onLinked={(doc) => {
+          handleOnecDocumentLinked(onecModal.docType, doc);
+          setOnecModal(null);
+        }}
+      />
     )}
     </>
   );
