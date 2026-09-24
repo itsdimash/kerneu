@@ -18,6 +18,7 @@ import {
   Truck,
   Handshake,
   Trash2,
+  RotateCcw,
 } from "lucide-react";
 import {
   type SystemNotification,
@@ -56,6 +57,7 @@ export const CATEGORY_META: Record<
   docs_pending_director: { icon: FileCheck2, ...INFO, label: "Документы на проверку" },
   docs_approved: { icon: ThumbsUp, ...SUCCESS, label: "Документы согласованы" },
   docs_rejected: { icon: FileX2, ...DESTRUCTIVE, label: "Документы отклонены" },
+  project_reverted: { icon: RotateCcw, ...WARNING, label: "Откат в редактирование" },
   parse_job_done: { icon: FileCheck2, ...SUCCESS, label: "Файл обработан" },
   parse_job_failed: { icon: FileX2, ...DESTRUCTIVE, label: "Ошибка обработки" },
 };

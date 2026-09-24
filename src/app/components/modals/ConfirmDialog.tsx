@@ -11,6 +11,8 @@ type ConfirmDialogProps = {
   /** danger — красная кнопка и иконка корзины; primary — обычная */
   tone?: "danger" | "primary";
   loading?: boolean;
+  /** Блокирует кнопку подтверждения независимо от loading — для форм с обязательными полями внутри children */
+  confirmDisabled?: boolean;
   error?: string | null;
   onConfirm: () => void;
   onCancel: () => void;
@@ -28,6 +30,7 @@ export function ConfirmDialog({
   cancelLabel = "Отмена",
   tone = "danger",
   loading = false,
+  confirmDisabled = false,
   error = null,
   onConfirm,
   onCancel,
@@ -108,7 +111,7 @@ export function ConfirmDialog({
             <button
               type="button"
               onClick={onConfirm}
-              disabled={loading}
+              disabled={loading || confirmDisabled}
               className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg text-white shadow-sm transition-colors disabled:opacity-60 focus:outline-none focus-visible:ring-2 ${
                 isDanger
                   ? "bg-red-600 hover:bg-red-700 focus-visible:ring-red-500/40"

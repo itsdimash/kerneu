@@ -3,6 +3,7 @@ import { PageWrap } from "../app/components/common/PageWrap";
 import { ShipmentModal } from "../app/components/modals/ShipmentModal";
 import { IncomeRequestModal, IncomeRequestPrefill } from "../app/components/modals/IncomeRequestModal";
 import { ConfirmDialog } from "../app/components/modals/ConfirmDialog";
+import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
 import {
   Search,
   AlertTriangle,
@@ -2029,6 +2030,29 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                         <span className="px-2.5 py-1 text-xs font-semibold bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 rounded-full flex items-center gap-1">
                           <PackageCheck size={12} /> Зарезервировано
                         </span>
+                        {/* GET /warehouse/shipments/pending не отдаёт status проекта —
+                            сам факт присутствия в этом списке означает, что проект уже
+                            на этапе "На отгрузке" (иначе он не попал бы в pending-выборку
+                            бэкенда), поэтому currentStatus передаём фиксированным. */}
+                        <div onClick={(e) => e.stopPropagation()}>
+                          <ProjectRevertControl
+                            projectId={proj.projectId}
+                            currentStatus="На отгрузке"
+                            onReverted={async () => {
+                              // Сразу убираем строку локально — не ждём
+                              // ответа рефетча, чтобы проект не "висел" на
+                              // экране лишний цикл сети. loadPendingShipments
+                              // ниже подтягивает настоящее состояние с
+                              // backend и служит источником истины: если
+                              // проект туда вернётся, это будет означать,
+                              // что backend не снял резерв при откате.
+                              setPendingShipments((prev) =>
+                                prev.filter((p) => p.projectId !== proj.projectId),
+                              );
+                              await loadPendingShipments();
+                            }}
+                          />
+                        </div>
                       </div>
                     </div>
 
