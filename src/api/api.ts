@@ -1140,6 +1140,7 @@ export interface ProductInfo {
 export interface StatusInfo {
   id: number;
   status_name: string;
+  color?: string;
 }
 
 export interface SupplierInfo {

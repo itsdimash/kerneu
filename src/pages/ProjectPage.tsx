@@ -59,6 +59,30 @@ import { FixProductButton } from "../app/components/common/FixProductButton";
 import { ML_STATUS_STYLES, UNKNOWN_ML_STATUS_STYLE, normalizeMlStatus } from "../lib/stockStatus";
 import { groupEntriesByKit } from "../lib/kitGroups";
 
+// Бейдж статуса item в таблицах позиций (renderLiveItemRow/renderDirectorItemRow).
+// Красится по item.status.color с backend, если он есть (фон — цвет с низкой
+// альфой через hex-суффикс "1a", текст/бордер — сам цвет). Если color не пришёл
+// (старые данные до миграции), используется прежний бинарный фолбэк:
+// зелёный для "На складе", янтарный для всех остальных статусов.
+const ItemStatusBadge = ({ statusName, color }: { statusName: string; color?: string | null }) => {
+  if (color) {
+    return (
+      <span
+          className="inline-flex px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap"
+          style={{ backgroundColor: `${color}1a`, color, boxShadow: `inset 0 0 0 1px ${color}33` }}>
+        {statusName}
+      </span>
+    );
+  }
+  const isInStock = statusName === "На складе";
+  return (
+    <span
+        className={`inline-flex px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap ${isInStock ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200"}`}>
+      {statusName}
+    </span>
+  );
+};
+
 // Достаёт читаемые текстовые подсказки из similar_variants — ML отдаёт
 // их из внешнего Excel-файла в произвольном виде (иногда структурированные
 // объекты, иногда просто нераспарсенный текст в raw_value), без id из
@@ -2003,7 +2027,6 @@ export function ProjectPagePM({
                     const total = item.total_sum != null ? Number(item.total_sum) : qty * price;
                     const isEditedByDirector = Boolean((item as { edited_by_director?: boolean }).edited_by_director);
                     const stockStatusName = item.status?.status_name ?? "—";
-                    const isInStock = stockStatusName === "На складе";
                     // Компонент комплекта: визуально с отступом, с подписью
                     // количества "в комплекте" под наименованием — те же
                     // данные, что и у обычной позиции, просто сгруппированы
@@ -2048,10 +2071,7 @@ export function ProjectPagePM({
                           )}
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1.5">
-                              <span
-                                  className={`inline-flex px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap ${isInStock ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200"}`}>
-                                {stockStatusName}
-                              </span>
+                              <ItemStatusBadge statusName={stockStatusName} color={item.status?.color} />
                               {isEditedByDirector && (
                                 <span title="Изменено Комдиром">
                                   <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
@@ -3660,7 +3680,6 @@ const [itemSaveError, setItemSaveError] =
               const isSaving = updatingItemId === item.id;
               const disabled = !canEditItems || isSaving;
               const stockStatusName = item.status?.status_name ?? "—";
-              const isInStock = stockStatusName === "На складе";
               // Компонент комплекта: цена/себестоимость правятся только на
               // уровне комплекта (см. KitGroupHeaderRow) — здесь только
               // отображение уже распределённых (allocated) значений.
@@ -3733,10 +3752,7 @@ const [itemSaveError, setItemSaveError] =
                         <Loader2 size={16} className="animate-spin text-primary" />
                       ) : (
                         <div className="flex items-center gap-1.5">
-                          <span
-                              className={`inline-flex px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap ${isInStock ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200"}`}>
-                            {stockStatusName}
-                          </span>
+                          <ItemStatusBadge statusName={stockStatusName} color={item.status?.color} />
                           {isEditedByDirector && (
                             <span title="Изменено Комдиром">
                               <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
