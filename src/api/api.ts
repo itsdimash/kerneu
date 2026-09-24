@@ -845,6 +845,65 @@ export async function rejectProjectDirector(projectId: number, reason?: string):
 }
 
 // ==========================================
+// ОТКАТ ПРОЕКТА ИЗ "Активный закуп"/"На отгрузке" В "В редактировании"
+// ==========================================
+
+// reason === "shipped" — по проекту уже была отгрузка, откат недоступен
+// (кнопка должна быть скрыта на фронте). reason === "received" — приход по
+// проекту уже приняли на склад, откат возможен, но фронт обязан взять с
+// пользователя доп. подтверждение (acknowledged_receipt). reason === null —
+// откат ничем не осложнён (обычный случай для "Активный закуп" до прихода).
+export interface ProjectRevertEligibility {
+  reason: "shipped" | "received" | null;
+}
+
+export async function getProjectRevertEligibility(
+  projectId: number,
+): Promise<ProjectRevertEligibility> {
+  const { data } = await api.get<ProjectRevertEligibility>(
+    `/projects/${projectId}/revert-eligibility`,
+  );
+  return data;
+}
+
+export interface RevertProjectToEditingPayload {
+  revert_reason: string;
+  // Обязателен и должен быть true, только когда getProjectRevertEligibility
+  // вернул reason === "received" — пользователь явно подтверждает откат,
+  // зная, что приход уже принят на склад.
+  acknowledged_receipt?: boolean;
+}
+
+export async function revertProjectToEditing(
+  projectId: number,
+  payload: RevertProjectToEditingPayload,
+): Promise<WorkflowResponse> {
+  try {
+    const { data } = await api.post<WorkflowResponse>(
+      `/projects/${projectId}/revert-to-editing`,
+      payload,
+    );
+    return data;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const detail = error.response?.data?.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        throw new Error(detail);
+      }
+      // 422 от FastAPI/Pydantic-валидации приходит не строкой, а массивом
+      // {loc, msg, type} — например, если backend изменит минимальную длину
+      // revert_reason и разойдётся с MIN_REVERT_REASON_LENGTH на клиенте.
+      // Без этого пользователь увидел бы голый "Request failed with status
+      // code 422" вместо настоящей причины отказа.
+      if (Array.isArray(detail) && detail.length > 0 && typeof detail[0]?.msg === "string") {
+        throw new Error(detail[0].msg);
+      }
+    }
+    throw error;
+  }
+}
+
+// ==========================================
 // DOCUMENT REVIEW WORKFLOW (страница "Документы": Бухгалтер -> Директор)
 // ==========================================
 
@@ -1172,6 +1231,37 @@ export async function updateProjectItemCostPrice(
   try {
     const { data } = await api.patch<ProjectItemResponse>(
       `/project-items/${projectId}/${itemId}/cost-price`,
+      payload,
+    );
+    return data;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const detail = error.response?.data?.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        throw new Error(detail);
+      }
+    }
+    throw error;
+  }
+}
+
+export interface UpdateProjectItemProductPayload {
+  product_id: number;
+}
+
+// "Исправить товар" — привязка позиции к другому товару каталога независимо
+// от статуса проекта (Variant C: ошибка сопоставления, найденная уже после
+// подтверждения ML-импорта). Backend отклоняет запрос (409/400), если у
+// позиции уже есть приход или строка отгрузки — тогда detail из ответа и
+// показывается пользователю как причина отказа.
+export async function updateProjectItemProduct(
+  projectId: number | string,
+  itemId: number,
+  payload: UpdateProjectItemProductPayload,
+): Promise<ProjectItemResponse> {
+  try {
+    const { data } = await api.patch<ProjectItemResponse>(
+      `/project-items/${projectId}/${itemId}/product`,
       payload,
     );
     return data;

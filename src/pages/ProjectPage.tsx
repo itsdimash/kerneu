@@ -34,6 +34,7 @@ import {
   rejectProjectClient,
   downloadProjectExcel,
   downloadKpDocument,
+  updateProjectItemProduct,
 } from "../api/api";
 
 import type {
@@ -53,6 +54,8 @@ import { ProductSearchCombobox } from "../app/components/ui/product-search-combo
 import { Checkbox } from "../app/components/ui/checkbox";
 import { StockStatusBadge } from "../app/components/common/StockStatusBadge";
 import { KitGroupHeaderRow } from "../app/components/common/KitGroupHeaderRow";
+import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
+import { FixProductButton } from "../app/components/common/FixProductButton";
 import { ML_STATUS_STYLES, UNKNOWN_ML_STATUS_STYLE, normalizeMlStatus } from "../lib/stockStatus";
 import { groupEntriesByKit } from "../lib/kitGroups";
 
@@ -1744,6 +1747,14 @@ export function ProjectPagePM({
                 {isExporting ? "Скачивание..." : "Скачать Excel"}
               </button>
             </AppTooltip>
+            {project && (
+              <ProjectRevertControl
+                projectId={resolvedProjectId}
+                currentStatus={currentStatus}
+                onReverted={async () => { await refreshProject(); }}
+                className="ml-2"
+              />
+            )}
           </div>
         }
     >
@@ -1754,8 +1765,8 @@ export function ProjectPagePM({
                   <div key={step.label} className="flex items-center">
                     <div className="flex flex-col items-center">
                       <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold border-2 transition-colors ${
-                          step.done ? "bg-primary border-primary text-white" : 
-                          step.active ? "bg-card border-primary text-primary" : 
+                          step.done ? "bg-primary border-primary text-white" :
+                          step.active ? "bg-card border-primary text-primary" :
                           "bg-card border-border text-muted-foreground"
                       }`}>
                         {step.done ? <Check size={12}/> : i + 1}
@@ -2004,7 +2015,23 @@ export function ProjectPagePM({
                         <tr key={item.id} className="hover:bg-background/50">
                           <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
                           <td className={`px-4 py-3 text-sm text-foreground ${isKitComponent ? "pl-8 border-l-2 border-border/60" : ""}`}>
-                            {item.product?.name ?? "—"}
+                            <div className="flex items-center gap-1.5">
+                              <span>{item.product?.name ?? "—"}</span>
+                              {!isKitComponent && (
+                                <FixProductButton
+                                  projectId={resolvedProjectId}
+                                  itemId={item.id}
+                                  currentProductId={item.product?.id ?? null}
+                                  currentProductName={item.product?.name ?? ""}
+                                  currentUnit={item.product?.unit ?? null}
+                                  onUpdated={(updated) => {
+                                    setLiveItems((current) =>
+                                      current.map((existing) => existing.id === updated.id ? updated : existing),
+                                    );
+                                  }}
+                                />
+                              )}
+                            </div>
                             {isKitComponent && quantityPerKit > 0 && (
                               <p className="mt-0.5 text-[11px] text-muted-foreground">
                                 × {quantityPerKit.toLocaleString("ru-RU")} в комплекте
@@ -3644,7 +3671,23 @@ const [itemSaveError, setItemSaveError] =
                   <tr key={item.id} className="hover:bg-background/50">
                     <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
                     <td className={`px-4 py-3 text-sm text-foreground ${isKitComponent ? "pl-8 border-l-2 border-border/60" : ""}`}>
-                      {item.product?.name ?? "—"}
+                      <div className="flex items-center gap-1.5">
+                        <span>{item.product?.name ?? "—"}</span>
+                        {!isKitComponent && (
+                          <FixProductButton
+                            projectId={resolvedProjectId}
+                            itemId={item.id}
+                            currentProductId={item.product?.id ?? null}
+                            currentProductName={item.product?.name ?? ""}
+                            currentUnit={item.product?.unit ?? null}
+                            onUpdated={(updated) => {
+                              setProjectItems((current) =>
+                                current.map((existing) => existing.id === updated.id ? updated : existing),
+                              );
+                            }}
+                          />
+                        )}
+                      </div>
                       {isKitComponent && quantityPerKit > 0 && (
                         <p className="mt-0.5 text-[11px] text-muted-foreground">
                           × {quantityPerKit.toLocaleString("ru-RU")} в комплекте
