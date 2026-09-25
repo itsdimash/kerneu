@@ -56,7 +56,7 @@ import { StockStatusBadge } from "../app/components/common/StockStatusBadge";
 import { KitGroupHeaderRow } from "../app/components/common/KitGroupHeaderRow";
 import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
 import { FixProductButton } from "../app/components/common/FixProductButton";
-import { ML_STATUS_STYLES, UNKNOWN_ML_STATUS_STYLE, normalizeMlStatus } from "../lib/stockStatus";
+import { ML_STATUS_STYLES, NEW_PRODUCT_ML_STATUS, UNKNOWN_ML_STATUS_STYLE, normalizeMlStatus } from "../lib/stockStatus";
 import { groupEntriesByKit } from "../lib/kitGroups";
 
 // Бейдж статуса item в таблицах позиций (renderLiveItemRow/renderDirectorItemRow).
@@ -1290,13 +1290,11 @@ export function ProjectPagePM({
     setUnlinkBeforeCreate(item.selected_product_id != null);
     setProductModalItem(item);
     setProductModalForm({
-      // Для привязанной строки в matched_product лежит название товара,
-      // который пользователь как раз считает неподходящим — подставляем
-      // исходное наименование из файла.
-      product_name:
-        item.selected_product_id != null
-          ? item.input_product
-          : item.matched_product?.trim() || item.input_product,
+      // Всегда исходное название из файла, а не ML-предложение
+      // (matched_product / similar_variants) — оно лишь подсказка, а не
+      // подтверждённое название, и пользователь открыл эту модалку именно
+      // потому, что хочет завести товар, а не принять предложение ML.
+      product_name: item.input_product,
       unit: item.unit?.trim() || "шт",
       price: Number(item.price ?? 0) > 0 ? String(item.price) : "",
       is_kit: false,
@@ -2286,11 +2284,23 @@ export function ProjectPagePM({
                                       // с каталогом, а раньше он в suggestionLabels
                                       // не попадал вовсе, поэтому список подсказок
                                       // для новых строк был всегда пуст.
-                                      const suggestionLabels = [
-                                        ...getSimilarVariantLabels(item),
-                                        item.matched_product?.trim() ?? "",
-                                        item.input_product?.trim() ?? "",
-                                      ].filter(Boolean);
+                                      //
+                                      // "Новый товар" (бывшее "Нет в системе
+                                      // (похожие варианты)") — backend всё ещё
+                                      // присылает similar_variants в ответе, но
+                                      // по этому статусу мы уже знаем, что товара
+                                      // нет и что подбирать нечего: секция
+                                      // "Похожие по данным ML" не должна
+                                      // рендериться, пикер сразу открывается на
+                                      // "Весь каталог".
+                                      const isNewProductStatus = normalizedStatus === NEW_PRODUCT_ML_STATUS;
+                                      const suggestionLabels = isNewProductStatus
+                                        ? []
+                                        : [
+                                            ...getSimilarVariantLabels(item),
+                                            item.matched_product?.trim() ?? "",
+                                            item.input_product?.trim() ?? "",
+                                          ].filter(Boolean);
 
                                       const suggested = productCatalog.filter((product) =>
                                         suggestionLabels.some((label) =>
@@ -2352,7 +2362,7 @@ export function ProjectPagePM({
                                               {selectedProductName ??
                                                 (productCatalogLoading
                                                   ? "Загрузка каталога…"
-                                                  : item.matched_product?.trim()
+                                                  : !isNewProductStatus && item.matched_product?.trim()
                                                   ? `Подтвердите: ${item.matched_product.trim()}`
                                                   : "Выберите товар")}
                                             </span>
