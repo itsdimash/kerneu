@@ -126,7 +126,6 @@ export function ProjectRevertControl({
           <div className="space-y-3">
             <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
               <li>Активные резервы склада по этому проекту будут сняты</li>
-              <li>Импорт товаров (ML-импорт) будет переоткрыт для повторного подтверждения — название и состав позиций снова станут редактируемыми</li>
               {requiresReceiptAck && (
                 <li className="text-amber-700 dark:text-amber-300">
                   Приход по этому проекту уже был принят на склад — эти данные откат не восстановит автоматически

@@ -523,29 +523,46 @@ export function ProjectPagePM({
     const storageKey = `project:${resolvedProjectId}:mlImportId`;
     let cancelled = false;
 
-    // Резолвит id ML-импорта для открытого проекта. Обычный путь —
-    // localStorage, записанный на этом же устройстве в момент завершения
-    // парсинга (см. BackgroundJobsContext.tsx). Если записи нет — например,
-    // проект открыт на другом устройстве под тем же аккаунтом, где парсинг
-    // не запускался — идём на backend и ищем черновик по project_id
-    // (GET /ml-imports?project_id=), а найденный id сохраняем в localStorage
-    // и на этом устройстве, чтобы повторные открытия были быстрыми.
+    // Резолвит id ML-импорта для открытого проекта. Источник истины —
+    // ВСЕГДА backend (GET /ml-imports?project_id=, findMlImportsByProject),
+    // localStorage — только акселератор для UI (например, чтобы toast из
+    // BackgroundJobsContext.tsx мог сразу подставить id без похода на
+    // сервер), а не кэш, которому можно доверять бессрочно.
+    //
+    // РАНЬШЕ при непустом localStorage backend-поиск вообще не вызывался —
+    // сохранённый id возвращался немедленно. Это ломало ровно тот сценарий,
+    // ради которого локальный кэш и заводился: если на проекте появлялся
+    // более свежий импорт (переразбор файла, новый черновик, заведённый на
+    // другом устройстве/сессии), устройство со старой записью молча
+    // застревало на устаревшем id навсегда — added-позиции в актуальном
+    // черновике были не видны, а ни 404, ни проверка "относится к проекту"
+    // ниже этого не ловили, потому что project_id у старого и нового
+    // импорта совпадает.
     async function resolveImportId(): Promise<number | null> {
       const savedImportId = localStorage.getItem(storageKey);
       if (savedImportId) {
         const parsed = Number(savedImportId);
         if (!Number.isInteger(parsed) || parsed <= 0) {
-          throw new Error(`Некорректный ID ML-импорта: ${savedImportId}`);
+          // Испорченная запись — не блокируем резолв ошибкой, просто
+          // забываем её и продолжаем так, как будто localStorage был пуст.
+          localStorage.removeItem(storageKey);
         }
-        return parsed;
       }
 
+      // findMlImportsByProject — НЕ список: backend отдаёт один объект
+      // ml-импорта либо null (404 "черновика/проекта нет" гасится внутри
+      // самой функции). Раньше здесь ошибочно ожидался массив-ответ,
+      // из-за чего на любом проекте с черновиком резолв падал с
+      // "Cannot read properties of undefined (reading 'id')", как только
+      // этот вызов перестал прятаться за localStorage.
       const found = await findMlImportsByProject(resolvedProjectId);
-      if (found.length === 0) return null;
+      if (!found) {
+        localStorage.removeItem(storageKey);
+        return null;
+      }
 
-      const importId = found[0].id;
-      localStorage.setItem(storageKey, String(importId));
-      return importId;
+      localStorage.setItem(storageKey, String(found.id));
+      return found.id;
     }
 
     setMlImportLoading(true);
@@ -712,29 +729,6 @@ export function ProjectPagePM({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStatus]);
 
-  useEffect(() => {
-    if (!hasValidProjectId || mlImport?.status !== "confirmed") {
-      setLiveItems([]);
-      return;
-    }
-    let cancelled = false;
-    setLiveItemsLoading(true);
-    setLiveItemsError(null);
-    fetchProjectItems(resolvedProjectId)
-      .then((data) => { if (!cancelled) setLiveItems(data); })
-      .catch((error) => {
-        if (!cancelled) {
-          setLiveItemsError(error instanceof Error ? error.message : "Не удалось загрузить позиции проекта");
-        }
-      })
-      .finally(() => { if (!cancelled) setLiveItemsLoading(false); });
-    return () => { cancelled = true; };
-    // Перечитываем при каждой смене статуса проекта — например, когда
-    // Комдир сохранил правки и/или принял решение, а ПМ уже открыл
-    // страницу и просто ждёт.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedProjectId, hasValidProjectId, mlImport?.status, mlImport?.id, currentStatus]);
-
   const statusToIndex: Record<string, number> = {
     "Новый": 0,
     "Новый проект": 0,
@@ -770,6 +764,39 @@ export function ProjectPagePM({
   const isPendingDirector = currentStatus === "На согласовании у Комдира";
   const isRejected = currentStatus === "Отклонено Комдиром";
   const isApproved = isKpApproved;
+
+  useEffect(() => {
+    if (!hasValidProjectId || !isApproved) {
+      setLiveItems([]);
+      return;
+    }
+    let cancelled = false;
+    setLiveItemsLoading(true);
+    setLiveItemsError(null);
+    fetchProjectItems(resolvedProjectId)
+      .then((data) => { if (!cancelled) setLiveItems(data); })
+      .catch((error) => {
+        if (!cancelled) {
+          setLiveItemsError(error instanceof Error ? error.message : "Не удалось загрузить позиции проекта");
+        }
+      })
+      .finally(() => { if (!cancelled) setLiveItemsLoading(false); });
+    return () => { cancelled = true; };
+    // Перечитываем при каждой смене статуса проекта — например, когда
+    // Комдир сохранил правки и/или принял решение, а ПМ уже открыл
+    // страницу и просто ждёт.
+    //
+    // Триггер — isApproved (статус проекта), а НЕ mlImport?.status ===
+    // "confirmed", как было раньше: GET /ml-imports?project_id= на
+    // backend находит импорт только пока он в статусе draft — после
+    // confirm тот же лукап отдаёт 404 ("нет черновика импорта"), хотя
+    // сам импорт и project_items по нему уже реально существуют.
+    // Из-за этого mlImport после подтверждения становился null, и
+    // liveItems никогда не подгружались, хотя проект уже одобрен и
+    // позиции реально есть — ПМ видел пустую таблицу вместо них.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedProjectId, hasValidProjectId, isApproved, mlImport?.id, currentStatus]);
+
   const sent = isPendingDirector;
   // Генерация КП доступна, пока проект ожидает решения клиента.
   // После «Одобрено клиентом» проект переходит в отдельный статус
@@ -1986,31 +2013,7 @@ export function ProjectPagePM({
                 <Loader2 size={26} className="animate-spin text-primary mb-3" />
                 <p className="text-sm text-muted-foreground">Загружаем результаты ML…</p>
               </div>
-            ) : !mlImport ? (
-              // Проект создан вручную либо импорт ещё не заводился —
-              // вместо тупика даём сразу добавить позицию: черновик
-              // импорта создастся по клику.
-              <div className="bg-card rounded-lg border border-border px-4 py-10 text-center">
-                <p className="text-sm text-muted-foreground">
-                  В проекте пока нет позиций — добавьте их вручную.
-                </p>
-                <button
-                    type="button"
-                    onClick={handleStartAddingRow}
-                    disabled={creatingEmptyImport}
-                    className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-primary border border-dashed border-input rounded-lg hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {creatingEmptyImport ? (
-                    <Loader2 size={15} className="animate-spin"/>
-                  ) : (
-                    <Plus size={15}/>
-                  )}
-                  {creatingEmptyImport ? "Подготовка…" : "Добавить позицию"}
-                </button>
-              </div>
-            ) : (
-              <>
-                {isApproved ? (() => {
+            ) : isApproved ? (() => {
                   // Себестоимость/поставщик/маржа больше не показываются на
                   // ProjectPage ни одной роли — заполняются и видны только
                   // на ProcurementPage (см. перенос cost_price/supplier).
@@ -2162,7 +2165,29 @@ export function ProjectPagePM({
                     </table>
                   </div>
                   );
-                })() : (
+                })() : !mlImport ? (
+                  // Проект создан вручную либо импорт ещё не заводился —
+                  // вместо тупика даём сразу добавить позицию: черновик
+                  // импорта создастся по клику.
+                  <div className="bg-card rounded-lg border border-border px-4 py-10 text-center">
+                    <p className="text-sm text-muted-foreground">
+                      В проекте пока нет позиций — добавьте их вручную.
+                    </p>
+                    <button
+                        type="button"
+                        onClick={handleStartAddingRow}
+                        disabled={creatingEmptyImport}
+                        className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-primary border border-dashed border-input rounded-lg hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {creatingEmptyImport ? (
+                        <Loader2 size={15} className="animate-spin"/>
+                      ) : (
+                        <Plus size={15}/>
+                      )}
+                      {creatingEmptyImport ? "Подготовка…" : "Добавить позицию"}
+                    </button>
+                  </div>
+                ) : (
                 <>
                 <div className="bg-card rounded-lg border border-border overflow-x-auto">
                   <table className={`w-full border-collapse ${isWarehouseRequest ? "min-w-[900px]" : "min-w-[1550px]"}`}>
@@ -2877,8 +2902,6 @@ export function ProjectPagePM({
                   )}
                 </div>
                 </>
-                )}
-              </>
             )}
         </div>
 
@@ -3462,6 +3485,13 @@ const [itemSaveError, setItemSaveError] =
 
   const PENDING_DIRECTOR_STATUS = "На согласовании у Комдира";
   const REJECTED_STATUS = "Отклонено Комдиром";
+  // Первый шаг степпера — ПМ ещё формирует состав проекта и физически не
+  // отправлял его дальше. currentStatus в этом случае не совпадает ни с
+  // PENDING_DIRECTOR_STATUS, ни с REJECTED_STATUS, поэтому decision ниже
+  // раньше молча падал на дефолт `true` — Комдир видел пустую таблицу
+  // позиций и "Проект подтверждён", как будто уже принял решение по
+  // проекту, которого физически ещё не существует.
+  const isBeingEdited = currentStatus === "В редактировании";
 
   const decision: null | boolean =
     currentStatus === REJECTED_STATUS ? false :
@@ -3673,6 +3703,18 @@ const [itemSaveError, setItemSaveError] =
               </div>
             </div>
           )}
+          {isBeingEdited ? (
+            <div className="bg-card rounded-lg border border-border p-10 flex flex-col items-center text-center">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-400/20 flex items-center justify-center mb-3">
+                <Pencil size={18} className="text-blue-600 dark:text-blue-400" />
+              </div>
+              <h3 className="text-sm font-bold text-foreground">Проект пока в разработке</h3>
+              <p className="text-xs text-muted-foreground mt-1 max-w-md">
+                Менеджер вносит позиции — таблица и решение по проекту появятся здесь, как только проект будет отправлен на согласование.
+              </p>
+            </div>
+          ) : (
+          <>
           {(() => {
             // Себестоимость/поставщик/маржа больше не показываются и не
             // редактируются на ProjectPage — заполняются на ProcurementPage.
@@ -3908,6 +3950,8 @@ const [itemSaveError, setItemSaveError] =
                     className="text-sm font-medium text-red-700 dark:text-red-300">Проект отклонён</span></div>
             )}
           </div>
+          </>
+          )}
         </div>
     </PageWrap>
   );
