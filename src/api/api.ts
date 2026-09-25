@@ -437,17 +437,33 @@ export async function getMlImport(
 // project_id → mlImportId, которую фронт обычно кэширует в localStorage
 // устройства-создателя (см. BackgroundJobsContext.tsx), отсутствует на
 // текущем устройстве (открытие проекта в другом браузере/с другого
-// устройства под тем же аккаунтом). Backend возвращает массив, отсортированный
-// так, что самый свежий черновик — первый элемент; пустой массив — черновика
-// у проекта нет.
+// устройства под тем же аккаунтом), а также при каждом резолве —
+// localStorage больше не источник истины (см. resolveImportId в
+// ProjectPage.tsx).
+//
+// ПОДТВЕРЖДЕНО живым backend'ом: эндпоинт НЕ список. Он отдаёт один
+// объект ml-импорта (200), если у проекта есть черновик, либо 404
+// ({"detail": "У проекта id=... нет черновика импорта"} или "Проект
+// с id=... не найден"), если черновика или самого проекта нет. Старая
+// сигнатура (массив, "первый — самый свежий") не соответствовала
+// реальному контракту и после того, как localStorage перестал
+// прикрывать этот вызов, приводила к "Cannot read properties of
+// undefined (reading 'id')" на found[0].id.
 export async function findMlImportsByProject(
   projectId: number | string,
-): Promise<MlImportCreateResponse[]> {
-  const { data } = await api.get<MlImportCreateResponse[]>("/ml-imports", {
-    params: { project_id: projectId },
-  });
+): Promise<MlImportDetailResponse | null> {
+  try {
+    const { data } = await api.get<MlImportDetailResponse>("/ml-imports", {
+      params: { project_id: projectId },
+    });
 
-  return data;
+    return data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 export async function updateMlImportItem(
