@@ -23,6 +23,8 @@ import {
   Trash2,
   ChevronDown,
   Package,
+  Truck,
+  User,
 } from "lucide-react";
 import type { ProjectState, Role } from "../types";
 import {
@@ -46,6 +48,7 @@ import {
   WarehouseReceiptResponse,
   WarehouseInfo,
   ShipmentPendingProject,
+  ShipmentHistoryResponse,
   ReceiptStatus,
 } from "../api/api";
 
@@ -134,13 +137,46 @@ const parseRuDate = (value: string): number => {
   return new Date(Number(y), Number(m) - 1, Number(d)).getTime();
 };
 
-type ShipmentRow = {
+type ShipmentHistoryItemRow = {
   id: number;
+  productName: string;
+  quantity: number;
+  unit: string;
+  // null — легитимное значение для бэкфилл-записей (отгрузки до появления
+  // таблицы shipments): склад тогда не фиксировался. Схлопывать его в
+  // плейсхолдер в маппере нельзя — тогда точка рендера не отличит его от
+  // настоящего названия склада.
+  warehouseName: string | null;
+  kitGroupKey: string | null;
+  kitName: string | null;
+  kitQuantity: number | string | null;
+  quantityPerKit: number | string | null;
+  comment: string | null;
+  photoPath: string | null;
+  shippedBy: string | null;
+  shippedAt: string | null;
+};
+
+type ShipmentRow = {
+  id: number | null;
   projectId: number;
-  date: string;
-  project: string;
-  items: number;
+  projectName: string;
+  // shippedAt хранится сырым ISO (в отличие от ArrivalRow.date, уже
+  // отформатированного) — по нему сортируются группы, dateLabel только для показа.
+  shippedAt: string | null;
+  dateLabel: string;
   status: string;
+  items: ShipmentHistoryItemRow[];
+};
+
+type ShipmentHistoryGroup = {
+  key: string;
+  projectName: string;
+  shipments: ShipmentRow[];
+  itemsCount: number;
+  photosCount: number;
+  lastShipmentLabel: string;
+  lastShipmentTs: number | null;
 };
 
 type PendingShipmentItemRow = {
@@ -296,6 +332,32 @@ function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
     kit_name: item.kit_name ?? null,
     kit_quantity: item.kit_quantity ?? null,
     quantity_per_kit: item.quantity_per_kit ?? null,
+  };
+}
+
+function mapShipment(item: ShipmentHistoryResponse): ShipmentRow {
+  return {
+    id: item.id ?? null,
+    projectId: item.project_id,
+    projectName: item.project_name || `Проект #${item.project_id}`,
+    shippedAt: item.shipped_at ?? null,
+    dateLabel: item.shipped_at ? new Date(item.shipped_at).toLocaleDateString("ru-RU") : "—",
+    status: item.status || "Отгружено",
+    items: (item.items || []).map((it) => ({
+      id: it.id,
+      productName: it.product_name || (it.product_id ? `Товар #${it.product_id}` : "—"),
+      quantity: it.quantity ?? 0,
+      unit: it.unit || "шт",
+      warehouseName: it.warehouse_name || (it.warehouse_id != null ? `Склад №${it.warehouse_id}` : null),
+      kitGroupKey: it.kit_group_key ?? null,
+      kitName: it.kit_name ?? null,
+      kitQuantity: it.kit_quantity ?? null,
+      quantityPerKit: it.quantity_per_kit ?? null,
+      comment: it.comment ?? null,
+      photoPath: it.photo_path ?? null,
+      shippedBy: it.shipped_by ?? null,
+      shippedAt: it.shipped_at ?? null,
+    })),
   };
 }
 
@@ -781,6 +843,164 @@ function ReceiptDetailsModal({
   );
 }
 
+// ==========================================
+// Модалка деталей уже выполненной отгрузки (read-only) — позиции накладной
+// с фото, которое кладовщик приложил в момент отгрузки
+// ==========================================
+const shipmentPhotoUrl = (photoPath: string) => `/${photoPath.replace(/^\//, "")}`;
+
+function ShipmentDetailsModal({
+  shipment,
+  onClose,
+}: {
+  shipment: ShipmentRow;
+  onClose: () => void;
+}) {
+  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+
+  const shippedBy = shipment.items.find((it) => it.shippedBy)?.shippedBy || null;
+  const photosCount = shipment.items.filter((it) => it.photoPath).length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+      <div className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-xl bg-card p-6 shadow-xl">
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h3 className="text-base font-semibold text-foreground">
+              Отгрузка {shipment.id != null ? `№${shipment.id}` : ""}
+            </h3>
+            <p className="text-xs text-muted-foreground mt-0.5">{shipment.projectName}</p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-muted-foreground">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="space-y-2 text-sm mb-5">
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Дата отгрузки</span>
+            <span className="font-medium text-foreground">
+              {shipment.shippedAt ? new Date(shipment.shippedAt).toLocaleString("ru-RU") : shipment.dateLabel}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Позиций</span>
+            <span className="font-mono font-medium text-foreground">{shipment.items.length}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Отгрузил</span>
+            {shippedBy ? (
+              <span className="font-medium text-foreground">{shippedBy}</span>
+            ) : (
+              <span className="text-muted-foreground italic">не зафиксировано</span>
+            )}
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Фото</span>
+            <span className="font-mono font-medium text-foreground">
+              {photosCount} из {shipment.items.length}
+            </span>
+          </div>
+        </div>
+
+        {shipment.items.length === 0 ? (
+          <div className="py-8 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground">
+            <Inbox size={22} className="text-muted-foreground/50" />
+            В накладной нет позиций
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {shipment.items.map((it) => {
+              const photoUrl = it.photoPath ? shipmentPhotoUrl(it.photoPath) : null;
+
+              return (
+                <div key={it.id} className="flex items-start gap-3 rounded-lg border border-border p-3">
+                  {photoUrl ? (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewPhoto(photoUrl)}
+                      title="Открыть фото"
+                      className="shrink-0 overflow-hidden rounded-md border border-border hover:border-primary transition-colors"
+                    >
+                      <img
+                        src={photoUrl}
+                        alt={`Фото ${it.productName}`}
+                        className="h-16 w-16 object-cover bg-background"
+                      />
+                    </button>
+                  ) : (
+                    <div className="flex h-16 w-16 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border text-muted-foreground/60">
+                      <Camera size={14} />
+                      <span className="text-[10px]">нет фото</span>
+                    </div>
+                  )}
+
+                  <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    <span className="text-sm font-medium text-foreground">{it.productName}</span>
+
+                    {it.kitGroupKey ? (
+                      <span
+                        className="inline-flex w-fit max-w-[220px] items-center gap-1 rounded-md bg-blue-100 dark:bg-blue-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                        title={`из комплекта «${(it.kitName || "").trim() || "Комплект"}»${it.quantityPerKit != null ? ` ×${it.quantityPerKit}` : ""}`}
+                      >
+                        <Package size={10} className="shrink-0" />
+                        <span className="truncate">
+                          из комплекта «{(it.kitName || "").trim() || "Комплект"}»
+                          {it.quantityPerKit != null ? ` ×${it.quantityPerKit}` : ""}
+                        </span>
+                      </span>
+                    ) : null}
+
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="font-mono font-semibold text-foreground">
+                        {it.quantity.toLocaleString("ru-RU")} {it.unit}
+                      </span>
+                      {it.warehouseName ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2 py-0.5 font-medium text-foreground">
+                          <Building2 size={11} className="text-blue-600 dark:text-blue-400" />
+                          {it.warehouseName}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground italic">склад не зафиксирован</span>
+                      )}
+                      {it.shippedAt && (
+                        <span className="text-muted-foreground">
+                          {new Date(it.shippedAt).toLocaleString("ru-RU")}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* null (комментария не было) и непустая строка — разные
+                        случаи: у бэкфилл-строк здесь лежит пояснение с
+                        бэкенда, и оно должно рендериться. Пустую строку и
+                        пробелы отсекаем отдельно, чтобы не показывать «""». */}
+                    {it.comment != null && it.comment.trim() !== "" && (
+                      <p className="text-xs text-muted-foreground italic">"{it.comment.trim()}"</p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {previewPhoto && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4"
+          onClick={() => setPreviewPhoto(null)}
+        >
+          <img
+            src={previewPhoto}
+            alt="Фото отгрузки"
+            className="max-h-[90vh] max-w-full rounded-lg object-contain"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function WarehousePage({ role, projectState }: { role: Role; projectState: ProjectState }) {
   const isWarehouseUser = role === "warehouse";
   const isPm = role === "pm" || role === "admin";
@@ -836,6 +1056,16 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   const [shipments, setShipments] = useState<ShipmentRow[]>([]);
   const [shipmentsLoading, setShipmentsLoading] = useState(false);
   const [shipmentsError, setShipmentsError] = useState<string | null>(null);
+
+  // Раскрытие групп-проектов в истории отгрузок — тот же приём, что у
+  // expandedArrivalGroups: точечный toggle по ключу, чтобы состояние
+  // переживало перезагрузку списка после отгрузки (loadShipments).
+  const [expandedShipmentGroups, setExpandedShipmentGroups] = useState<Record<string, boolean>>({});
+  const toggleShipmentGroup = (key: string) => {
+    setExpandedShipmentGroups((p) => ({ ...p, [key]: !p[key] }));
+  };
+
+  const [shipmentDetailsTarget, setShipmentDetailsTarget] = useState<ShipmentRow | null>(null);
 
   const [pendingShipments, setPendingShipments] = useState<PendingShipmentProjectRow[]>([]);
   const [pendingLoading, setPendingLoading] = useState(false);
@@ -903,16 +1133,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     setShipmentsError(null);
     try {
       const data = await fetchWarehouseShipments();
-      setShipments(
-        data.map((item) => ({
-          id: item.id,
-          projectId: item.project_id,
-          date: item.date ? new Date(item.date).toLocaleDateString("ru-RU") : "—",
-          project: item.project_name,
-          items: item.items_count,
-          status: item.status,
-        }))
-      );
+      setShipments(data.map(mapShipment));
     } catch (e) {
       setShipmentsError(e instanceof Error ? e.message : "Не удалось загрузить отгрузки");
     } finally {
@@ -1358,6 +1579,53 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     return groups;
   }, [arrivals]);
 
+  // История отгрузок, сгруппированная по проекту — та же схема, что у
+  // arrivalGroups выше, но порядок групп по свежести последней отгрузки
+  // (а не по числу ожидающих позиций): история читается сверху вниз как лента.
+  const shipmentHistoryGroups = useMemo<ShipmentHistoryGroup[]>(() => {
+    const map = new Map<string, ShipmentHistoryGroup>();
+
+    shipments.forEach((s) => {
+      const key = String(s.projectId);
+      let group = map.get(key);
+      if (!group) {
+        group = {
+          key,
+          projectName: s.projectName,
+          shipments: [],
+          itemsCount: 0,
+          photosCount: 0,
+          lastShipmentLabel: "—",
+          lastShipmentTs: null,
+        };
+        map.set(key, group);
+      }
+      group.shipments.push(s);
+      group.itemsCount += s.items.length;
+      group.photosCount += s.items.filter((it) => it.photoPath).length;
+
+      const ts = s.shippedAt ? new Date(s.shippedAt).getTime() : NaN;
+      if (Number.isFinite(ts) && (group.lastShipmentTs == null || ts > group.lastShipmentTs)) {
+        group.lastShipmentTs = ts;
+        group.lastShipmentLabel = new Date(ts).toLocaleDateString("ru-RU");
+      }
+    });
+
+    const groups = Array.from(map.values());
+
+    groups.forEach((group) => {
+      group.shipments.sort((a, b) => {
+        const aTs = a.shippedAt ? new Date(a.shippedAt).getTime() : 0;
+        const bTs = b.shippedAt ? new Date(b.shippedAt).getTime() : 0;
+        return bTs - aTs;
+      });
+    });
+
+    groups.sort((a, b) => (b.lastShipmentTs ?? 0) - (a.lastShipmentTs ?? 0));
+
+    return groups;
+  }, [shipments]);
+
   const filteredStock = useMemo(() => {
     return stock
       .filter((item) => {
@@ -1503,6 +1771,13 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     }}
   />
 )}
+
+      {shipmentDetailsTarget && (
+        <ShipmentDetailsModal
+          shipment={shipmentDetailsTarget}
+          onClose={() => setShipmentDetailsTarget(null)}
+        />
+      )}
 
       {showShipmentModal && (
         <ShipmentModal onClose={() => setShowShipmentModal(false)} onSuccess={loadShipments} />
@@ -2207,6 +2482,11 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
             </div>
           )}
 
+          <div className="flex items-center gap-2 mb-3">
+            <Truck size={15} className="text-muted-foreground" />
+            <h3 className="text-sm font-semibold text-foreground">История отгрузок</h3>
+          </div>
+
           <div className="bg-card rounded-lg border border-border overflow-hidden">
           {shipmentsError && (
             <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-400/15 border-b border-red-200 dark:border-red-400/25">
@@ -2220,36 +2500,123 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
               <Loader2 size={24} className="animate-spin text-primary mb-2" />
               <p className="text-sm text-muted-foreground">Загрузка отгрузок…</p>
             </div>
-          ) : shipments.length === 0 ? (
+          ) : shipmentHistoryGroups.length === 0 ? (
             <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Нет данных об отгрузках</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="border-b border-border bg-background/60">
-                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">№ Накладной</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Проект</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Дата</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Количество позиций</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Статус</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {shipments.map((s) => (
-                    <tr key={s.id} className="hover:bg-background/50 transition-colors">
-                      <td className="px-4 py-3.5 text-xs font-mono font-medium text-foreground">№{s.id}</td>
-                      <td className="px-4 py-3.5 text-sm font-bold text-foreground">{s.project}</td>
-                      <td className="px-4 py-3.5 text-sm text-muted-foreground">{s.date}</td>
-                      <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">{s.items}</td>
-                      <td className="px-4 py-3.5 text-center">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300">
-                          <CheckCircle2 size={14} /> {s.status || "Отгружено"}
+            <div className="flex flex-col divide-y divide-border">
+              {shipmentHistoryGroups.map((group) => {
+                const isExpanded = !!expandedShipmentGroups[group.key];
+
+                return (
+                  <div key={group.key} className="flex flex-col">
+                    <div
+                      className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5 bg-background/60 cursor-pointer hover:bg-muted/50 transition-colors"
+                      onClick={() => toggleShipmentGroup(group.key)}
+                    >
+                      <div className="flex items-center gap-3">
+                        <ChevronDown
+                          size={16}
+                          className={`text-muted-foreground transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}
+                        />
+                        <div>
+                          <h3 className="text-sm font-bold text-foreground">{group.projectName}</h3>
+                          <p className="text-xs text-muted-foreground">
+                            {group.shipments.length} отгрузок · {group.itemsCount} позиций
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {group.photosCount > 0 && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-100 dark:bg-blue-400/20 text-primary whitespace-nowrap">
+                            <Camera size={12} /> фото {group.photosCount}
+                          </span>
+                        )}
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 whitespace-nowrap">
+                          <CheckCircle2 size={12} /> отгружено {group.itemsCount}
                         </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">{group.lastShipmentLabel}</span>
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="overflow-x-auto">
+                        <table className="w-full border-collapse">
+                          <thead>
+                            <tr className="border-b border-border bg-background/60">
+                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">№ Накладной</th>
+                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Дата</th>
+                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Товары</th>
+                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center whitespace-nowrap">Позиций</th>
+                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Фото</th>
+                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Отгрузил</th>
+                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Статус</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {group.shipments.map((s, index) => {
+                              const photosCount = s.items.filter((it) => it.photoPath).length;
+                              const shippedBy = s.items.find((it) => it.shippedBy)?.shippedBy || null;
+                              const productSummary = s.items.map((it) => it.productName).join(", ");
+
+                              return (
+                                <tr
+                                  key={s.id ?? `${group.key}-${index}`}
+                                  onClick={() => setShipmentDetailsTarget(s)}
+                                  title="Открыть детали отгрузки"
+                                  className="hover:bg-background/50 transition-colors cursor-pointer"
+                                >
+                                  <td className="px-4 py-3.5 text-xs font-mono font-medium text-foreground whitespace-nowrap">
+                                    {s.id != null ? `№${s.id}` : "—"}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-sm text-muted-foreground whitespace-nowrap">{s.dateLabel}</td>
+                                  <td className="px-4 py-3.5 text-sm text-foreground">
+                                    <span className="block max-w-[320px] truncate" title={productSummary}>
+                                      {productSummary || "—"}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">
+                                    {s.items.length}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-center">
+                                    {photosCount > 0 ? (
+                                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary">
+                                        <Camera size={13} /> {photosCount}
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-muted-foreground/60 italic">—</span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-sm text-foreground">
+                                    {shippedBy ? (
+                                      <span className="inline-flex items-center gap-1.5 text-xs font-medium">
+                                        <User size={12} className="text-muted-foreground" />
+                                        {shippedBy}
+                                      </span>
+                                    ) : (
+                                      <span
+                                        className="text-xs text-muted-foreground/60 italic"
+                                        title="Не зафиксировано — отгрузка до внедрения учёта исполнителя"
+                                      >
+                                        —
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-center">
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 whitespace-nowrap">
+                                      <CheckCircle2 size={14} /> {s.status}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
           </div>
