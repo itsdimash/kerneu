@@ -1616,13 +1616,40 @@ export async function updateReceiptDetails(
 // ОТГРУЗКИ (для вкладки "Отгрузка")
 // ==========================================
 
-export interface ShipmentResponse {
+// Одна отгруженная позиция накладной. kit_* — те же имена, что в
+// ShipmentPendingItem и WarehouseReceiptResponse, чтобы бейдж комплекта
+// рендерился одинаково во всех трёх таблицах. photo_path — фото, которое
+// кладовщик приложил через uploadShipmentPhoto в момент отгрузки: до сих
+// пор оно только загружалось и нигде не читалось.
+export interface ShipmentHistoryItem {
   id: number;
+  product_id: number;
+  product_name: string;
+  quantity: number;
+  unit: string;
+  warehouse_id: number | null;
+  warehouse_name: string | null;
+  kit_group_key?: string | null;
+  kit_name?: string | null;
+  kit_quantity?: number | string | null;
+  quantity_per_kit?: number | string | null;
+  comment?: string | null;
+  photo_path?: string | null;
+  shipped_by?: string | null;
+  shipped_at?: string | null;
+}
+
+// id/status/items_count старый эндпоинт отдавал всегда, но в новой форме они
+// не заявлены как обязательные — помечены опциональными, а количество позиций
+// фронт считает по items.length, не доверяя агрегату.
+export interface ShipmentHistoryResponse {
+  id?: number | null;
   project_id: number;
-  date: string;
   project_name: string;
-  items_count: number;
-  status: string;
+  shipped_at: string;
+  status?: string | null;
+  items_count?: number | null;
+  items: ShipmentHistoryItem[];
 }
 
 export interface ShipmentPendingWarehouseOption {
@@ -1670,8 +1697,8 @@ export const shipProjectItemsPerWarehouse = async (
   return data;
 };
 
-export const fetchWarehouseShipments = async (): Promise<ShipmentResponse[]> => {
-  const { data } = await api.get<ShipmentResponse[]>("/warehouse/shipments");
+export const fetchWarehouseShipments = async (): Promise<ShipmentHistoryResponse[]> => {
+  const { data } = await api.get<ShipmentHistoryResponse[]>("/warehouse/shipments");
   return data;
 };
 
