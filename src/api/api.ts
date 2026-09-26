@@ -714,6 +714,52 @@ export async function getParseJobStatus(
 }
 
 // ==========================================
+// СКАЧИВАНИЕ РЕЗУЛЬТАТА ПАРСЕРА (result_path — есть только у startParseJob,
+// у startContractParseJob его нет, см. комментарий выше).
+// Джобы, обработанные до перехода на R2, отдают файл сырым телом ответа
+// (как раньше); новые — JSON {download_url, expires_in} с presigned GET-
+// ссылкой на R2. Различаем по Content-Type заголовку ответа, а не пытаемся
+// распарсить JSON из тела "на всякий случай". download_url — с ограниченным
+// TTL, поэтому используем сразу и нигде не кэшируем.
+// ==========================================
+
+interface ParseJobDownloadRedirect {
+  download_url: string;
+  expires_in: number;
+}
+
+export async function downloadParseJobResult(jobId: string): Promise<void> {
+  const response = await api.get(`/parser/jobs/${jobId}/download`, {
+    responseType: "blob",
+  });
+
+  const contentType = String(response.headers["content-type"] || "");
+
+  if (contentType.includes("application/json")) {
+    const text = await (response.data as Blob).text();
+    const { download_url } = JSON.parse(text) as ParseJobDownloadRedirect;
+    window.open(download_url, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  const blob = response.data as Blob;
+  let filename = `parse_result_${jobId}.xlsx`;
+  const disposition = response.headers["content-disposition"];
+  if (disposition && disposition.includes("filename*=UTF-8''")) {
+    filename = decodeURIComponent(disposition.split("filename*=UTF-8''")[1]);
+  }
+
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+// ==========================================
 // СКЛАДЫ (справочник)
 // ==========================================
 
@@ -1480,6 +1526,10 @@ export interface WarehouseReceiptResponse {
   status: ReceiptStatus;
   actual_quantity?: number | null;
   photo_path?: string | null;
+  // Готовый абсолютный URL для рендера — рендерить фото нужно через него,
+  // не собирать вручную из photo_path (там теперь legacy "uploads/..." путь
+  // либо новый R2-ключ, это забота бэкенда).
+  photo_url?: string | null;
   warehouse_comment?: string | null;
   confirmed_at?: string | null;
   defective_quantity?: number;      // добавить, если нет
@@ -1543,6 +1593,52 @@ export async function denyIncomeReceipt(
 }
 
 // ==========================================
+// ПРЕСАЙН-ЗАГРУЗКА ФОТО В R2 (приход/отгрузка)
+// Фото больше не шлётся файлом на бэкенд: сначала запрашивается presigned
+// PUT URL + ключ объекта, файл грузится напрямую в R2 (см. uploadFileToR2 в
+// lib/uploadToR2.ts, отдельный запрос без withCredentials — чужой домен), и
+// только затем ключ объекта передаётся бэкенду обычным JSON-полем.
+// ==========================================
+
+export interface PhotoPresignResponse {
+  upload_url: string;
+  object_key: string;
+}
+
+export async function presignReceiptPhotoUpload(
+  receiptId: number,
+  contentType: string,
+  filename: string,
+): Promise<PhotoPresignResponse> {
+  const { data } = await api.post<PhotoPresignResponse>(
+    `/warehouse/receipts/${receiptId}/photo/presign`,
+    { content_type: contentType, filename },
+  );
+  return data;
+}
+
+export async function presignShipmentPhotoUpload(
+  projectId: number,
+  contentType: string,
+  filename: string,
+  projectItemId?: number,
+): Promise<PhotoPresignResponse> {
+  // projectItemId нужен бэкенду ДО загрузки, чтобы сразу положить объект по
+  // правильному пути (shipments/{project_id}/{item_id}/...) — shipment_id
+  // на этот момент ещё не существует (акт отгрузки создаётся отдельным
+  // запросом), поэтому ключ строится по позиции, не по акту. Без него
+  // бэкенд кладёт файл в shipments/{project_id}/general/... (см.
+  // r2_client.shipment_photo_key) — сам файл при этом не теряется и
+  // привязка в БД (project_item_id/shipment_id) идёт отдельным шагом через
+  // uploadShipmentPhoto ниже, но так удобнее ориентироваться в бакете.
+  const { data } = await api.post<PhotoPresignResponse>(
+    `/warehouse/shipments/${projectId}/photo/presign`,
+    { content_type: contentType, filename, project_item_id: projectItemId },
+  );
+  return data;
+}
+
+// ==========================================
 // ПОДТВЕРЖДЕНИЕ ПРИХОДА (фото + факт. количество + комментарий)
 // ==========================================
 
@@ -1550,24 +1646,22 @@ export interface ConfirmReceiptPayload {
   actual_quantity: number;
   defective_quantity?: number;
   comment?: string;
-  photo?: File | null;
+  photo_object_key?: string | null;
 }
 
 export async function confirmReceipt(
   receiptId: number,
   payload: ConfirmReceiptPayload
 ): Promise<WarehouseReceiptResponse> {
+  // Эндпоинт остался Form(...)-based (как и раньше, до перехода на R2) —
+  // сменился только тип поля "photo" на "photo_object_key" (строка вместо
+  // файла), не транспорт. JSON-body сюда слать нельзя: FastAPI не увидит
+  // ни одного Form-поля и вернёт 422 "Field required" на все сразу.
   const formData = new FormData();
   formData.append("actual_quantity", String(payload.actual_quantity));
-
-  if (payload.defective_quantity !== undefined) {
-    formData.append("defective_quantity", String(payload.defective_quantity));
-  } else {
-    formData.append("defective_quantity", "0");
-  }
-
+  formData.append("defective_quantity", String(payload.defective_quantity ?? 0));
   formData.append("comment", payload.comment || "");
-  if (payload.photo) formData.append("photo", payload.photo);
+  if (payload.photo_object_key) formData.append("photo_object_key", payload.photo_object_key);
 
   const { data } = await api.post<WarehouseReceiptResponse>(
     `/warehouse/receipts/${receiptId}/confirm`,
@@ -1589,16 +1683,18 @@ export async function confirmReceipt(
 
 export interface UpdateReceiptDetailsPayload {
   comment?: string;
-  photo?: File | null;
+  photo_object_key?: string | null;
 }
 
 export async function updateReceiptDetails(
   receiptId: number,
   payload: UpdateReceiptDetailsPayload
 ): Promise<WarehouseReceiptResponse> {
+  // Тот же Form(...)-based эндпоинт, что и раньше — см. комментарий в
+  // confirmReceipt.
   const formData = new FormData();
   if (payload.comment !== undefined) formData.append("comment", payload.comment);
-  if (payload.photo) formData.append("photo", payload.photo);
+  if (payload.photo_object_key) formData.append("photo_object_key", payload.photo_object_key);
 
   const { data } = await api.patch<WarehouseReceiptResponse>(
     `/warehouse/receipts/${receiptId}/details`,
@@ -1616,11 +1712,22 @@ export async function updateReceiptDetails(
 // ОТГРУЗКИ (для вкладки "Отгрузка")
 // ==========================================
 
+// Фото, приложенное кладовщиком через uploadShipmentPhoto в момент отгрузки.
+// Бэкенд отдаёт их СПИСКОМ на позицию (ShipmentHistoryItem.photos), не
+// одним полем — см. ShipmentHistoryPhoto/ShipmentHistoryItem в
+// app/schemas/warehouse.py. На практике на позицию обычно ровно одно фото.
+export interface ShipmentHistoryPhoto {
+  id: number;
+  photo_path: string;
+  // Готовый абсолютный URL — рендерить через него, не собирать из photo_path.
+  photo_url: string | null;
+  comment?: string | null;
+  created_at: string;
+}
+
 // Одна отгруженная позиция накладной. kit_* — те же имена, что в
 // ShipmentPendingItem и WarehouseReceiptResponse, чтобы бейдж комплекта
-// рендерился одинаково во всех трёх таблицах. photo_path — фото, которое
-// кладовщик приложил через uploadShipmentPhoto в момент отгрузки: до сих
-// пор оно только загружалось и нигде не читалось.
+// рендерился одинаково во всех трёх таблицах.
 export interface ShipmentHistoryItem {
   id: number;
   product_id: number;
@@ -1634,7 +1741,7 @@ export interface ShipmentHistoryItem {
   kit_quantity?: number | string | null;
   quantity_per_kit?: number | string | null;
   comment?: string | null;
-  photo_path?: string | null;
+  photos?: ShipmentHistoryPhoto[];
   shipped_by?: string | null;
   shipped_at?: string | null;
 }
@@ -1744,18 +1851,21 @@ export interface ShipmentPhotoResponse {
   project_id: number;
   project_item_id?: number | null;
   photo_path: string;
+  photo_url: string;
   comment: string | null;
   created_at: string;
 }
 
 export async function uploadShipmentPhoto(
   projectId: number,
-  photo: File,
+  photoObjectKey: string,
   itemId?: number,
   comment?: string,
 ): Promise<ShipmentPhotoResponse> {
+  // Тот же Form(...)-based эндпоинт, что и раньше — см. комментарий в
+  // confirmReceipt.
   const formData = new FormData();
-  formData.append("photo", photo);
+  formData.append("photo_object_key", photoObjectKey);
   if (itemId !== undefined) formData.append("item_id", String(itemId));
   if (comment) formData.append("comment", comment);
 
