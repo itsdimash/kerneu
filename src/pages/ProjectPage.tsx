@@ -803,6 +803,21 @@ export function ProjectPagePM({
   // «Ожидание подписания» (index 4), поэтому кнопка больше не нужна.
   const isPastApprovalWindow = project ? currentIndex >= 4 : false;
 
+  // Тот же принцип, что и в isApproved/liveItems выше (Variant A): mlImport
+  // после confirm() резолвится в null, потому что GET /ml-imports?project_id=
+  // ищет только status="draft". Важно: fallback на currentIndex работает,
+  // только когда mlImport реально не резолвится (null) — если объект есть,
+  // доверяем именно его статусу, а не индексу. Это отличает два случая с
+  // одинаковым currentIndex === 2: "На согласовании у Комдира" (импорт
+  // подтверждён и потому не резолвится — фолбэк даёт true) от "Отклонено
+  // Комдиром" (PM правит тот же импорт, который backend вернул в draft,
+  // значит mlImport резолвится и его статус реально "draft" — доверяем
+  // этому, а не currentIndex, иначе кнопка "Отправить повторно" стала бы
+  // доступна до того, как PM заново подтвердит исправленный импорт).
+  const isMlImportConfirmed = mlImport
+    ? mlImport.status === "confirmed"
+    : (project ? currentIndex >= 2 : false);
+
   const FULL_STAGES = [
     { label: "Новый", done: currentIndex > 0, active: currentIndex === 0 },
     { label: "В редактировании", done: currentIndex > 1, active: currentIndex === 1 },
@@ -1786,10 +1801,10 @@ export function ProjectPagePM({
               <Calculator size={14}/>
               Смета
             </button>
-            <AppTooltip text={(!mlImport || mlImport.status !== "confirmed") ? "Сначала подтвердите импорт товаров" : ""}>
+            <AppTooltip text={!isMlImportConfirmed ? "Сначала подтвердите импорт товаров" : ""}>
               <button
                 onClick={handleExportExcel}
-                disabled={isExporting || !project || !mlImport || mlImport.status !== "confirmed"}
+                disabled={isExporting || !project || !isMlImportConfirmed}
                 className="flex items-center gap-1.5 ml-2 px-3 py-1.5 bg-card border border-border text-muted-foreground text-xs font-medium rounded hover:bg-background transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isExporting ? <Loader2 size={14} className="animate-spin"/> : <Download size={14} />}
@@ -1937,7 +1952,7 @@ export function ProjectPagePM({
 
                   {!isPastApprovalWindow && !isExpress && !isWarehouseRequest && (
                     <AppTooltip text={
-                      !mlImport || mlImport.status !== "confirmed"
+                      !isMlImportConfirmed
                         ? "Сначала подтвердите импорт товаров"
                         : !isApproved
                         ? "Генерация КП доступна только после одобрения Комдиром"
@@ -1945,9 +1960,9 @@ export function ProjectPagePM({
                     }>
                       <button
                         onClick={handleGenerateKP}
-                        disabled={!mlImport || mlImport.status !== "confirmed" || !isApproved || isGeneratingKP}
+                        disabled={!isMlImportConfirmed || !isApproved || isGeneratingKP}
                         className={`flex items-center gap-2 px-5 py-2.5 border text-sm font-semibold rounded-lg transition-colors whitespace-nowrap ${
-                          mlImport?.status === "confirmed" && isApproved
+                          isMlImportConfirmed && isApproved
                             ? "bg-card border-border text-foreground hover:bg-background cursor-pointer"
                             : "bg-background border-border text-muted-foreground cursor-not-allowed"
                         }`}
@@ -1960,17 +1975,16 @@ export function ProjectPagePM({
 
                   {!isExpress && (
                   <AppTooltip text={
-                    !mlImport ? "Сначала подтвердите импорт товаров" :
-                    mlImport.status !== "confirmed" ? (isRejected ? "Сначала подтвердите изменённый импорт товаров" : "Сначала подтвердите импорт товаров") :
+                    !isMlImportConfirmed ? (isRejected ? "Сначала подтвердите изменённый импорт товаров" : "Сначала подтвердите импорт товаров") :
                     ""
                   }>
                     <button
                       onClick={handleSendToDirector}
-                      disabled={!mlImport || mlImport.status !== "confirmed" || sending || sent || isApproved}
+                      disabled={!isMlImportConfirmed || sending || sent || isApproved}
                       className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${
                           sent ? "bg-success text-success-foreground cursor-default" :
                           isApproved ? "bg-success/90 text-success-foreground cursor-default" :
-                          mlImport?.status !== "confirmed" ? "bg-muted text-muted-foreground cursor-not-allowed" :
+                          !isMlImportConfirmed ? "bg-muted text-muted-foreground cursor-not-allowed" :
                           isRejected ? "bg-destructive hover:bg-destructive/90 text-white" :
                           !sending ? "bg-primary hover:bg-primary/90 text-white" :
                           "bg-muted text-muted-foreground cursor-not-allowed"
