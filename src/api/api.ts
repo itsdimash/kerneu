@@ -714,49 +714,55 @@ export async function getParseJobStatus(
 }
 
 // ==========================================
-// СКАЧИВАНИЕ РЕЗУЛЬТАТА ПАРСЕРА (result_path — есть только у startParseJob,
-// у startContractParseJob его нет, см. комментарий выше).
-// Джобы, обработанные до перехода на R2, отдают файл сырым телом ответа
-// (как раньше); новые — JSON {download_url, expires_in} с presigned GET-
-// ссылкой на R2. Различаем по Content-Type заголовку ответа, а не пытаемся
-// распарсить JSON из тела "на всякий случай". download_url — с ограниченным
-// TTL, поэтому используем сразу и нигде не кэшируем.
+// СКАЧИВАНИЕ ФАЙЛА С ВОЗМОЖНЫМ РЕДИРЕКТОМ НА PRESIGNED R2-URL
+// Общий разбор для /download-эндпоинтов (результат парсера, документы
+// проекта), которые после перехода на R2 отдают ДВА разных типа ответа:
+// JSON {download_url, expires_in} с presigned GET-ссылкой (TTL ограничен —
+// используем сразу, нигде не кэшируем) для записей с r2_key, либо, как и
+// раньше, сырой файл в теле ответа для legacy-записей без r2_key.
+// Различаем по Content-Type заголовку ответа, а не пытаемся распарсить
+// JSON из тела "на всякий случай".
 // ==========================================
 
-interface ParseJobDownloadRedirect {
+interface PresignedDownloadRedirect {
   download_url: string;
   expires_in: number;
 }
 
-export async function downloadParseJobResult(jobId: string): Promise<void> {
-  const response = await api.get(`/parser/jobs/${jobId}/download`, {
-    responseType: "blob",
-  });
-
+async function downloadOrRedirect(
+  url: string,
+  onBlob: (blob: Blob, headers: Record<string, any>) => void,
+): Promise<void> {
+  const response = await api.get(url, { responseType: "blob" });
   const contentType = String(response.headers["content-type"] || "");
 
   if (contentType.includes("application/json")) {
     const text = await (response.data as Blob).text();
-    const { download_url } = JSON.parse(text) as ParseJobDownloadRedirect;
+    const { download_url } = JSON.parse(text) as PresignedDownloadRedirect;
     window.open(download_url, "_blank", "noopener,noreferrer");
     return;
   }
 
-  const blob = response.data as Blob;
-  let filename = `parse_result_${jobId}.xlsx`;
-  const disposition = response.headers["content-disposition"];
-  if (disposition && disposition.includes("filename*=UTF-8''")) {
-    filename = decodeURIComponent(disposition.split("filename*=UTF-8''")[1]);
-  }
+  onBlob(response.data as Blob, response.headers);
+}
 
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.setAttribute("download", filename);
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.URL.revokeObjectURL(url);
+export async function downloadParseJobResult(jobId: string): Promise<void> {
+  await downloadOrRedirect(`/parser/jobs/${jobId}/download`, (blob, headers) => {
+    let filename = `parse_result_${jobId}.xlsx`;
+    const disposition = headers["content-disposition"];
+    if (disposition && disposition.includes("filename*=UTF-8''")) {
+      filename = decodeURIComponent(disposition.split("filename*=UTF-8''")[1]);
+    }
+
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  });
 }
 
 // ==========================================
@@ -1108,23 +1114,20 @@ export async function uploadProjectDocument(
 export async function downloadProjectDocument(
   projectDocument: ProjectDocumentResponse,
 ): Promise<void> {
-  const { data } = await api.get<Blob>(
-    `/documents/${projectDocument.id}/download`,
-    { responseType: "blob" },
-  );
+  await downloadOrRedirect(`/documents/${projectDocument.id}/download`, (rawBlob) => {
+    const blob = new Blob([rawBlob], {
+      type: projectDocument.mime_type || "application/octet-stream",
+    });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
 
-  const blob = new Blob([data], {
-    type: projectDocument.mime_type || "application/octet-stream",
+    link.href = url;
+    link.download = projectDocument.file_name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
   });
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = projectDocument.file_name;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.URL.revokeObjectURL(url);
 }
 
 // ==========================================

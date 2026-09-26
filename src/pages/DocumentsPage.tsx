@@ -448,13 +448,18 @@ export function DocumentsPage({
   const allUploaded = doneDocCount === requiredDocCount;
   const canComplete = allUploaded && reviewStage === "approved" && !completed;
 
-  // Кнопка «Отправить на проверку» доступна PM в любой момент после
-  // подписания договора, как только все обязательные документы загружены —
-  // без привязки к статусу склада (раньше требовался статус «Ожидание
-  // документов», из-за чего PM не мог отправить пакет на проверку, пока
-  // склад полностью не пройдёт закуп/приход/отгрузку).
+  // РЕСТРИКЦИЯ ПО СТАТУСУ ВОЗВРАЩЕНА (2026-09-26, по итогам разговора с
+  // Dimash): выше раньше был комментарий про то, что привязку к статусу
+  // «Ожидание документов» сознательно убрали, потому что она блокировала PM
+  // до полного прохождения склада. Обсудили это решение — прежняя причина
+  // больше не считается достаточной, и ограничение возвращено сознательно,
+  // а не по недосмотру. Если кто-то снова захочет убрать эту привязку —
+  // сначала сверьтесь с историей, не повторяйте цикл добавил/убрал молча.
+  const isDocsReviewStatus = selectedProject?.statusName === "Ожидание документов";
   const tooltipReview = !allUploaded
     ? "Загрузите все документы сначала"
+    : !isDocsReviewStatus
+    ? "Отправка доступна только на этапе «Ожидание документов»"
     : "";
 
   const [submittingReview, setSubmittingReview] = useState(false);
@@ -1213,10 +1218,10 @@ export function DocumentsPage({
                 {/* ОБНОВЛЕНО: Используем новый тултип и блокируем кнопку */}
                 <AppTooltip text={tooltipReview}>
                   <button
-                    onClick={() => allUploaded && handleSubmitForReview()}
-                    disabled={!allUploaded || submittingReview}
+                    onClick={() => allUploaded && isDocsReviewStatus && handleSubmitForReview()}
+                    disabled={!allUploaded || !isDocsReviewStatus || submittingReview}
                     className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
-                      allUploaded
+                      allUploaded && isDocsReviewStatus
                         ? "bg-primary text-white hover:bg-primary/90"
                         : "bg-muted text-muted-foreground cursor-not-allowed"
                     }`}
