@@ -34,6 +34,7 @@ import {
   rejectProjectClient,
   downloadProjectExcel,
   downloadKpDocument,
+  updateProjectItemProduct,
 } from "../api/api";
 
 import type {
@@ -53,8 +54,34 @@ import { ProductSearchCombobox } from "../app/components/ui/product-search-combo
 import { Checkbox } from "../app/components/ui/checkbox";
 import { StockStatusBadge } from "../app/components/common/StockStatusBadge";
 import { KitGroupHeaderRow } from "../app/components/common/KitGroupHeaderRow";
-import { ML_STATUS_STYLES, UNKNOWN_ML_STATUS_STYLE, normalizeMlStatus } from "../lib/stockStatus";
+import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
+import { FixProductButton } from "../app/components/common/FixProductButton";
+import { ML_STATUS_STYLES, NEW_PRODUCT_ML_STATUS, UNKNOWN_ML_STATUS_STYLE, normalizeMlStatus } from "../lib/stockStatus";
 import { groupEntriesByKit } from "../lib/kitGroups";
+
+// Бейдж статуса item в таблицах позиций (renderLiveItemRow/renderDirectorItemRow).
+// Красится по item.status.color с backend, если он есть (фон — цвет с низкой
+// альфой через hex-суффикс "1a", текст/бордер — сам цвет). Если color не пришёл
+// (старые данные до миграции), используется прежний бинарный фолбэк:
+// зелёный для "На складе", янтарный для всех остальных статусов.
+const ItemStatusBadge = ({ statusName, color }: { statusName: string; color?: string | null }) => {
+  if (color) {
+    return (
+      <span
+          className="inline-flex px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap"
+          style={{ backgroundColor: `${color}1a`, color, boxShadow: `inset 0 0 0 1px ${color}33` }}>
+        {statusName}
+      </span>
+    );
+  }
+  const isInStock = statusName === "На складе";
+  return (
+    <span
+        className={`inline-flex px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap ${isInStock ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200"}`}>
+      {statusName}
+    </span>
+  );
+};
 
 // Достаёт читаемые текстовые подсказки из similar_variants — ML отдаёт
 // их из внешнего Excel-файла в произвольном виде (иногда структурированные
@@ -496,29 +523,46 @@ export function ProjectPagePM({
     const storageKey = `project:${resolvedProjectId}:mlImportId`;
     let cancelled = false;
 
-    // Резолвит id ML-импорта для открытого проекта. Обычный путь —
-    // localStorage, записанный на этом же устройстве в момент завершения
-    // парсинга (см. BackgroundJobsContext.tsx). Если записи нет — например,
-    // проект открыт на другом устройстве под тем же аккаунтом, где парсинг
-    // не запускался — идём на backend и ищем черновик по project_id
-    // (GET /ml-imports?project_id=), а найденный id сохраняем в localStorage
-    // и на этом устройстве, чтобы повторные открытия были быстрыми.
+    // Резолвит id ML-импорта для открытого проекта. Источник истины —
+    // ВСЕГДА backend (GET /ml-imports?project_id=, findMlImportsByProject),
+    // localStorage — только акселератор для UI (например, чтобы toast из
+    // BackgroundJobsContext.tsx мог сразу подставить id без похода на
+    // сервер), а не кэш, которому можно доверять бессрочно.
+    //
+    // РАНЬШЕ при непустом localStorage backend-поиск вообще не вызывался —
+    // сохранённый id возвращался немедленно. Это ломало ровно тот сценарий,
+    // ради которого локальный кэш и заводился: если на проекте появлялся
+    // более свежий импорт (переразбор файла, новый черновик, заведённый на
+    // другом устройстве/сессии), устройство со старой записью молча
+    // застревало на устаревшем id навсегда — added-позиции в актуальном
+    // черновике были не видны, а ни 404, ни проверка "относится к проекту"
+    // ниже этого не ловили, потому что project_id у старого и нового
+    // импорта совпадает.
     async function resolveImportId(): Promise<number | null> {
       const savedImportId = localStorage.getItem(storageKey);
       if (savedImportId) {
         const parsed = Number(savedImportId);
         if (!Number.isInteger(parsed) || parsed <= 0) {
-          throw new Error(`Некорректный ID ML-импорта: ${savedImportId}`);
+          // Испорченная запись — не блокируем резолв ошибкой, просто
+          // забываем её и продолжаем так, как будто localStorage был пуст.
+          localStorage.removeItem(storageKey);
         }
-        return parsed;
       }
 
+      // findMlImportsByProject — НЕ список: backend отдаёт один объект
+      // ml-импорта либо null (404 "черновика/проекта нет" гасится внутри
+      // самой функции). Раньше здесь ошибочно ожидался массив-ответ,
+      // из-за чего на любом проекте с черновиком резолв падал с
+      // "Cannot read properties of undefined (reading 'id')", как только
+      // этот вызов перестал прятаться за localStorage.
       const found = await findMlImportsByProject(resolvedProjectId);
-      if (found.length === 0) return null;
+      if (!found) {
+        localStorage.removeItem(storageKey);
+        return null;
+      }
 
-      const importId = found[0].id;
-      localStorage.setItem(storageKey, String(importId));
-      return importId;
+      localStorage.setItem(storageKey, String(found.id));
+      return found.id;
     }
 
     setMlImportLoading(true);
@@ -685,29 +729,6 @@ export function ProjectPagePM({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStatus]);
 
-  useEffect(() => {
-    if (!hasValidProjectId || mlImport?.status !== "confirmed") {
-      setLiveItems([]);
-      return;
-    }
-    let cancelled = false;
-    setLiveItemsLoading(true);
-    setLiveItemsError(null);
-    fetchProjectItems(resolvedProjectId)
-      .then((data) => { if (!cancelled) setLiveItems(data); })
-      .catch((error) => {
-        if (!cancelled) {
-          setLiveItemsError(error instanceof Error ? error.message : "Не удалось загрузить позиции проекта");
-        }
-      })
-      .finally(() => { if (!cancelled) setLiveItemsLoading(false); });
-    return () => { cancelled = true; };
-    // Перечитываем при каждой смене статуса проекта — например, когда
-    // Комдир сохранил правки и/или принял решение, а ПМ уже открыл
-    // страницу и просто ждёт.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedProjectId, hasValidProjectId, mlImport?.status, mlImport?.id, currentStatus]);
-
   const statusToIndex: Record<string, number> = {
     "Новый": 0,
     "Новый проект": 0,
@@ -743,6 +764,39 @@ export function ProjectPagePM({
   const isPendingDirector = currentStatus === "На согласовании у Комдира";
   const isRejected = currentStatus === "Отклонено Комдиром";
   const isApproved = isKpApproved;
+
+  useEffect(() => {
+    if (!hasValidProjectId || !isApproved) {
+      setLiveItems([]);
+      return;
+    }
+    let cancelled = false;
+    setLiveItemsLoading(true);
+    setLiveItemsError(null);
+    fetchProjectItems(resolvedProjectId)
+      .then((data) => { if (!cancelled) setLiveItems(data); })
+      .catch((error) => {
+        if (!cancelled) {
+          setLiveItemsError(error instanceof Error ? error.message : "Не удалось загрузить позиции проекта");
+        }
+      })
+      .finally(() => { if (!cancelled) setLiveItemsLoading(false); });
+    return () => { cancelled = true; };
+    // Перечитываем при каждой смене статуса проекта — например, когда
+    // Комдир сохранил правки и/или принял решение, а ПМ уже открыл
+    // страницу и просто ждёт.
+    //
+    // Триггер — isApproved (статус проекта), а НЕ mlImport?.status ===
+    // "confirmed", как было раньше: GET /ml-imports?project_id= на
+    // backend находит импорт только пока он в статусе draft — после
+    // confirm тот же лукап отдаёт 404 ("нет черновика импорта"), хотя
+    // сам импорт и project_items по нему уже реально существуют.
+    // Из-за этого mlImport после подтверждения становился null, и
+    // liveItems никогда не подгружались, хотя проект уже одобрен и
+    // позиции реально есть — ПМ видел пустую таблицу вместо них.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedProjectId, hasValidProjectId, isApproved, mlImport?.id, currentStatus]);
+
   const sent = isPendingDirector;
   // Генерация КП доступна, пока проект ожидает решения клиента.
   // После «Одобрено клиентом» проект переходит в отдельный статус
@@ -1263,13 +1317,11 @@ export function ProjectPagePM({
     setUnlinkBeforeCreate(item.selected_product_id != null);
     setProductModalItem(item);
     setProductModalForm({
-      // Для привязанной строки в matched_product лежит название товара,
-      // который пользователь как раз считает неподходящим — подставляем
-      // исходное наименование из файла.
-      product_name:
-        item.selected_product_id != null
-          ? item.input_product
-          : item.matched_product?.trim() || item.input_product,
+      // Всегда исходное название из файла, а не ML-предложение
+      // (matched_product / similar_variants) — оно лишь подсказка, а не
+      // подтверждённое название, и пользователь открыл эту модалку именно
+      // потому, что хочет завести товар, а не принять предложение ML.
+      product_name: item.input_product,
       unit: item.unit?.trim() || "шт",
       price: Number(item.price ?? 0) > 0 ? String(item.price) : "",
       is_kit: false,
@@ -1744,6 +1796,14 @@ export function ProjectPagePM({
                 {isExporting ? "Скачивание..." : "Скачать Excel"}
               </button>
             </AppTooltip>
+            {project && (
+              <ProjectRevertControl
+                projectId={resolvedProjectId}
+                currentStatus={currentStatus}
+                onReverted={async () => { await refreshProject(); }}
+                className="ml-2"
+              />
+            )}
           </div>
         }
     >
@@ -1754,8 +1814,8 @@ export function ProjectPagePM({
                   <div key={step.label} className="flex items-center">
                     <div className="flex flex-col items-center">
                       <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold border-2 transition-colors ${
-                          step.done ? "bg-primary border-primary text-white" : 
-                          step.active ? "bg-card border-primary text-primary" : 
+                          step.done ? "bg-primary border-primary text-white" :
+                          step.active ? "bg-card border-primary text-primary" :
                           "bg-card border-border text-muted-foreground"
                       }`}>
                         {step.done ? <Check size={12}/> : i + 1}
@@ -1953,31 +2013,7 @@ export function ProjectPagePM({
                 <Loader2 size={26} className="animate-spin text-primary mb-3" />
                 <p className="text-sm text-muted-foreground">Загружаем результаты ML…</p>
               </div>
-            ) : !mlImport ? (
-              // Проект создан вручную либо импорт ещё не заводился —
-              // вместо тупика даём сразу добавить позицию: черновик
-              // импорта создастся по клику.
-              <div className="bg-card rounded-lg border border-border px-4 py-10 text-center">
-                <p className="text-sm text-muted-foreground">
-                  В проекте пока нет позиций — добавьте их вручную.
-                </p>
-                <button
-                    type="button"
-                    onClick={handleStartAddingRow}
-                    disabled={creatingEmptyImport}
-                    className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-primary border border-dashed border-input rounded-lg hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {creatingEmptyImport ? (
-                    <Loader2 size={15} className="animate-spin"/>
-                  ) : (
-                    <Plus size={15}/>
-                  )}
-                  {creatingEmptyImport ? "Подготовка…" : "Добавить позицию"}
-                </button>
-              </div>
-            ) : (
-              <>
-                {isApproved ? (() => {
+            ) : isApproved ? (() => {
                   // Себестоимость/поставщик/маржа больше не показываются на
                   // ProjectPage ни одной роли — заполняются и видны только
                   // на ProcurementPage (см. перенос cost_price/supplier).
@@ -1992,7 +2028,6 @@ export function ProjectPagePM({
                     const total = item.total_sum != null ? Number(item.total_sum) : qty * price;
                     const isEditedByDirector = Boolean((item as { edited_by_director?: boolean }).edited_by_director);
                     const stockStatusName = item.status?.status_name ?? "—";
-                    const isInStock = stockStatusName === "На складе";
                     // Компонент комплекта: визуально с отступом, с подписью
                     // количества "в комплекте" под наименованием — те же
                     // данные, что и у обычной позиции, просто сгруппированы
@@ -2004,7 +2039,23 @@ export function ProjectPagePM({
                         <tr key={item.id} className="hover:bg-background/50">
                           <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
                           <td className={`px-4 py-3 text-sm text-foreground ${isKitComponent ? "pl-8 border-l-2 border-border/60" : ""}`}>
-                            {item.product?.name ?? "—"}
+                            <div className="flex items-center gap-1.5">
+                              <span>{item.product?.name ?? "—"}</span>
+                              {!isKitComponent && (
+                                <FixProductButton
+                                  projectId={resolvedProjectId}
+                                  itemId={item.id}
+                                  currentProductId={item.product?.id ?? null}
+                                  currentProductName={item.product?.name ?? ""}
+                                  currentUnit={item.product?.unit ?? null}
+                                  onUpdated={(updated) => {
+                                    setLiveItems((current) =>
+                                      current.map((existing) => existing.id === updated.id ? updated : existing),
+                                    );
+                                  }}
+                                />
+                              )}
+                            </div>
                             {isKitComponent && quantityPerKit > 0 && (
                               <p className="mt-0.5 text-[11px] text-muted-foreground">
                                 × {quantityPerKit.toLocaleString("ru-RU")} в комплекте
@@ -2021,10 +2072,7 @@ export function ProjectPagePM({
                           )}
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1.5">
-                              <span
-                                  className={`inline-flex px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap ${isInStock ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200"}`}>
-                                {stockStatusName}
-                              </span>
+                              <ItemStatusBadge statusName={stockStatusName} color={item.status?.color} />
                               {isEditedByDirector && (
                                 <span title="Изменено Комдиром">
                                   <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
@@ -2117,7 +2165,29 @@ export function ProjectPagePM({
                     </table>
                   </div>
                   );
-                })() : (
+                })() : !mlImport ? (
+                  // Проект создан вручную либо импорт ещё не заводился —
+                  // вместо тупика даём сразу добавить позицию: черновик
+                  // импорта создастся по клику.
+                  <div className="bg-card rounded-lg border border-border px-4 py-10 text-center">
+                    <p className="text-sm text-muted-foreground">
+                      В проекте пока нет позиций — добавьте их вручную.
+                    </p>
+                    <button
+                        type="button"
+                        onClick={handleStartAddingRow}
+                        disabled={creatingEmptyImport}
+                        className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-primary border border-dashed border-input rounded-lg hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {creatingEmptyImport ? (
+                        <Loader2 size={15} className="animate-spin"/>
+                      ) : (
+                        <Plus size={15}/>
+                      )}
+                      {creatingEmptyImport ? "Подготовка…" : "Добавить позицию"}
+                    </button>
+                  </div>
+                ) : (
                 <>
                 <div className="bg-card rounded-lg border border-border overflow-x-auto">
                   <table className={`w-full border-collapse ${isWarehouseRequest ? "min-w-[900px]" : "min-w-[1550px]"}`}>
@@ -2239,11 +2309,23 @@ export function ProjectPagePM({
                                       // с каталогом, а раньше он в suggestionLabels
                                       // не попадал вовсе, поэтому список подсказок
                                       // для новых строк был всегда пуст.
-                                      const suggestionLabels = [
-                                        ...getSimilarVariantLabels(item),
-                                        item.matched_product?.trim() ?? "",
-                                        item.input_product?.trim() ?? "",
-                                      ].filter(Boolean);
+                                      //
+                                      // "Новый товар" (бывшее "Нет в системе
+                                      // (похожие варианты)") — backend всё ещё
+                                      // присылает similar_variants в ответе, но
+                                      // по этому статусу мы уже знаем, что товара
+                                      // нет и что подбирать нечего: секция
+                                      // "Похожие по данным ML" не должна
+                                      // рендериться, пикер сразу открывается на
+                                      // "Весь каталог".
+                                      const isNewProductStatus = normalizedStatus === NEW_PRODUCT_ML_STATUS;
+                                      const suggestionLabels = isNewProductStatus
+                                        ? []
+                                        : [
+                                            ...getSimilarVariantLabels(item),
+                                            item.matched_product?.trim() ?? "",
+                                            item.input_product?.trim() ?? "",
+                                          ].filter(Boolean);
 
                                       const suggested = productCatalog.filter((product) =>
                                         suggestionLabels.some((label) =>
@@ -2305,7 +2387,7 @@ export function ProjectPagePM({
                                               {selectedProductName ??
                                                 (productCatalogLoading
                                                   ? "Загрузка каталога…"
-                                                  : item.matched_product?.trim()
+                                                  : !isNewProductStatus && item.matched_product?.trim()
                                                   ? `Подтвердите: ${item.matched_product.trim()}`
                                                   : "Выберите товар")}
                                             </span>
@@ -2820,8 +2902,6 @@ export function ProjectPagePM({
                   )}
                 </div>
                 </>
-                )}
-              </>
             )}
         </div>
 
@@ -3405,6 +3485,13 @@ const [itemSaveError, setItemSaveError] =
 
   const PENDING_DIRECTOR_STATUS = "На согласовании у Комдира";
   const REJECTED_STATUS = "Отклонено Комдиром";
+  // Первый шаг степпера — ПМ ещё формирует состав проекта и физически не
+  // отправлял его дальше. currentStatus в этом случае не совпадает ни с
+  // PENDING_DIRECTOR_STATUS, ни с REJECTED_STATUS, поэтому decision ниже
+  // раньше молча падал на дефолт `true` — Комдир видел пустую таблицу
+  // позиций и "Проект подтверждён", как будто уже принял решение по
+  // проекту, которого физически ещё не существует.
+  const isBeingEdited = currentStatus === "В редактировании";
 
   const decision: null | boolean =
     currentStatus === REJECTED_STATUS ? false :
@@ -3616,6 +3703,18 @@ const [itemSaveError, setItemSaveError] =
               </div>
             </div>
           )}
+          {isBeingEdited ? (
+            <div className="bg-card rounded-lg border border-border p-10 flex flex-col items-center text-center">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-400/20 flex items-center justify-center mb-3">
+                <Pencil size={18} className="text-blue-600 dark:text-blue-400" />
+              </div>
+              <h3 className="text-sm font-bold text-foreground">Проект пока в разработке</h3>
+              <p className="text-xs text-muted-foreground mt-1 max-w-md">
+                Менеджер вносит позиции — таблица и решение по проекту появятся здесь, как только проект будет отправлен на согласование.
+              </p>
+            </div>
+          ) : (
+          <>
           {(() => {
             // Себестоимость/поставщик/маржа больше не показываются и не
             // редактируются на ProjectPage — заполняются на ProcurementPage.
@@ -3633,7 +3732,6 @@ const [itemSaveError, setItemSaveError] =
               const isSaving = updatingItemId === item.id;
               const disabled = !canEditItems || isSaving;
               const stockStatusName = item.status?.status_name ?? "—";
-              const isInStock = stockStatusName === "На складе";
               // Компонент комплекта: цена/себестоимость правятся только на
               // уровне комплекта (см. KitGroupHeaderRow) — здесь только
               // отображение уже распределённых (allocated) значений.
@@ -3644,7 +3742,23 @@ const [itemSaveError, setItemSaveError] =
                   <tr key={item.id} className="hover:bg-background/50">
                     <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
                     <td className={`px-4 py-3 text-sm text-foreground ${isKitComponent ? "pl-8 border-l-2 border-border/60" : ""}`}>
-                      {item.product?.name ?? "—"}
+                      <div className="flex items-center gap-1.5">
+                        <span>{item.product?.name ?? "—"}</span>
+                        {!isKitComponent && (
+                          <FixProductButton
+                            projectId={resolvedProjectId}
+                            itemId={item.id}
+                            currentProductId={item.product?.id ?? null}
+                            currentProductName={item.product?.name ?? ""}
+                            currentUnit={item.product?.unit ?? null}
+                            onUpdated={(updated) => {
+                              setProjectItems((current) =>
+                                current.map((existing) => existing.id === updated.id ? updated : existing),
+                              );
+                            }}
+                          />
+                        )}
+                      </div>
                       {isKitComponent && quantityPerKit > 0 && (
                         <p className="mt-0.5 text-[11px] text-muted-foreground">
                           × {quantityPerKit.toLocaleString("ru-RU")} в комплекте
@@ -3690,10 +3804,7 @@ const [itemSaveError, setItemSaveError] =
                         <Loader2 size={16} className="animate-spin text-primary" />
                       ) : (
                         <div className="flex items-center gap-1.5">
-                          <span
-                              className={`inline-flex px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap ${isInStock ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-1 ring-green-200" : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200"}`}>
-                            {stockStatusName}
-                          </span>
+                          <ItemStatusBadge statusName={stockStatusName} color={item.status?.color} />
                           {isEditedByDirector && (
                             <span title="Изменено Комдиром">
                               <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
@@ -3839,6 +3950,8 @@ const [itemSaveError, setItemSaveError] =
                     className="text-sm font-medium text-red-700 dark:text-red-300">Проект отклонён</span></div>
             )}
           </div>
+          </>
+          )}
         </div>
     </PageWrap>
   );

@@ -4,10 +4,18 @@
 // остатков в кит-пикере). Вынесено из ProjectPage.tsx, чтобы таблица и
 // модалка «Состав комплекта» не держали два независимых копипаста одной и
 // той же логики.
+// Единая точка правки текста этого статуса — при изменении формулировки
+// на backend достаточно поменять значение здесь.
+export const POSSIBLE_MATCH_ML_STATUS = "Возможное совпадение (требует проверки)";
+// Бывший "Нет в системе (похожие варианты)" — backend продолжает присылать
+// similar_variants в ответе для этого статуса, но фронт их больше не
+// показывает (см. использование NEW_PRODUCT_ML_STATUS в ProjectPage.tsx).
+export const NEW_PRODUCT_ML_STATUS = "Новый товар";
+
 export type MlStatus =
   | "Нет в системе"
-  | "Нет в системе (похожие варианты)"
-  | "Возможное совпадение (требует проверки)"
+  | typeof NEW_PRODUCT_ML_STATUS
+  | typeof POSSIBLE_MATCH_ML_STATUS
   | "Есть в системе (недостаточно)"
   | "На складе"
   // Комплект привязан к строке, но ПМ ещё не подобрал для него состав —
@@ -26,11 +34,11 @@ export const ML_STATUS_STYLES: Record<
     badge: "bg-red-100 dark:bg-red-400/20 text-red-800 dark:text-red-200 border border-red-300 dark:border-red-400/30",
     row: "bg-red-50 dark:bg-red-400/15 hover:bg-red-100/60 dark:bg-red-400/30",
   },
-  "Нет в системе (похожие варианты)": {
+  [NEW_PRODUCT_ML_STATUS]: {
     badge: "bg-orange-100 dark:bg-orange-400/20 text-orange-800 dark:text-orange-200 border border-orange-300 dark:border-orange-400/30",
     row: "bg-orange-50 dark:bg-orange-400/15 hover:bg-orange-100/60 dark:bg-orange-400/30",
   },
-  "Возможное совпадение (требует проверки)": {
+  [POSSIBLE_MATCH_ML_STATUS]: {
     badge: "bg-amber-100 dark:bg-amber-400/20 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-400/30",
     row: "bg-amber-50 dark:bg-amber-400/15 hover:bg-amber-100/60 dark:bg-amber-400/30",
   },
@@ -54,11 +62,11 @@ export const normalizeMlStatus = (
   const normalized = status?.trim();
 
   if (normalized === "Нет в системе") return "Нет в системе";
-  if (normalized === "Нет в системе (похожие варианты)") {
-    return "Нет в системе (похожие варианты)";
+  if (normalized === NEW_PRODUCT_ML_STATUS) {
+    return NEW_PRODUCT_ML_STATUS;
   }
-  if (normalized === "Возможное совпадение (требует проверки)") {
-    return "Возможное совпадение (требует проверки)";
+  if (normalized === POSSIBLE_MATCH_ML_STATUS) {
+    return POSSIBLE_MATCH_ML_STATUS;
   }
   if (normalized === "На складе") return "На складе";
   if (normalized === "Есть в системе (недостаточно)") {

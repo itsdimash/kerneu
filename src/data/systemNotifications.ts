@@ -23,6 +23,7 @@ export type NotificationCategory =
   | "docs_pending_director"
   | "docs_approved"
   | "docs_rejected"
+  | "project_reverted"
   | "stock_low"
   | "goods_arrived"
   | "goods_shipped"

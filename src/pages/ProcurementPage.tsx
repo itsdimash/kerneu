@@ -1,6 +1,8 @@
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useCallback, useMemo, useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { PageWrap } from "../app/components/common/PageWrap";
+import { Chip } from "../app/components/common/Chip";
+import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
 import { ProcurementSummaryView } from "./ProcurementSummaryView";
 import { fmt } from "../lib/format";
 import type { Role, ProjectState } from "../types";
@@ -391,35 +393,68 @@ export function ProcurementPage({
       safeTrim(selectedProject?.status?.status_name) || safeTrim(selectedProject?.status_name)
     ) === normalizeText("Активный закуп");
 
+  const selectedProjectStatusName =
+    safeTrim(selectedProject?.status?.status_name) || safeTrim(selectedProject?.status_name) || "";
+
+  // Вынесено из useEffect в переиспользуемую функцию — нужна не только при
+  // монтировании, но и сразу после отката проекта из "Активный закуп"/"На
+  // отгрузке" (см. ProjectRevertControl ниже): без немедленного рефетча
+  // список продолжал бы показывать проект, ушедший из диапазона закупок,
+  // до следующего захода на страницу.
+  const isMountedRef = useRef(true);
+  useEffect(() => () => { isMountedRef.current = false; }, []);
+
+  const refetchProjects = useCallback(async (): Promise<ProjectListItem[]> => {
+    try {
+      setProjectsLoading(true);
+      const response = await fetch(`${API_BASE_URL}/projects/`, { credentials: "include" });
+      if (!response.ok) throw new Error("Ошибка загрузки");
+
+      const data: ProjectListItem[] = await response.json();
+      const activeIndex = PROJECT_WORKFLOW.indexOf("Активный закуп");
+      const completedIndex = PROJECT_WORKFLOW.indexOf("На отгрузке");
+
+      const filtered = data.filter(p => {
+         const statusName = safeTrim(p.status?.status_name) || safeTrim(p.status_name) || "Новый проект";
+         const idx = PROJECT_WORKFLOW.indexOf(statusName);
+         // Верхняя граница: как только проект переходит в "На отгрузке",
+         // он больше не должен висеть в закупках (симметрично тому,
+         // как это уже работает на странице "Договор").
+         return idx >= activeIndex && idx < completedIndex;
+      });
+
+      if (isMountedRef.current) setProjects(filtered);
+      return filtered;
+    } catch(e) {
+      console.error("Ошибка при загрузке проектов:", e);
+      return [];
+    } finally {
+      if (isMountedRef.current) setProjectsLoading(false);
+    }
+  }, []);
+
+  // Проект успешно вернули в "В редактировании" — он больше не входит в
+  // диапазон "Активный закуп"..."На отгрузке", поэтому рефетчим список (а не
+  // патчим статус локально) и, если это был именно открытый проект, сразу
+  // закрываем его закупку — иначе на экране остались бы данные проекта,
+  // которого уже нет в выпадающем списке.
+  const handleProjectReverted = async (revertedProjectId: number) => {
+    // Оптимистично убираем проект из выпадающего списка сразу — не ждём
+    // ответа сети. refetchProjects() ниже — источник истины: если backend
+    // всё ещё отдаёт проект в диапазоне "Активный закуп"..."На отгрузке",
+    // он появится обратно, и это будет означать проблему на backend, а не
+    // отсутствие рефетча на фронте.
+    setProjects((prev) => prev.filter((p) => p.id !== revertedProjectId));
+    if (selectedProject?.id === revertedProjectId) {
+      setSelectedProject(null);
+      setSelectedProjectId("");
+      setPurchaseItems([]);
+    }
+    await refetchProjects();
+  };
+
   useEffect(() => {
-    let cancelled = false;
-    const fetchProjects = async () => {
-      try {
-        setProjectsLoading(true);
-        const response = await fetch(`${API_BASE_URL}/projects/`, { credentials: "include" });
-        if (!response.ok) throw new Error("Ошибка загрузки");
-
-        const data: ProjectListItem[] = await response.json();
-        const activeIndex = PROJECT_WORKFLOW.indexOf("Активный закуп");
-        const completedIndex = PROJECT_WORKFLOW.indexOf("На отгрузке");
-
-        const filtered = data.filter(p => {
-           const statusName = safeTrim(p.status?.status_name) || safeTrim(p.status_name) || "Новый проект";
-           const idx = PROJECT_WORKFLOW.indexOf(statusName);
-           // Верхняя граница: как только проект переходит в "На отгрузке",
-           // он больше не должен висеть в закупках (симметрично тому,
-           // как это уже работает на странице "Договор").
-           return idx >= activeIndex && idx < completedIndex;
-        });
-
-        if (!cancelled) setProjects(filtered);
-      } catch(e) {
-        console.error("Ошибка при загрузке проектов:", e);
-      } finally {
-        if (!cancelled) setProjectsLoading(false);
-      }
-    };
-    fetchProjects();
+    refetchProjects();
     fetchWarehouseList().then(whs => {
       if (whs && whs.length > 0) {
         setWarehouses(whs);
@@ -427,9 +462,7 @@ export function ProcurementPage({
       }
 
     }).catch(e => console.error("Ошибка загрузки складов:", e));
-
-    return () => { cancelled = true; };
-  }, []);
+  }, [refetchProjects]);
 
   // NEW: справочник поставщиков для автокомплита при смене поставщика —
   // грузим только тем, кто вообще может редактировать (ПМ/Комдир/админ).
@@ -1131,6 +1164,16 @@ export function ProcurementPage({
               >
                 <RefreshCw size={15} className={purchaseLoading ? "animate-spin" : ""} />
               </button>
+            )}
+            {selectedProject && selectedProjectStatusName && (
+              <>
+                <Chip status={selectedProjectStatusName} />
+                <ProjectRevertControl
+                  projectId={selectedProject.id}
+                  currentStatus={selectedProjectStatusName}
+                  onReverted={() => handleProjectReverted(selectedProject.id)}
+                />
+              </>
             )}
           </div>
         </div>

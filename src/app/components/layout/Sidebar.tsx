@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
-import { FolderOpen, FileText, ShoppingCart, Package, CheckSquare, Receipt, LayoutDashboard, X, Search, History, Landmark, Sparkles, PanelLeftClose, PanelLeftOpen, ListChecks } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { FolderOpen, FileText, ShoppingCart, Package, CheckSquare, Receipt, LayoutDashboard, X, Search, History, Landmark, Sparkles, PanelLeftClose, PanelLeftOpen, ListChecks, Loader2 } from "lucide-react";
 import type { Page, Role, ProjectState } from "../../../types";
 import type { NotificationCategory } from "../../../data/systemNotifications";
 import { useNotifications } from "../../notifications/NotificationsContext";
 import { KerneuLogo } from "../common/KerneuLogo";
 import ProductsCatalog from "../common/ProductsCatalog";
+import { Chip } from "../common/Chip";
 
 // Категории, которые на странице "Заявки на согласование" требуют внимания
 // директора — те же, что учитываются на самой странице как pending. Держим
@@ -16,6 +17,33 @@ const APPROVALS_PENDING_CATEGORIES = new Set<NotificationCategory>([
   "invoice_pending_director",
   "docs_pending_director",
 ]);
+
+type ProjectSearchItem = {
+  id: number;
+  name: string;
+  status?: { status_name?: string | null } | null;
+};
+
+const PROJECT_SEARCH_DEBOUNCE_MS = 300;
+const PROJECT_SEARCH_MAX_RESULTS = 8;
+
+// Подсвечивает первое вхождение query внутри text — регистронезависимо.
+// Используется только для подсказок комбобокса "Найти проект".
+function highlightMatch(text: string, query: string) {
+  const trimmed = query.trim();
+  if (!trimmed) return text;
+  const idx = text.toLowerCase().indexOf(trimmed.toLowerCase());
+  if (idx === -1) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-primary/20 text-primary rounded-sm px-0.5">
+        {text.slice(idx, idx + trimmed.length)}
+      </mark>
+      {text.slice(idx + trimmed.length)}
+    </>
+  );
+}
 
 export const NAV: { id: Page; label: string; icon: React.ElementType; badge?: number; roles: Role[] }[] = [
   { id: "dashboard",   label: "Дашборд",    icon: LayoutDashboard, roles: ["commercial_director", "pm"] },
@@ -45,7 +73,12 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject, mobil
   onToggleCollapse?: () => void;
 }) {
   const [showProjectModal, setShowProjectModal] = useState(false);
-  const [projectIdInput, setProjectIdInput] = useState("");
+  const [projectQuery, setProjectQuery] = useState("");
+  const [debouncedProjectQuery, setDebouncedProjectQuery] = useState("");
+  const [projectOptions, setProjectOptions] = useState<ProjectSearchItem[]>([]);
+  const [projectOptionsLoading, setProjectOptionsLoading] = useState(false);
+  const [projectOptionsError, setProjectOptionsError] = useState<string | null>(null);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
 
   // Живой счётчик и анимация на пункте "Заявки на согласование" — данные
   // берутся из того же NotificationsProvider, что и (для остальных ролей)
@@ -85,13 +118,86 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject, mobil
     onPage(id);
   };
 
- const handleFindProject = () => {
-    if (!projectIdInput.trim()) return;
-    onFindProject?.(projectIdInput);
-    onPage("project");
+  const closeProjectModal = () => {
     setShowProjectModal(false);
-    setProjectIdInput("");
-};
+    setProjectQuery("");
+    setDebouncedProjectQuery("");
+    setProjectOptions([]);
+    setProjectOptionsError(null);
+    setHighlightedIndex(0);
+  };
+
+  // Список проектов для комбобокса грузится один раз при открытии модала —
+  // тот же GET /api/v1/projects/, что уже используют Дашборд и старая
+  // реализация этого модала для поиска по имени; отдельного
+  // search-эндпоинта на backend нет, фильтрация ниже (filteredProjects) —
+  // целиком на фронте, по уже загруженному списку.
+  useEffect(() => {
+    if (!showProjectModal) return;
+    let cancelled = false;
+    setProjectOptionsLoading(true);
+    setProjectOptionsError(null);
+    fetch("/api/v1/projects/", { credentials: "include" })
+      .then((res) => {
+        if (!res.ok) throw new Error("Не удалось загрузить список проектов");
+        return res.json();
+      })
+      .then((data) => { if (!cancelled) setProjectOptions(Array.isArray(data) ? data : []); })
+      .catch((error) => {
+        if (!cancelled) {
+          setProjectOptions([]);
+          setProjectOptionsError(error instanceof Error ? error.message : "Не удалось загрузить список проектов");
+        }
+      })
+      .finally(() => { if (!cancelled) setProjectOptionsLoading(false); });
+    return () => { cancelled = true; };
+  }, [showProjectModal]);
+
+  // Дебаунс ввода ~300мс — фильтрация ниже дешёвая (по уже загруженному
+  // списку), но не пересчитываем/не перерисовываем подсказки на каждое
+  // нажатие клавиши, а только когда пользователь на миг остановился.
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedProjectQuery(projectQuery), PROJECT_SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [projectQuery]);
+
+  const filteredProjects = useMemo(() => {
+    const q = debouncedProjectQuery.trim().toLowerCase();
+    if (!q) return [];
+    return projectOptions
+      .filter((p) => (p.name ?? "").toLowerCase().includes(q))
+      .slice(0, PROJECT_SEARCH_MAX_RESULTS);
+  }, [projectOptions, debouncedProjectQuery]);
+
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [filteredProjects]);
+
+  // Навигация — только по явному выбору уже известного (пришедшего с backend)
+  // id, поэтому getProjectItems ниже по цепочке (см. AppShell.resolveAndSelectProject)
+  // всегда попадёт в числовую ветку и не полезет искать точное совпадение
+  // имени — а значит, и не сможет провалиться с "проект не найден".
+  const handleSelectProject = (project: ProjectSearchItem) => {
+    onFindProject?.(String(project.id));
+    onPage("project");
+    closeProjectModal();
+  };
+
+  const handleProjectSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightedIndex((i) => Math.min(i + 1, filteredProjects.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightedIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const selected = filteredProjects[highlightedIndex];
+      if (selected) handleSelectProject(selected);
+    } else if (e.key === "Escape") {
+      closeProjectModal();
+    }
+  };
 
   return (
     <>
@@ -193,29 +299,63 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject, mobil
       </aside>
 
       {showProjectModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4 animate-in fade-in duration-200" onClick={() => setShowProjectModal(false)}>
-          <div className="bg-card rounded-xl shadow-modal border border-border w-full max-w-[360px] p-5 animate-in fade-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start justify-center z-[60] p-4 pt-[12vh] animate-in fade-in duration-200" onClick={closeProjectModal}>
+          <div className="bg-card rounded-xl shadow-modal border border-border w-full max-w-[420px] p-4 animate-in fade-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-foreground">Найти проект</h3>
-              <button onClick={() => setShowProjectModal(false)} className="text-muted-foreground hover:text-foreground transition-colors">
+              <button onClick={closeProjectModal} className="text-muted-foreground hover:text-foreground transition-colors">
                 <X size={18} />
               </button>
             </div>
-            <label className="text-xs text-muted-foreground mb-1 block">Название проекта</label>
-            <input
-              autoFocus
-              value={projectIdInput}
-              onChange={(e) => setProjectIdInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleFindProject()}
-              placeholder="Например: Школа №196"
-              className="w-full border border-input bg-input-background rounded-md px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
-            />
-            <button
-              onClick={handleFindProject}
-              className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-sm font-medium py-2 rounded-md hover:bg-primary/90 transition-colors"
-            >
-              <Search size={15} /> Найти
-            </button>
+
+            <div className="relative">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+              <input
+                autoFocus
+                value={projectQuery}
+                onChange={(e) => setProjectQuery(e.target.value)}
+                onKeyDown={handleProjectSearchKeyDown}
+                placeholder="Начните вводить название"
+                className="w-full border border-input bg-input-background rounded-md pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
+              />
+              {projectOptionsLoading && (
+                <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground animate-spin" />
+              )}
+            </div>
+
+            {/* Подсказки — только когда есть непустой (после дебаунса) запрос;
+                пустой инпут не показывает список вообще (нет backend-эндпоинта
+                для "недавних"/"активных" проектов, отдающего это быстро — см.
+                исследование задачи), только плейсхолдер в самом поле. */}
+            {debouncedProjectQuery.trim() && (
+              <div className="mt-2 max-h-72 overflow-y-auto rounded-lg border border-border shadow-sm divide-y divide-border">
+                {projectOptionsError ? (
+                  <p className="px-3 py-3 text-xs text-destructive">{projectOptionsError}</p>
+                ) : filteredProjects.length === 0 ? (
+                  <p className="px-3 py-3 text-sm text-muted-foreground">Ничего не найдено</p>
+                ) : (
+                  filteredProjects.map((project, index) => (
+                    <button
+                      key={project.id}
+                      type="button"
+                      onClick={() => handleSelectProject(project)}
+                      onMouseEnter={() => setHighlightedIndex(index)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors ${
+                        index === highlightedIndex ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60"
+                      }`}
+                    >
+                      <FolderOpen size={15} className="flex-shrink-0 text-muted-foreground" />
+                      <span className="flex-1 min-w-0 truncate text-sm text-foreground">
+                        {highlightMatch(project.name, debouncedProjectQuery)}
+                      </span>
+                      {project.status?.status_name && (
+                        <Chip status={project.status.status_name} />
+                      )}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

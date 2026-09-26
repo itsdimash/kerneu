@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft,
+  LogOut,
   ArrowUpDown,
   Boxes,
   Building2,
@@ -17,10 +17,10 @@ import { fetchWarehouseStocks } from "../api/api";
 import type { WarehouseInfo, WarehouseStockResponse } from "../api/api";
 
 /**
- * Публичная (без логина) страница просмотра остатков склада — /stock.
- * Только чтение. Использует тот же GET /warehouse/stocks, что и WarehousePage:
- * у этого эндпоинта нет Depends(get_current_user), поэтому он отвечает и без
- * логина. supplier_name приходит в ответе, но на странице не выводится.
+ * Страница остатков склада для роли "guest" — единственное, что видит
+ * гостевой аккаунт после входа (см. App.tsx). Только чтение, без меню ERP.
+ * Данные — тот же GET /warehouse/stocks, что и у WarehousePage (запрос идёт
+ * с cookie сессии guest). supplier_name приходит в ответе, но не выводится.
  */
 const AUTO_REFRESH_MS = 60_000;
 
@@ -102,7 +102,7 @@ function mapStock(item: WarehouseStockResponse): StockRow {
 
 const fmt = (n: number) => n.toLocaleString("ru-RU");
 
-export function PublicStockPage({ onBack, backLabel = "Войти в ERP" }: { onBack?: () => void; backLabel?: string }) {
+export function PublicStockPage({ userName, onLogout }: { userName?: string | null; onLogout?: () => void }) {
   const [warehouses, setWarehouses] = useState<WarehouseInfo[]>(DEFAULT_WAREHOUSES);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<number | "all">("all");
 
@@ -179,14 +179,17 @@ export function PublicStockPage({ onBack, backLabel = "Войти в ERP" }: { o
             <KerneuLogo size={28} />
             <span className="font-semibold text-sm text-foreground">Kerneu Group</span>
           </div>
-          {onBack && (
-            <button
-              onClick={onBack}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border border-border text-foreground hover:bg-muted transition-colors active:scale-[0.98]"
-            >
-              <ArrowLeft size={14} /> {backLabel}
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            {userName && <span className="hidden sm:inline text-sm text-muted-foreground">{userName}</span>}
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border border-border text-foreground hover:bg-muted transition-colors active:scale-[0.98]"
+              >
+                <LogOut size={14} /> Выйти
+              </button>
+            )}
+          </div>
         </div>
       </header>
 

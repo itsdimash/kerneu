@@ -25,6 +25,7 @@ const TAB_CATEGORIES: Record<TabId, NotificationCategory[]> = {
     "kp_rejected",
     "warehouse_request_approved",
     "warehouse_request_rejected",
+    "project_reverted",
   ],
   procurement: [
     "invoice_pending_director",
@@ -64,6 +65,7 @@ const RESOLVED_CATEGORIES = new Set<NotificationCategory>([
   "kp_rejected",
   "warehouse_request_approved",
   "warehouse_request_rejected",
+  "project_reverted",
 ]);
 
 function statusBucket(category: NotificationCategory): StatusBucket {
