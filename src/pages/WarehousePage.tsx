@@ -43,6 +43,8 @@ import {
   fetchWarehouseList,
   downloadShipmentChecklist,
   uploadShipmentPhoto,
+  presignReceiptPhotoUpload,
+  presignShipmentPhotoUpload,
   resolveDefectReplacement,
   WarehouseStockResponse,
   WarehouseReceiptResponse,
@@ -51,6 +53,7 @@ import {
   ShipmentHistoryResponse,
   ReceiptStatus,
 } from "../api/api";
+import { uploadFileToR2 } from "../lib/uploadToR2";
 
 type StockQuantityField = "total" | "reserved" | "defective" | "available";
 
@@ -97,6 +100,8 @@ type ArrivalRow = {
   actualQuantity: number | null;
   warehouseComment: string | null;
   photoPath: string | null;
+  // Готовый URL с бэкенда — рендерить фото только через него.
+  photoUrl: string | null;
   confirmedAt: string | null;
   defectiveQuantity: number;
   defectResolved: boolean;
@@ -153,6 +158,8 @@ type ShipmentHistoryItemRow = {
   quantityPerKit: number | string | null;
   comment: string | null;
   photoPath: string | null;
+  // Готовый URL с бэкенда — рендерить фото только через него.
+  photoUrl: string | null;
   shippedBy: string | null;
   shippedAt: string | null;
 };
@@ -188,6 +195,7 @@ type PendingShipmentItemRow = {
   warehouseId: number | null;
   availableWarehouses: { warehouseId: number; warehouseName: string }[];
   photo: File | null;
+  photoUploadProgress?: number | null;
   kitGroupKey: string | null;
   kitName: string | null;
   kitQuantity: number | string | null;
@@ -324,6 +332,7 @@ function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
     actualQuantity: item.actual_quantity ?? null,
     warehouseComment: item.warehouse_comment ?? null,
     photoPath: item.photo_path ?? null,
+    photoUrl: item.photo_url ?? null,
     confirmedAt: item.confirmed_at ?? null,
     defectiveQuantity: item.defective_quantity ?? 0,
     defectResolved: item.defect_resolved ?? false,
@@ -354,7 +363,12 @@ function mapShipment(item: ShipmentHistoryResponse): ShipmentRow {
       kitQuantity: it.kit_quantity ?? null,
       quantityPerKit: it.quantity_per_kit ?? null,
       comment: it.comment ?? null,
-      photoPath: it.photo_path ?? null,
+      // Бэкенд отдаёт фото списком (photos[]) — на позицию обычно ровно
+      // одно, берём первое. Раньше здесь читалось несуществующее
+      // it.photo_path/it.photo_url (их нет в ShipmentHistoryItem, только в
+      // элементах photos[]), из-за чего фото никогда не отображалось.
+      photoPath: it.photos?.[0]?.photo_path ?? null,
+      photoUrl: it.photos?.[0]?.photo_url ?? null,
       shippedBy: it.shipped_by ?? null,
       shippedAt: it.shipped_at ?? null,
     })),
@@ -512,6 +526,7 @@ function ConfirmReceiptModal({
   const [comment, setComment] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async () => {
@@ -534,21 +549,48 @@ function ConfirmReceiptModal({
 
     setSubmitting(true);
     setError(null);
+    setUploadProgress(null);
+
+    // Фото грузится в два независимых шага (PUT в R2, затем подтверждение
+    // на бэкенде) — ошибки на них означают разное для пользователя, поэтому
+    // различаем сообщения, а не сводим всё к одному "не удалось".
+    let photoObjectKey: string | null = null;
+    if (photo) {
+      try {
+        const presign = await presignReceiptPhotoUpload(receipt.id, photo.type || "application/octet-stream", photo.name);
+        setUploadProgress(0);
+        await uploadFileToR2(presign.upload_url, photo, setUploadProgress);
+        photoObjectKey = presign.object_key;
+      } catch (e) {
+        console.error("Не удалось загрузить фото прихода в R2", e);
+        setError("Не удалось загрузить фото. Проверьте соединение и попробуйте ещё раз.");
+        setSubmitting(false);
+        setUploadProgress(null);
+        return;
+      }
+    }
 
     try {
       await confirmReceipt(receipt.id, {
         actual_quantity: qty,
         defective_quantity: defQty,
         comment,
-        photo,
+        photo_object_key: photoObjectKey,
       });
       onSuccess();
       onClose();
     } catch (e: any) {
       const detail = e?.response?.data?.detail;
-      setError(typeof detail === "string" ? detail : "Не удалось подтвердить приход");
+      setError(
+        photoObjectKey
+          ? "Фото загружено, но не удалось подтвердить приход. Попробуйте ещё раз."
+          : typeof detail === "string"
+          ? detail
+          : "Не удалось подтвердить приход"
+      );
     } finally {
       setSubmitting(false);
+      setUploadProgress(null);
     }
   };
 
@@ -642,6 +684,14 @@ function ConfirmReceiptModal({
                 onChange={(e) => setPhoto(e.target.files?.[0] || null)}
               />
             </label>
+            {uploadProgress != null && (
+              <div className="mt-1.5 h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+            )}
           </div>
         </div>
 
@@ -664,10 +714,23 @@ function ConfirmReceiptModal({
 }
 
 // ==========================================
+// Лайтбокс увеличенного просмотра фото — общий для ReceiptDetailsModal и
+// ShipmentDetailsModal (был захардкожен только под отгрузку).
+// ==========================================
+function PhotoLightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4"
+      onClick={onClose}
+    >
+      <img src={src} alt={alt} className="max-h-[90vh] max-w-full rounded-lg object-contain" />
+    </div>
+  );
+}
+
+// ==========================================
 // Модалка просмотра деталей уже подтверждённого прихода
 // ==========================================
-const RECEIPT_PHOTO_BASE = "";
-
 function ReceiptDetailsModal({
   receipt,
   canEdit,
@@ -683,26 +746,53 @@ function ReceiptDetailsModal({
   const [comment, setComment] = useState(receipt.warehouseComment || "");
   const [photo, setPhoto] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
-  const photoUrl = receipt.photoPath
-    ? `${RECEIPT_PHOTO_BASE}/${receipt.photoPath.replace(/^\//, "")}`
-    : null;
+  const photoUrl = receipt.photoUrl;
 
   const handleSave = async () => {
     setSubmitting(true);
     setError(null);
+    setUploadProgress(null);
+
+    // См. ConfirmReceiptModal.handleSubmit — тот же принцип раздельных
+    // сообщений об ошибке для шага загрузки в R2 и шага сохранения.
+    let photoObjectKey: string | undefined;
+    if (photo) {
+      try {
+        const presign = await presignReceiptPhotoUpload(receipt.id, photo.type || "application/octet-stream", photo.name);
+        setUploadProgress(0);
+        await uploadFileToR2(presign.upload_url, photo, setUploadProgress);
+        photoObjectKey = presign.object_key;
+      } catch (e) {
+        console.error("Не удалось загрузить фото прихода в R2", e);
+        setError("Не удалось загрузить фото. Проверьте соединение и попробуйте ещё раз.");
+        setSubmitting(false);
+        setUploadProgress(null);
+        return;
+      }
+    }
+
     try {
-      const updated = await updateReceiptDetails(receipt.id, { comment, photo });
+      const updated = await updateReceiptDetails(receipt.id, { comment, photo_object_key: photoObjectKey });
       onSuccess(mapReceipt(updated));
       setEditing(false);
       setPhoto(null);
     } catch (e: any) {
       const detail = e?.response?.data?.detail;
-      setError(typeof detail === "string" ? detail : "Не удалось сохранить изменения");
+      setError(
+        photoObjectKey
+          ? "Фото загружено, но не удалось сохранить изменения. Попробуйте ещё раз."
+          : typeof detail === "string"
+          ? detail
+          : "Не удалось сохранить изменения"
+      );
     } finally {
       setSubmitting(false);
+      setUploadProgress(null);
     }
   };
 
@@ -770,7 +860,12 @@ function ReceiptDetailsModal({
         )}
 
         {photoUrl && !editing && (
-          <img src={photoUrl} alt="Фото товара" className="w-full rounded-lg border border-border mb-4 max-h-64 object-contain bg-background" />
+          <img
+            src={photoUrl}
+            alt="Фото товара"
+            onClick={() => setPreviewOpen(true)}
+            className="w-full rounded-lg border border-border mb-4 max-h-64 object-contain bg-background cursor-pointer"
+          />
         )}
 
         {!editing ? (
@@ -814,6 +909,14 @@ function ReceiptDetailsModal({
                   onChange={(e) => setPhoto(e.target.files?.[0] || null)}
                 />
               </label>
+              {uploadProgress != null && (
+                <div className="mt-1.5 h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                  <div
+                    className="h-full bg-primary transition-all"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-1">
@@ -839,6 +942,10 @@ function ReceiptDetailsModal({
           </div>
         )}
       </div>
+
+      {previewOpen && photoUrl && (
+        <PhotoLightbox src={photoUrl} alt="Фото товара" onClose={() => setPreviewOpen(false)} />
+      )}
     </div>
   );
 }
@@ -847,8 +954,6 @@ function ReceiptDetailsModal({
 // Модалка деталей уже выполненной отгрузки (read-only) — позиции накладной
 // с фото, которое кладовщик приложил в момент отгрузки
 // ==========================================
-const shipmentPhotoUrl = (photoPath: string) => `/${photoPath.replace(/^\//, "")}`;
-
 function ShipmentDetailsModal({
   shipment,
   onClose,
@@ -859,7 +964,7 @@ function ShipmentDetailsModal({
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
 
   const shippedBy = shipment.items.find((it) => it.shippedBy)?.shippedBy || null;
-  const photosCount = shipment.items.filter((it) => it.photoPath).length;
+  const photosCount = shipment.items.filter((it) => it.photoUrl).length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
@@ -911,7 +1016,7 @@ function ShipmentDetailsModal({
         ) : (
           <div className="flex flex-col gap-3">
             {shipment.items.map((it) => {
-              const photoUrl = it.photoPath ? shipmentPhotoUrl(it.photoPath) : null;
+              const photoUrl = it.photoUrl;
 
               return (
                 <div key={it.id} className="flex items-start gap-3 rounded-lg border border-border p-3">
@@ -925,11 +1030,11 @@ function ShipmentDetailsModal({
                       <img
                         src={photoUrl}
                         alt={`Фото ${it.productName}`}
-                        className="h-16 w-16 object-cover bg-background"
+                        className="h-32 w-32 object-cover bg-background"
                       />
                     </button>
                   ) : (
-                    <div className="flex h-16 w-16 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border text-muted-foreground/60">
+                    <div className="flex h-32 w-32 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border text-muted-foreground/60">
                       <Camera size={14} />
                       <span className="text-[10px]">нет фото</span>
                     </div>
@@ -986,16 +1091,7 @@ function ShipmentDetailsModal({
       </div>
 
       {previewPhoto && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4"
-          onClick={() => setPreviewPhoto(null)}
-        >
-          <img
-            src={previewPhoto}
-            alt="Фото отгрузки"
-            className="max-h-[90vh] max-w-full rounded-lg object-contain"
-          />
-        </div>
+        <PhotoLightbox src={previewPhoto} alt="Фото отгрузки" onClose={() => setPreviewPhoto(null)} />
       )}
     </div>
   );
@@ -1212,8 +1308,25 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
           ? p
           : {
               ...p,
-              items: p.items.map((it) => (it.id === itemId ? { ...it, photo: file } : it)),
+              items: p.items.map((it) =>
+                it.id === itemId ? { ...it, photo: file, photoUploadProgress: null } : it
+              ),
               error: null,
+            }
+      )
+    );
+  };
+
+  const setShipmentItemPhotoProgress = (projectId: number, itemId: number, percent: number) => {
+    setPendingShipments((prev) =>
+      prev.map((p) =>
+        p.projectId !== projectId
+          ? p
+          : {
+              ...p,
+              items: p.items.map((it) =>
+                it.id === itemId ? { ...it, photoUploadProgress: percent } : it
+              ),
             }
       )
     );
@@ -1250,18 +1363,48 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
 
       // Фото — отдельно на каждую отгружаемую позицию, но необязательно:
       // грузим только те позиции, для которых кладовщик реально прикрепил файл.
-      // NOTE: uploadShipmentPhoto нужно расширить в api.ts третьим необязательным
-      // параметром itemId, чтобы фото сохранялось в shipment_photos с привязкой
-      // к project_item_id, а не только к проекту.
+      // Presigned-флоу — это два независимых сетевых запроса (PUT в R2, потом
+      // подтверждение на бэкенде), и ошибка на любом из них не должна
+      // блокировать саму отгрузку (она уже прошла шагом выше) — только
+      // всплыть пользователю через alert, т.к. позиция тут же исчезает из
+      // списка и локальное состояние ошибки на строке никто не увидит.
+      const photoFailures: string[] = [];
+
       await Promise.all(
         checkedItems
           .filter((it) => it.photo)
-          .map((it) =>
-            uploadShipmentPhoto(projectId, it.photo as File, it.id).catch((photoErr) => {
+          .map(async (it) => {
+            const file = it.photo as File;
+            let objectKey: string;
+            try {
+              const presign = await presignShipmentPhotoUpload(
+                projectId,
+                file.type || "application/octet-stream",
+                file.name,
+                it.id
+              );
+              await uploadFileToR2(presign.upload_url, file, (percent) =>
+                setShipmentItemPhotoProgress(projectId, it.id, percent)
+              );
+              objectKey = presign.object_key;
+            } catch (photoErr) {
               console.error(`Не удалось загрузить фото для позиции ${it.id}`, photoErr);
-            })
-          )
+              photoFailures.push(`«${it.productName}»: не удалось загрузить фото`);
+              return;
+            }
+
+            try {
+              await uploadShipmentPhoto(projectId, objectKey, it.id);
+            } catch (confirmErr) {
+              console.error(`Фото для позиции ${it.id} загружено, но не сохранено`, confirmErr);
+              photoFailures.push(`«${it.productName}»: фото загружено, но не удалось сохранить`);
+            }
+          })
       );
+
+      if (photoFailures.length > 0) {
+        alert(`Отгрузка оформлена, но есть проблемы с фото:\n${photoFailures.join("\n")}`);
+      }
 
       const remainingCount = proj.items.length - checkedItems.length;
 
@@ -1602,7 +1745,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
       }
       group.shipments.push(s);
       group.itemsCount += s.items.length;
-      group.photosCount += s.items.filter((it) => it.photoPath).length;
+      group.photosCount += s.items.filter((it) => it.photoUrl).length;
 
       const ts = s.shippedAt ? new Date(s.shippedAt).getTime() : NaN;
       if (Number.isFinite(ts) && (group.lastShipmentTs == null || ts > group.lastShipmentTs)) {
@@ -2412,36 +2555,46 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                               </td>
                               <td className="px-5 py-3">
                                 {isWarehouseUser && it.checked ? (
-                                  <div className="flex items-center gap-1.5">
-                                    <label
-                                      className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-lg cursor-pointer transition-colors ${
-                                        it.photo
-                                          ? "border-green-300 dark:border-green-400/40 bg-green-50 dark:bg-green-400/10 text-green-700 dark:text-green-300"
-                                          : "border-dashed border-border text-muted-foreground hover:bg-background"
-                                      }`}
-                                    >
-                                      {it.photo ? <CheckCircle2 size={13} /> : <Camera size={13} className="text-primary" />}
-                                      <span className="truncate max-w-[110px]">{it.photo ? it.photo.name : "Приложить фото"}</span>
-                                      <input
-                                        type="file"
-                                        accept="image/*"
-                                        className="hidden"
-                                        disabled={proj.submitting}
-                                        onChange={(e) => setShipmentItemPhoto(proj.projectId, it.id, e.target.files?.[0] || null)}
-                                      />
-                                    </label>
-                                    {it.photo ? (
-                                      <button
-                                        type="button"
-                                        onClick={() => setShipmentItemPhoto(proj.projectId, it.id, null)}
-                                        disabled={proj.submitting}
-                                        title="Убрать фото"
-                                        className="text-muted-foreground hover:text-destructive"
+                                  <div className="flex flex-col gap-1">
+                                    <div className="flex items-center gap-1.5">
+                                      <label
+                                        className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-lg cursor-pointer transition-colors ${
+                                          it.photo
+                                            ? "border-green-300 dark:border-green-400/40 bg-green-50 dark:bg-green-400/10 text-green-700 dark:text-green-300"
+                                            : "border-dashed border-border text-muted-foreground hover:bg-background"
+                                        }`}
                                       >
-                                        <X size={13} />
-                                      </button>
-                                    ) : (
-                                      <span className="text-[11px] text-muted-foreground/70 italic whitespace-nowrap">необязательно</span>
+                                        {it.photo ? <CheckCircle2 size={13} /> : <Camera size={13} className="text-primary" />}
+                                        <span className="truncate max-w-[110px]">{it.photo ? it.photo.name : "Приложить фото"}</span>
+                                        <input
+                                          type="file"
+                                          accept="image/*"
+                                          className="hidden"
+                                          disabled={proj.submitting}
+                                          onChange={(e) => setShipmentItemPhoto(proj.projectId, it.id, e.target.files?.[0] || null)}
+                                        />
+                                      </label>
+                                      {it.photo ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => setShipmentItemPhoto(proj.projectId, it.id, null)}
+                                          disabled={proj.submitting}
+                                          title="Убрать фото"
+                                          className="text-muted-foreground hover:text-destructive"
+                                        >
+                                          <X size={13} />
+                                        </button>
+                                      ) : (
+                                        <span className="text-[11px] text-muted-foreground/70 italic whitespace-nowrap">необязательно</span>
+                                      )}
+                                    </div>
+                                    {proj.submitting && it.photo && it.photoUploadProgress != null && (
+                                      <div className="h-1 w-28 rounded-full bg-muted overflow-hidden">
+                                        <div
+                                          className="h-full bg-primary transition-all"
+                                          style={{ width: `${it.photoUploadProgress}%` }}
+                                        />
+                                      </div>
                                     )}
                                   </div>
                                 ) : (
@@ -2555,7 +2708,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                           </thead>
                           <tbody className="divide-y divide-border">
                             {group.shipments.map((s, index) => {
-                              const photosCount = s.items.filter((it) => it.photoPath).length;
+                              const photosCount = s.items.filter((it) => it.photoUrl).length;
                               const shippedBy = s.items.find((it) => it.shippedBy)?.shippedBy || null;
                               const productSummary = s.items.map((it) => it.productName).join(", ");
 
