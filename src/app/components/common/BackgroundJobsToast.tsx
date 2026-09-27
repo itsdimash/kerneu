@@ -1,8 +1,12 @@
 import { useState } from "react";
+import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { Loader2, CheckCircle2, XCircle, X, ChevronRight, Download } from "lucide-react";
 import { useBackgroundJobs } from "../../context/BackgroundJobsContext";
 import { downloadParseJobResult } from "../../../api/api";
 import type { Page } from "../../../types";
+
+// Тот же изгиб, что и --ease-out-strong в theme.css
+const EASE_OUT_STRONG = [0.23, 1, 0.32, 1] as const;
 
 type Props = {
   onOpenProject: (projectId: number, page?: Page) => void;
@@ -15,8 +19,6 @@ type Props = {
 export function BackgroundJobsToast({ onOpenProject }: Props) {
   const { backgroundJobs, dismissBackgroundJob } = useBackgroundJobs();
   const [downloadingJobId, setDownloadingJobId] = useState<string | null>(null);
-
-  if (backgroundJobs.length === 0) return null;
 
   const handleDownload = async (jobId: string) => {
     setDownloadingJobId(jobId);
@@ -31,11 +33,29 @@ export function BackgroundJobsToast({ onOpenProject }: Props) {
   };
 
   return (
+    // Контейнер остаётся смонтированным, чтобы последний тост тоже успел уехать.
+    // reducedMotion="user": при «уменьшить движение» остаются только фейды.
+    <MotionConfig reducedMotion="user">
     <div className="fixed bottom-4 right-4 z-40 flex flex-col gap-2 w-80">
+      {/* popLayout: закрытый тост сразу выходит из потока, и соседи
+          доезжают на место одновременно с его исчезновением */}
+      <AnimatePresence mode="popLayout" initial={false}>
       {backgroundJobs.map((job) => (
-        <div
+        <motion.div
           key={job.jobId}
-          className="bg-card border border-border rounded-lg shadow-lg p-4 animate-in fade-in slide-in-from-bottom-2 duration-200"
+          layout
+          // y, а не строка transform: layout-анимация сама пишет transform,
+          // и motion должен собрать их в одно значение
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 8, transition: { duration: 0.15, ease: EASE_OUT_STRONG } }}
+          transition={{
+            opacity: { duration: 0.2, ease: EASE_OUT_STRONG },
+            y: { duration: 0.2, ease: EASE_OUT_STRONG },
+            // Остальные тосты доезжают на место, когда соседний закрыли
+            layout: { type: "spring", duration: 0.4, bounce: 0 },
+          }}
+          className="bg-card border border-border rounded-lg shadow-lg p-4"
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-start gap-2.5 min-w-0">
@@ -43,10 +63,10 @@ export function BackgroundJobsToast({ onOpenProject }: Props) {
                 <Loader2 size={16} className="text-primary animate-spin flex-shrink-0 mt-0.5" />
               )}
               {job.status === "done" && (
-                <CheckCircle2 size={16} className="text-green-500 dark:text-green-400 flex-shrink-0 mt-0.5" />
+                <CheckCircle2 size={16} className="text-green-500 dark:text-green-400 flex-shrink-0 mt-0.5 animate-in fade-in zoom-in-90 duration-200 ease-out-strong" />
               )}
               {job.status === "failed" && (
-                <XCircle size={16} className="text-destructive flex-shrink-0 mt-0.5" />
+                <XCircle size={16} className="text-destructive flex-shrink-0 mt-0.5 animate-in fade-in zoom-in-90 duration-200 ease-out-strong" />
               )}
               <div className="min-w-0">
                 <p className="text-sm font-medium text-foreground truncate">{job.projectName}</p>
@@ -97,8 +117,10 @@ export function BackgroundJobsToast({ onOpenProject }: Props) {
               )}
             </div>
           )}
-        </div>
+        </motion.div>
       ))}
+      </AnimatePresence>
     </div>
+    </MotionConfig>
   );
 }

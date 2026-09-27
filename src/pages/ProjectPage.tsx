@@ -1981,12 +1981,12 @@ export function ProjectPagePM({
                     <button
                       onClick={handleSendToDirector}
                       disabled={!isMlImportConfirmed || sending || sent || isApproved}
-                      className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${
+                      className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-[color,background-color,border-color,transform] duration-150 ease-out whitespace-nowrap ${
                           sent ? "bg-success text-success-foreground cursor-default" :
                           isApproved ? "bg-success/90 text-success-foreground cursor-default" :
                           !isMlImportConfirmed ? "bg-muted text-muted-foreground cursor-not-allowed" :
-                          isRejected ? "bg-destructive hover:bg-destructive/90 text-white" :
-                          !sending ? "bg-primary hover:bg-primary/90 text-white" :
+                          isRejected ? "bg-destructive hover:bg-destructive/90 text-white active:scale-[0.97]" :
+                          !sending ? "bg-primary hover:bg-primary/90 text-white active:scale-[0.97]" :
                           "bg-muted text-muted-foreground cursor-not-allowed"
                       }`}>
                       {sending ? <><Loader2 size={14} className="animate-spin"/>Отправка…</> :
@@ -2921,7 +2921,7 @@ export function ProjectPagePM({
 
         {productModalItem && (
           <div
-              className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
+              className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 animate-in fade-in duration-200"
               role="dialog"
               aria-modal="true"
               aria-labelledby="create-product-title"
@@ -2929,7 +2929,7 @@ export function ProjectPagePM({
                 if (event.target === event.currentTarget) closeProductModal();
               }}
           >
-            <div className="w-full max-w-lg rounded-xl bg-card shadow-xl">
+            <div className="w-full max-w-lg rounded-xl bg-card shadow-xl animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
               <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
                 <div>
                   <h2 id="create-product-title" className="text-lg font-semibold text-foreground">
@@ -3122,7 +3122,7 @@ export function ProjectPagePM({
 
           return (
           <div
-              className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
+              className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 animate-in fade-in duration-200"
               role="dialog"
               aria-modal="true"
               aria-labelledby="kit-picker-title"
@@ -3130,7 +3130,7 @@ export function ProjectPagePM({
                 if (event.target === event.currentTarget) closeKitPicker();
               }}
           >
-            <div className="w-full max-w-2xl rounded-xl bg-card shadow-xl">
+            <div className="w-full max-w-2xl rounded-xl bg-card shadow-xl animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
               <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
                 <div>
                   <h2 id="kit-picker-title" className="text-lg font-semibold text-foreground">
@@ -4040,7 +4040,7 @@ export function ProjectPageWarehouse() {
             </div>
           ))}
         </div>
-        <button className="mt-4 flex items-center gap-2 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors whitespace-nowrap"><Truck size={14} /> Оформить отгрузку</button>
+        <button className="mt-4 flex items-center gap-2 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.97] whitespace-nowrap"><Truck size={14} /> Оформить отгрузку</button>
       </div>
     </PageWrap>
   );

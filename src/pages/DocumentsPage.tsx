@@ -843,7 +843,7 @@ export function DocumentsPage({
         <ChevronDown size={15} className={`text-muted-foreground flex-shrink-0 transition-transform ${selectorOpen ? "rotate-180" : ""}`} />
       </button>
       {selectorOpen && (
-        <div className="absolute z-10 mt-1 w-full bg-card border border-border rounded-lg shadow-lg overflow-hidden">
+        <div className="absolute z-10 mt-1 w-full bg-card border border-border rounded-lg shadow-lg overflow-hidden origin-top animate-in fade-in zoom-in-95 slide-in-from-top-1 duration-150 ease-out-strong">
           <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
             <Search size={13} className="text-muted-foreground" />
             <input
@@ -991,12 +991,12 @@ export function DocumentsPage({
               <button
                 onClick={() => !uploadingContract && contractFileRef.current?.click()}
                 disabled={uploadingContract}
-                className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex-shrink-0 ${
+                className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-[color,background-color,border-color,transform] duration-150 ease-out flex-shrink-0 ${
                   uploadingContract
                     ? "bg-muted text-muted-foreground cursor-wait"
                     : contractUploaded
                     ? "bg-card text-foreground border border-border hover:bg-background cursor-pointer"
-                    : "bg-primary hover:bg-primary/90 text-white cursor-pointer"
+                    : "bg-primary hover:bg-primary/90 text-white cursor-pointer active:scale-[0.97]"
                 }`}
               >
                 {uploadingContract ? (
@@ -1398,9 +1398,9 @@ export function DocumentsPage({
                   <button
                     onClick={() => allUploaded && isDocsReviewStatus && handleSubmitForReview()}
                     disabled={!allUploaded || !isDocsReviewStatus || submittingReview}
-                    className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+                    className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-[color,background-color,border-color,transform] duration-150 ease-out ${
                       allUploaded && isDocsReviewStatus
-                        ? "bg-primary text-white hover:bg-primary/90"
+                        ? "bg-primary text-white hover:bg-primary/90 active:scale-[0.97]"
                         : "bg-muted text-muted-foreground cursor-not-allowed"
                     }`}
                   >
@@ -1472,11 +1472,11 @@ export function DocumentsPage({
 
     {docToDelete && (
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4 animate-in fade-in duration-200"
         onClick={() => !deletingDoc && setDocToDelete(null)}
       >
         <div
-          className="w-full max-w-sm rounded-xl bg-card p-6 shadow-xl"
+          className="w-full max-w-sm rounded-xl bg-card p-6 shadow-xl animate-in fade-in zoom-in-95 duration-200 ease-out-strong"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-start gap-3">
@@ -1525,11 +1525,11 @@ export function DocumentsPage({
 
     {showPoaReminder && (
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4 animate-in fade-in duration-200"
         onClick={() => setShowPoaReminder(false)}
       >
         <div
-          className="w-full max-w-sm rounded-xl bg-card p-6 shadow-xl"
+          className="w-full max-w-sm rounded-xl bg-card p-6 shadow-xl animate-in fade-in zoom-in-95 duration-200 ease-out-strong"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-start gap-3">
@@ -1562,11 +1562,11 @@ export function DocumentsPage({
 
     {showWaybillReminder && (
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4 animate-in fade-in duration-200"
         onClick={() => setShowWaybillReminder(false)}
       >
         <div
-          className="w-full max-w-sm rounded-xl bg-card p-6 shadow-xl"
+          className="w-full max-w-sm rounded-xl bg-card p-6 shadow-xl animate-in fade-in zoom-in-95 duration-200 ease-out-strong"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-start gap-3">

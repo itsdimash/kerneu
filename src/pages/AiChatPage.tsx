@@ -37,6 +37,9 @@ interface AiMessage {
   tokensOut?: number | null;
   latencyMs?: number | null;
   table?: AiTableRow[] | null;
+  /** Ответ AI пришёл в этой сессии (не из загруженной истории) — анимируем его вход.
+   *  Свои сообщения не анимируем: они отправляются по Enter и должны появляться сразу. */
+  isNew?: boolean;
 }
 
 interface AttachedDocumentItem {
@@ -625,6 +628,7 @@ export function AiChatPage({ role }: { role: Role }) {
             tokensOut: data.tokens_out,
             latencyMs: data.latency_ms,
             table: data.table,
+            isNew: true,
           },
         ];
         playTypewriter(next.length - 1, data.text);
@@ -813,7 +817,7 @@ export function AiChatPage({ role }: { role: Role }) {
                 }
 
                 return (
-                  <div key={index} className="flex justify-start">
+                  <div key={index} className={`flex justify-start ${message.isNew ? "animate-in fade-in slide-in-from-bottom-1 duration-200 ease-out-strong" : ""}`}>
                     <div className="w-full max-w-[85%] rounded-xl border border-border bg-card px-4 py-3.5">
                       <div className="mb-2 flex items-center justify-between gap-3">
                         <div className="flex items-center gap-1.5">
@@ -1021,11 +1025,11 @@ export function AiChatPage({ role }: { role: Role }) {
 
     {sessionPendingDelete && (
       <div
-        className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+        className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200"
         onClick={() => !isDeletingSession && setSessionPendingDelete(null)}
       >
         <div
-          className="w-full max-w-[360px] rounded-xl border border-border bg-card p-5 shadow-modal"
+          className="w-full max-w-[360px] rounded-xl border border-border bg-card p-5 shadow-modal animate-in fade-in zoom-in-95 duration-200 ease-out-strong"
           onClick={(event) => event.stopPropagation()}
         >
           <h3 className="text-sm font-semibold text-foreground">Удалить чат?</h3>

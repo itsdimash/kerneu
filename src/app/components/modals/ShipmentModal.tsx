@@ -18,7 +18,7 @@ export function ShipmentModal({ stock, onClose, onSubmit }: {
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={onClose}>
-      <div className="bg-card rounded-xl border border-border shadow-modal w-full max-w-lg max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+      <div className="bg-card rounded-xl border border-border shadow-modal w-full max-w-lg max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200 ease-out-strong" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <h2 className="text-base font-semibold text-foreground">Заявка на отгрузку</h2>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted text-muted-foreground"><X size={16} /></button>
@@ -46,7 +46,7 @@ export function ShipmentModal({ stock, onClose, onSubmit }: {
         <div className="px-6 py-4 border-t border-border flex items-center justify-end gap-3">
           <button onClick={onClose} className="px-4 py-2 text-sm text-muted-foreground border border-border rounded-lg hover:bg-muted transition-colors">Отмена</button>
           <button onClick={handleSubmit} disabled={submitting || Object.values(qtys).every(q => !q)}
-            className="flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 transition-colors disabled:bg-muted disabled:text-muted-foreground">
+            className="flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.97] disabled:bg-muted disabled:text-muted-foreground">
             {submitting ? <><Loader2 size={13} className="animate-spin" />Оформление…</> : <><Truck size={13} />Сформировать заявку</>}
           </button>
         </div>

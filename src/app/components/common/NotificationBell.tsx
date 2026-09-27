@@ -91,7 +91,7 @@ export function NotificationBell({ role, onNavigate, onSelectProject }: Props) {
           Radix's own dismissable layer already closes the menu on outside
           click, so this needs no handler of its own. */}
       {open && (
-        <div className="fixed inset-0 z-40 bg-foreground/10 backdrop-blur-sm transition-opacity" />
+        <div className="fixed inset-0 z-40 bg-foreground/10 backdrop-blur-sm animate-in fade-in duration-150" />
       )}
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger asChild>

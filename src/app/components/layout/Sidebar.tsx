@@ -300,7 +300,7 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject, mobil
 
       {showProjectModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start justify-center z-[60] p-4 pt-[12vh] animate-in fade-in duration-200" onClick={closeProjectModal}>
-          <div className="bg-card rounded-xl shadow-modal border border-border w-full max-w-[420px] p-4 animate-in fade-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-card rounded-xl shadow-modal border border-border w-full max-w-[420px] p-4 animate-in fade-in zoom-in-95 duration-200 ease-out-strong" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-foreground">Найти проект</h3>
               <button onClick={closeProjectModal} className="text-muted-foreground hover:text-foreground transition-colors">
