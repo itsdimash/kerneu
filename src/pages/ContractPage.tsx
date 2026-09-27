@@ -140,11 +140,11 @@ function emptyGenerateForm(clientName: string): GenerateFormState {
 function ErrorOverlay({ message, onDismiss }: { message: string; onDismiss: () => void }) {
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/30 backdrop-blur-sm px-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/30 backdrop-blur-sm px-4 animate-in fade-in duration-200"
       onClick={onDismiss}
     >
       <div
-        className="w-full max-w-sm rounded-xl bg-card shadow-xl px-6 py-6 text-center"
+        className="w-full max-w-sm rounded-xl bg-card shadow-xl px-6 py-6 text-center animate-in fade-in zoom-in-95 duration-200 ease-out-strong"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-red-50 dark:bg-red-400/15">
@@ -243,11 +243,11 @@ function GenerateContractModal({
       {error && <ErrorOverlay message={error} onDismiss={() => setError(null)} />}
 
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4 py-8 overflow-y-auto"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4 py-8 overflow-y-auto animate-in fade-in duration-200"
         onClick={() => !submitting && onClose()}
       >
         <div
-          className="w-full max-w-2xl rounded-xl bg-card shadow-xl my-auto"
+          className="w-full max-w-2xl rounded-xl bg-card shadow-xl my-auto animate-in fade-in zoom-in-95 duration-200 ease-out-strong"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center justify-between px-6 py-4 border-b border-border">
@@ -460,7 +460,7 @@ function GenerateContractModal({
               type="button"
               onClick={handleSubmit}
               disabled={submitting}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-primary hover:bg-primary/90 text-white transition-colors disabled:opacity-60"
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-primary hover:bg-primary/90 text-white transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.97] disabled:opacity-60"
             >
               {submitting ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
               {submitting ? "Генерация…" : "Сгенерировать и скачать"}
@@ -613,7 +613,7 @@ export function ContractPage({
                         e.stopPropagation();
                         setGenerateForProject(project);
                       }}
-                      className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg bg-primary hover:bg-primary/90 text-white cursor-pointer transition-all"
+                      className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg bg-primary hover:bg-primary/90 text-white cursor-pointer transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.97]"
                     >
                       <FileText size={13} />
                       Сгенерировать договор
@@ -654,7 +654,7 @@ export function ContractPage({
 
               {/* Expandable spec table */}
               {isOpen && (
-                <div className="border-t border-border overflow-x-auto">
+                <div className="border-t border-border overflow-x-auto animate-in fade-in slide-in-from-top-1 duration-150 ease-out-strong">
                   <table className="w-full text-sm border-collapse">
                     <thead>
                       <tr className="bg-background">

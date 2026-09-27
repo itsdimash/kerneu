@@ -388,7 +388,7 @@ export function ProcurementSummaryView({
 
                       {isExpanded && (
                         <tr className="bg-background/30">
-                          <td colSpan={9} className="px-5 py-4">
+                          <td colSpan={9} className="px-5 py-4 animate-in fade-in duration-150 ease-out-strong">
                             <table className="w-full border-collapse">
                               <thead>
                                 <tr className="border-b border-border">

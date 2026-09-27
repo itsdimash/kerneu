@@ -56,7 +56,7 @@ export function ConfirmDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px] px-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px] px-4 animate-in fade-in duration-200"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !loading) onCancel();
       }}
@@ -65,7 +65,7 @@ export function ConfirmDialog({
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
-        className="w-full max-w-sm rounded-2xl bg-card p-6 shadow-2xl border border-border"
+        className="w-full max-w-sm rounded-2xl bg-card p-6 shadow-2xl border border-border animate-in fade-in zoom-in-95 duration-200 ease-out-strong"
       >
         <div className="flex items-start gap-4">
           <div
@@ -103,7 +103,7 @@ export function ConfirmDialog({
             type="button"
             onClick={onCancel}
             disabled={loading}
-            className="px-4 py-2 text-sm font-medium rounded-lg text-foreground border border-border hover:bg-background transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+            className="px-4 py-2 text-sm font-medium rounded-lg text-foreground border border-border hover:bg-background transition-[background-color,transform] duration-150 ease-out enabled:active:scale-[0.97] disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
           >
             {error ? "Закрыть" : cancelLabel}
           </button>
@@ -112,7 +112,7 @@ export function ConfirmDialog({
               type="button"
               onClick={onConfirm}
               disabled={loading || confirmDisabled}
-              className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg text-white shadow-sm transition-colors disabled:opacity-60 focus:outline-none focus-visible:ring-2 ${
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg text-white shadow-sm transition-[background-color,transform] duration-150 ease-out enabled:active:scale-[0.97] disabled:opacity-60 focus:outline-none focus-visible:ring-2 ${
                 isDanger
                   ? "bg-red-600 hover:bg-red-700 focus-visible:ring-red-500/40"
                   : "bg-primary hover:bg-primary/90 focus-visible:ring-primary/40"

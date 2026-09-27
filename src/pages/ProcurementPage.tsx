@@ -1270,7 +1270,7 @@ export function ProcurementPage({
             </div>
 
             {isExpanded && (
-              <div className="flex flex-col">
+              <div className="flex flex-col animate-in fade-in slide-in-from-top-1 duration-150 ease-out-strong">
                 {(wfState.status === 'rejected_by_accountant' || wfState.status === 'rejected_by_director') && (
                   <div className="mx-5 mt-4 flex items-start gap-2 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 text-red-700 dark:text-red-300 px-3 py-2.5 rounded-lg text-sm">
                     <XCircle size={16} className="mt-0.5 shrink-0" />
@@ -1620,8 +1620,8 @@ export function ProcurementPage({
       {/* Модальное окно выбора склада для отправки на приход конкретного
           поставщика (incomeModalSupplier). */}
       {isIncomeModalOpen && incomeModalSupplier && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-md bg-card rounded-xl shadow-xl p-6 border border-border">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-card rounded-xl shadow-xl p-6 border border-border animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2 text-foreground font-bold">
                 <Building2 className="text-blue-600 dark:text-blue-400" size={20} />
@@ -1704,8 +1704,8 @@ export function ProcurementPage({
           1) подтверждение "точно хотите менять?"
           2) поиск среди существующих поставщиков или создание нового. */}
       {supplierModalItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-md bg-card rounded-xl shadow-xl p-6 border border-border">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-card rounded-xl shadow-xl p-6 border border-border animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2 text-foreground font-bold">
                 <Building2 className="text-blue-600 dark:text-blue-400" size={20} />
@@ -1739,7 +1739,7 @@ export function ProcurementPage({
                   </button>
                   <button
                     onClick={() => setSupplierModalStep('select')}
-                    className="px-5 py-2 text-xs font-semibold bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors"
+                    className="px-5 py-2 text-xs font-semibold bg-primary hover:bg-primary/90 text-white rounded-lg transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.97]"
                   >
                     Да, изменить
                   </button>

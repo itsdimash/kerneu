@@ -342,7 +342,7 @@ export function IncomeRequestModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 animate-in fade-in duration-200"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) handleClose();
       }}
@@ -350,7 +350,7 @@ export function IncomeRequestModal({
         if (e.key === "Escape") handleClose();
       }}
     >
-      <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-card p-6 shadow-xl">
+      <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-card p-6 shadow-xl animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-semibold text-foreground">Заявка на приход</h3>
           <button onClick={handleClose} className="text-muted-foreground hover:text-muted-foreground">
@@ -420,7 +420,7 @@ export function IncomeRequestModal({
                   role="listbox"
                   tabIndex={-1}
                   onKeyDown={handleWarehouseListboxKeyDown}
-                  className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-lg border border-border bg-card shadow-lg py-1 focus:outline-none"
+                  className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-lg border border-border bg-card shadow-lg py-1 focus:outline-none origin-top animate-in fade-in zoom-in-95 slide-in-from-top-1 duration-150 ease-out-strong"
                 >
                   {warehouses.length === 0 ? (
                     <div className="px-3 py-2 text-xs text-muted-foreground italic">Нет доступных складов</div>

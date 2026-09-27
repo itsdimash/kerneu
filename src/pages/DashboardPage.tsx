@@ -645,7 +645,7 @@ const handleSave = async () => {
             </button>
             <button
               onClick={() => { setModalMode("kp"); setIsKpModalOpen(true); }}
-              className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors"
+              className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.97]"
             >
               <Plus size={14} /> Новый проект
             </button>
@@ -655,8 +655,8 @@ const handleSave = async () => {
     >
       {/* ── Модальное окно «Новое КП» ── */}
       {isKpModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-card rounded-xl shadow-xl w-full max-w-md overflow-hidden max-h-[90vh] flex flex-col relative">
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-card rounded-xl shadow-xl w-full max-w-md overflow-hidden max-h-[90vh] flex flex-col relative animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
 
             {/* ── Оверлей загрузки: только создание проекта + отправка файла
                 в очередь — это быстро (секунды), не сам парсинг. ── */}
@@ -1292,8 +1292,8 @@ const handleSave = async () => {
 
       {/* ── Модальное окно подтверждения удаления проекта ── */}
       {projectToDelete && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-card rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-card rounded-xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
             <div className="p-6">
               <div className="flex items-start gap-3 mb-4">
                 <div className="w-10 h-10 rounded-full bg-red-50 dark:bg-red-400/15 flex items-center justify-center flex-shrink-0">
@@ -1330,8 +1330,8 @@ const handleSave = async () => {
 
       {/* ── Модальное окно подтверждения архивации проекта ── */}
       {projectToArchive && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-card rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-card rounded-xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
             <div className="p-6">
               <div className="flex items-start gap-3 mb-4">
                 <div className="w-10 h-10 rounded-full bg-amber-50 dark:bg-amber-400/15 flex items-center justify-center flex-shrink-0">
@@ -1516,7 +1516,7 @@ export function DashboardAccountant({ onNavigate }: { onNavigate: (p: Page) => v
 export function DashboardWarehouse({ onNavigate }: { onNavigate: (p: Page) => void }) {
   return (
     <PageWrap title="Дашборд Склада" subtitle="Остатки, резерв и отгрузки"
-      actions={<button className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors"><Plus size={14} /> Новый приход</button>}>
+      actions={<button className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.97]"><Plus size={14} /> Новый приход</button>}>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <StatCard label="Позиций на складе" value="142" sub="6 ниже минимума" icon={Archive} iconColor="text-blue-500 dark:text-blue-400 dark:text-indigo-300" iconBg="bg-blue-50 dark:bg-blue-400/15 dark:bg-indigo-400/15" />
         <StatCard label="В резерве" value="34 позиции" sub="4 проекта" icon={Package} iconColor="text-violet-500 dark:text-violet-400" iconBg="bg-violet-50 dark:bg-violet-400/15" />

@@ -678,8 +678,8 @@ function AddStockModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-      <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 animate-in fade-in duration-200">
+      <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-semibold text-foreground">Добавить товар на склад</h3>
           <button onClick={onClose} className="text-muted-foreground hover:text-muted-foreground">
@@ -848,8 +848,8 @@ function ConfirmReceiptModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-      <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 animate-in fade-in duration-200">
+      <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-semibold text-foreground">
             Подтвердить приход {receipt.receiptNumber}
@@ -973,10 +973,10 @@ function ConfirmReceiptModal({
 function PhotoLightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4 animate-in fade-in duration-200"
       onClick={onClose}
     >
-      <img src={src} alt={alt} className="max-h-[90vh] max-w-full rounded-lg object-contain" />
+      <img src={src} alt={alt} className="max-h-[90vh] max-w-full rounded-lg object-contain animate-in fade-in zoom-in-95 duration-200 ease-out-strong" />
     </div>
   );
 }
@@ -1064,8 +1064,8 @@ function ReceiptDetailsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-      <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 animate-in fade-in duration-200">
+      <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-xl animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-semibold text-foreground">
             Приход {receipt.receiptNumber}
@@ -1186,7 +1186,7 @@ function ReceiptDetailsModal({
               <button
                 onClick={handleSave}
                 disabled={submitting}
-                className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-primary text-white hover:bg-primary/90 disabled:opacity-60"
+                className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-primary text-white hover:bg-primary/90 disabled:opacity-60 transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.97]"
               >
                 {submitting && <Loader2 size={14} className="animate-spin" />}
                 Сохранить
@@ -1220,8 +1220,8 @@ function ShipmentDetailsModal({
   const photosCount = shipment.items.filter((it) => it.photoUrl).length;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-      <div className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-xl bg-card p-6 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 animate-in fade-in duration-200">
+      <div className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-xl bg-card p-6 shadow-xl animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
         <div className="flex items-start justify-between mb-4">
           <div>
             <h3 className="text-base font-semibold text-foreground">
@@ -2455,7 +2455,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
         isPm && (
           <button
             onClick={() => setShowIncomeRequestModal(true)}
-            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors"
+            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.97]"
           >
             <PackagePlus size={14} /> Заявка на приход
           </button>
