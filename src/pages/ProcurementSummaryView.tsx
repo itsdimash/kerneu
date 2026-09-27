@@ -7,6 +7,7 @@ import {
   type ProcurementSummaryResponse,
   type ProcurementSummaryStage,
 } from "../api/api";
+import { exportProcurementSummaryToExcel } from "../utils/excelExport";
 import {
   Loader2,
   RefreshCw,
@@ -14,6 +15,7 @@ import {
   Search,
   AlertCircle,
   Package,
+  FileSpreadsheet,
 } from "lucide-react";
 
 const toNumber = (value: number | string | null | undefined) => {
@@ -44,6 +46,14 @@ function StageBadge({ stage }: { stage?: ProcurementSummaryStage }) {
   );
 }
 
+const RECEIPT_STATUS_LABELS: Record<string, string> = {
+  pending: "Ожидает",
+  transit: "В пути",
+};
+
+const getReceiptStatusLabel = (status?: string | null): string =>
+  status ? (RECEIPT_STATUS_LABELS[status] ?? status) : "—";
+
 export function ProcurementSummaryView({
   onOpenProject,
 }: {
@@ -57,11 +67,16 @@ export function ProcurementSummaryView({
   const [supplierFilter, setSupplierFilter] = useState("");
   const [showOrdered, setShowOrdered] = useState(false);
 
-  const load = async (includeOrdered = showOrdered) => {
+  // Всегда запрашиваем полные данные (включая уже заказанное) — чекбокс
+  // "Показывать уже заказанные" больше не влияет на запрос к бэку, а только
+  // фильтрует/скрывает уже загруженные data.items на клиенте. Это нужно,
+  // чтобы экспорт в Excel (лист "Уже куплено") всегда строился из полного
+  // набора данных независимо от состояния чекбокса в UI.
+  const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const result = await fetchProcurementSummary(includeOrdered);
+      const result = await fetchProcurementSummary(true);
       setData(result);
     } catch (e) {
       console.error("Не удалось загрузить сводку закупок:", e);
@@ -72,9 +87,9 @@ export function ProcurementSummaryView({
   };
 
   useEffect(() => {
-    load(showOrdered);
+    load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showOrdered]);
+  }, []);
 
   const toggleRow = (productId: number) => {
     setExpandedRows(prev => ({ ...prev, [productId]: !prev[productId] }));
@@ -87,17 +102,22 @@ export function ProcurementSummaryView({
     return Array.from(set).sort((a, b) => a.localeCompare(b, "ru"));
   }, [data]);
 
-  const filteredItems = useMemo(() => {
-    if (!data) return [];
-    const q = searchQuery.trim().toLocaleLowerCase("ru-RU");
-    return data.items.filter(item => {
-      if (q && !item.product_name.toLocaleLowerCase("ru-RU").includes(q)) return false;
-      if (supplierFilter && !item.suppliers.includes(supplierFilter)) return false;
-      return true;
-    });
-  }, [data, searchQuery, supplierFilter]);
-
+  // При showOrdered=true диапазон цен берётся как есть с бэка
+  // (item.price_min/price_max, посчитаны по всем project-строкам товара).
+  // При showOrdered=false колонка должна отражать цену только ещё не
+  // заказанной части — пересчитываем диапазон локально по item.projects[],
+  // отфильтрованным по stage !== "ordered" (симметрично построчному
+  // фильтру в развёрнутой детализации).
   const priceLabel = (item: ProcurementSummaryItem) => {
+    if (!showOrdered) {
+      const prices = item.projects
+        .filter(row => row.stage !== "ordered")
+        .map(row => toNumber(row.price_cost));
+      if (prices.length === 0) return "—";
+      const min = Math.min(...prices);
+      const max = Math.max(...prices);
+      return min === max ? fmt(min) : `${fmt(min)} – ${fmt(max)}`;
+    }
     const min = toNumber(item.price_min);
     const max = toNumber(item.price_max);
     return min === max ? fmt(min) : `${fmt(min)} – ${fmt(max)}`;
@@ -108,14 +128,63 @@ export function ProcurementSummaryView({
     item.to_buy_quantity != null
       ? toNumber(item.to_buy_quantity)
       : Math.max(0, toNumber(item.total_quantity) - getOrderedQty(item));
-  const isFullyOrdered = (item: ProcurementSummaryItem) =>
-    getOrderedQty(item) > 0 && getToBuyQty(item) <= 0;
 
   const getRowOrderedQty = (row: ProcurementSummaryProjectRow) => toNumber(row.ordered_quantity);
   const getRowToBuyQty = (row: ProcurementSummaryProjectRow) =>
     row.to_buy_quantity != null
       ? toNumber(row.to_buy_quantity)
       : Math.max(0, toNumber(row.quantity) - getRowOrderedQty(row));
+
+  // Товар считается закрытым (и скрывается из списка "к закупке" насовсем,
+  // вне зависимости от чекбокса), только если ВСЕ его project-строки уже не
+  // требуют закупки (to_buy_quantity <= 0). Частично закрытый товар (как
+  // минимум одна строка с to_buy_quantity > 0) остаётся в списке — чекбокс
+  // "Показывать уже заказанные" в этом больше не участвует, он влияет
+  // только на видимость отдельных project-строк внутри развёрнутого товара.
+  const isItemFullyClosed = (item: ProcurementSummaryItem) =>
+    item.projects.length > 0 && item.projects.every(row => getRowToBuyQty(row) <= 0);
+
+  const visibleItems = useMemo(() => {
+    if (!data) return [];
+    return data.items.filter(item => !isItemFullyClosed(item));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  const hiddenClosedCount = useMemo(() => {
+    if (!data) return 0;
+    return data.items.filter(isItemFullyClosed).length;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  const filteredItems = useMemo(() => {
+    const q = searchQuery.trim().toLocaleLowerCase("ru-RU");
+    return visibleItems.filter(item => {
+      if (q && !item.product_name.toLocaleLowerCase("ru-RU").includes(q)) return false;
+      if (supplierFilter && !item.suppliers.includes(supplierFilter)) return false;
+      return true;
+    });
+  }, [visibleItems, searchQuery, supplierFilter]);
+
+  const handleExportAll = () => {
+    const productRows = filteredItems.map(item => ({
+      "Товар": item.product_name,
+      "Штук": getToBuyQty(item),
+      "Ед.": item.unit || "шт",
+    }));
+
+    const purchasedRows = (data?.items ?? []).flatMap(item =>
+      item.projects
+        .filter(row => row.stage && row.stage !== "to_buy")
+        .map(row => ({
+          "Товар": item.product_name,
+          "Поставщик": row.supplier || "—",
+          "Кол-во": getRowOrderedQty(row),
+          "Статус": getReceiptStatusLabel(row.receipt_status),
+        }))
+    );
+
+    exportProcurementSummaryToExcel(productRows, purchasedRows);
+  };
 
   if (loading && !data) {
     return (
@@ -141,26 +210,23 @@ export function ProcurementSummaryView({
   }
 
   if (!data || data.items.length === 0) {
-    const hiddenOrdered = data?.totals.hidden_ordered_products ?? 0;
-    if (!showOrdered && hiddenOrdered > 0) {
-      return (
-        <div className="py-16 text-center bg-card rounded-lg border border-border">
-          <p className="text-sm font-medium text-muted-foreground">
-            Всё уже заказано: {hiddenOrdered} {hiddenOrdered === 1 ? "товар" : "товаров"} ждут приёмки на складе
-          </p>
-          <button
-            type="button"
-            onClick={() => setShowOrdered(true)}
-            className="mt-2 text-sm text-primary hover:underline font-medium"
-          >
-            Показать
-          </button>
-        </div>
-      );
-    }
     return (
       <div className="py-16 text-center bg-card rounded-lg border border-border">
         <p className="text-sm font-medium text-muted-foreground">Нет позиций к закупке.</p>
+      </div>
+    );
+  }
+
+  // Полностью закрытые товары (все project-строки уже не требуют закупки)
+  // скрыты насовсем, независимо от чекбокса — им незачем маячить в списке
+  // "к закупке". Если скрыты все товары без исключения, показываем это
+  // как факт, без кнопки "Показать" (раскрывать тут больше нечего).
+  if (visibleItems.length === 0) {
+    return (
+      <div className="py-16 text-center bg-card rounded-lg border border-border">
+        <p className="text-sm font-medium text-muted-foreground">
+          Все товары уже закуплены полностью: {hiddenClosedCount} {hiddenClosedCount === 1 ? "товар" : "товаров"} ждут приёмки на складе.
+        </p>
       </div>
     );
   }
@@ -188,10 +254,10 @@ export function ProcurementSummaryView({
           <p className="text-xs font-medium text-muted-foreground mb-1">Проектов</p>
           <p className="font-mono text-xl font-semibold text-foreground">{data.totals.projects_count}</p>
         </div>
-        {(data.totals.hidden_ordered_products ?? 0) > 0 && (
+        {hiddenClosedCount > 0 && (
           <div className="bg-card rounded-lg border border-border p-4 shadow-sm">
             <p className="text-xs font-medium text-muted-foreground mb-1">Заказано, ждёт приёмки</p>
-            <p className="font-mono text-xl font-semibold text-foreground">{data.totals.hidden_ordered_products}</p>
+            <p className="font-mono text-xl font-semibold text-foreground">{hiddenClosedCount}</p>
           </div>
         )}
       </div>
@@ -228,6 +294,14 @@ export function ProcurementSummaryView({
         </select>
         <button
           type="button"
+          onClick={handleExportAll}
+          className="flex items-center gap-2 px-4 py-2 bg-card border border-border text-foreground text-sm font-medium rounded-lg hover:bg-muted transition-colors shrink-0"
+        >
+          <FileSpreadsheet size={14} />
+          Скачать всё
+        </button>
+        <button
+          type="button"
           onClick={() => load()}
           disabled={loading}
           className="w-9 h-9 flex items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-background transition-colors shrink-0 disabled:opacity-50"
@@ -247,7 +321,7 @@ export function ProcurementSummaryView({
             <table className="w-full border-collapse">
               <thead>
                 <tr className="border-b border-border bg-background/40">
-                  {["", "Товар", "Ед.", "Осталось купить", "Заказано / Всего", "Проектов", "Цена закупки", "Поставщики", "На складе"].map((header, idx) => (
+                  {["", "Товар", "Ед.", "Осталось купить", showOrdered ? "Заказано / Всего" : "Всего", "Проектов", "Цена закупки", "Поставщики", "На складе"].map((header, idx) => (
                     <th key={idx} className="px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">
                       {header}
                     </th>
@@ -257,7 +331,6 @@ export function ProcurementSummaryView({
               <tbody className="divide-y divide-border">
                 {filteredItems.map(item => {
                   const isExpanded = !!expandedRows[item.product_id];
-                  const fullyOrdered = isFullyOrdered(item);
                   const orderedQty = getOrderedQty(item);
                   const totalQty = toNumber(item.total_quantity);
 
@@ -265,7 +338,7 @@ export function ProcurementSummaryView({
                     <Fragment key={item.product_id}>
                       <tr
                         onClick={() => toggleRow(item.product_id)}
-                        className={`hover:bg-background/30 transition-colors cursor-pointer ${fullyOrdered ? "opacity-60" : ""}`}
+                        className="hover:bg-background/30 transition-colors cursor-pointer"
                       >
                         <td className="pl-5 pr-2 py-3.5 w-8">
                           <ChevronDown
@@ -276,11 +349,6 @@ export function ProcurementSummaryView({
                         <td className="px-5 py-3.5 text-sm font-medium text-foreground">
                           <div className="flex items-center gap-2">
                             <span>{item.product_name}</span>
-                            {fullyOrdered && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-blue-50 dark:bg-blue-400/15 text-blue-700 dark:text-blue-300 ring-1 ring-blue-200 dark:ring-blue-400/25 whitespace-nowrap">
-                                Всё заказано
-                              </span>
-                            )}
                           </div>
                         </td>
                         <td className="px-5 py-3.5 text-sm text-muted-foreground">{item.unit || "шт"}</td>
@@ -299,9 +367,11 @@ export function ProcurementSummaryView({
                         </td>
                         <td
                           className="px-5 py-3.5 text-sm font-mono text-muted-foreground whitespace-nowrap"
-                          title="Заказано и ждёт приёмки / Всего нужно"
+                          title={showOrdered ? "Заказано и ждёт приёмки / Всего нужно" : "Сколько ещё нужно купить"}
                         >
-                          {orderedQty.toLocaleString("ru-RU")} / {totalQty.toLocaleString("ru-RU")}
+                          {showOrdered
+                            ? `${orderedQty.toLocaleString("ru-RU")} / ${totalQty.toLocaleString("ru-RU")}`
+                            : getToBuyQty(item).toLocaleString("ru-RU")}
                         </td>
                         <td className="px-5 py-3.5 text-sm font-mono text-foreground">{item.projects_count}</td>
                         <td className="px-5 py-3.5 text-sm font-mono text-foreground whitespace-nowrap">{priceLabel(item)}</td>
@@ -330,7 +400,9 @@ export function ProcurementSummaryView({
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-border">
-                                {item.projects.map(row => {
+                                {item.projects
+                                  .filter(row => showOrdered || row.stage !== "ordered")
+                                  .map(row => {
                                   const rowOrdered = getRowOrderedQty(row);
                                   const rowToBuy = getRowToBuyQty(row);
                                   return (
@@ -376,6 +448,48 @@ export function ProcurementSummaryView({
                                 })}
                               </tbody>
                             </table>
+
+                            {(() => {
+                              // Чекбокс "Показывать уже заказанные" управляет только
+                              // видимостью этого блока в UI — данные уже загружены
+                              // независимо от него (см. load()).
+                              if (!showOrdered) return null;
+                              const purchasedRows = item.projects.filter(
+                                row => row.stage && row.stage !== "to_buy"
+                              );
+                              if (purchasedRows.length === 0) return null;
+                              return (
+                                <div className="mt-4">
+                                  <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                                    Уже куплено
+                                  </p>
+                                  <table className="w-full border-collapse">
+                                    <thead>
+                                      <tr className="border-b border-border">
+                                        {["Поставщик", "Кол-во", "Статус"].map((header) => (
+                                          <th key={header} className="px-3 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">
+                                            {header}
+                                          </th>
+                                        ))}
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-border">
+                                      {purchasedRows.map(row => (
+                                        <tr key={row.item_id} className="hover:bg-card/60 transition-colors">
+                                          <td className="px-3 py-2.5 text-sm text-muted-foreground">{row.supplier || "—"}</td>
+                                          <td className="px-3 py-2.5 text-sm font-mono text-foreground whitespace-nowrap">
+                                            {getRowOrderedQty(row).toLocaleString("ru-RU")}
+                                          </td>
+                                          <td className="px-3 py-2.5 text-sm text-foreground">
+                                            {getReceiptStatusLabel(row.receipt_status)}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              );
+                            })()}
                           </td>
                         </tr>
                       )}

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import * as XLSX from "xlsx";
+import * as XLSX from "xlsx-js-style";
+import { styleHeaderRow } from "../utils/excelExport";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -110,6 +111,7 @@ function formatSessionTime(iso: string): string {
 
 function downloadTableAsExcel(rows: AiTableRow[], filename: string) {
   const worksheet = XLSX.utils.json_to_sheet(rows);
+  if (rows.length > 0) styleHeaderRow(worksheet, Object.keys(rows[0]).length);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Данные");
   XLSX.writeFile(workbook, filename.endsWith(".xlsx") ? filename : `${filename}.xlsx`);
