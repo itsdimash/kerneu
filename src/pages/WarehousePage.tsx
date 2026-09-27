@@ -5,6 +5,12 @@ import { IncomeRequestModal, IncomeRequestPrefill } from "../app/components/moda
 import { ConfirmDialog } from "../app/components/modals/ConfirmDialog";
 import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "../app/components/ui/accordion";
+import {
   Search,
   AlertTriangle,
   Loader2,
@@ -21,10 +27,10 @@ import {
   Check,
   PackagePlus,
   Trash2,
-  ChevronDown,
   Package,
   Truck,
   User,
+  Warehouse,
 } from "lucide-react";
 import type { ProjectState, Role } from "../types";
 import {
@@ -118,17 +124,43 @@ type ArrivalRow = {
 // передаёт project_id вообще, см. handleSubmit ниже).
 const NO_PROJECT_GROUP_KEY = "no-project";
 
-type ArrivalGroup = {
+// Иерархия вкладки "Приход": склад (уровень 1) → проект (уровень 2) → дата
+// (уровень 3). Первые два уровня сворачиваются, дата — статичный
+// заголовок-разделитель над таблицей позиций.
+
+// Уровень 3 — дата отправки заявки (ArrivalRow.date, бэк проставляет её при
+// создании записи, до подтверждения кладовщиком). Свежие даты — сверху.
+type ArrivalDateGroup = {
   key: string;
-  projectName: string;
+  dateLabel: string;
+  dateTs: number;
   items: ArrivalRow[];
+};
+
+type ArrivalStatusCounts = {
   pendingCount: number;
   arrivedCount: number;
   cancelledCount: number;
   // Отдельно от cancelledCount: "denied" — это ПМ отклонил заявку, а не
   // кладовщик отменил приход (ReceiptStatus.DENIED на бэкенде).
   deniedCount: number;
+};
+
+// Уровень 2 — проект внутри склада.
+type ArrivalGroup = ArrivalStatusCounts & {
+  key: string;
+  projectName: string;
+  items: ArrivalRow[];
   lastMovementLabel: string;
+  dateGroups: ArrivalDateGroup[];
+};
+
+// Уровень 1 — склад.
+type ArrivalWarehouseGroup = ArrivalStatusCounts & {
+  key: string;
+  warehouseName: string;
+  items: ArrivalRow[];
+  projectGroups: ArrivalGroup[];
 };
 
 // a.date уже отформатирован в mapReceipt через toLocaleDateString("ru-RU")
@@ -141,6 +173,130 @@ const parseRuDate = (value: string): number => {
   const [, d, m, y] = match;
   return new Date(Number(y), Number(m) - 1, Number(d)).getTime();
 };
+
+// Группирует позиции по a.date (уже отформатированная строка), свежие даты —
+// сверху; записи без даты ("—", parseRuDate вернёт NaN) — в конец.
+function buildArrivalDateGroups(items: ArrivalRow[]): ArrivalDateGroup[] {
+  const map = new Map<string, ArrivalRow[]>();
+
+  items.forEach((a) => {
+    let bucket = map.get(a.date);
+    if (!bucket) {
+      bucket = [];
+      map.set(a.date, bucket);
+    }
+    bucket.push(a);
+  });
+
+  const groups: ArrivalDateGroup[] = Array.from(map.entries()).map(([dateLabel, dateItems]) => ({
+    key: dateLabel,
+    dateLabel,
+    dateTs: parseRuDate(dateLabel),
+    items: dateItems,
+  }));
+
+  groups.sort((a, b) => {
+    if (Number.isNaN(a.dateTs) && Number.isNaN(b.dateTs)) return 0;
+    if (Number.isNaN(a.dateTs)) return 1;
+    if (Number.isNaN(b.dateTs)) return -1;
+    return b.dateTs - a.dateTs;
+  });
+
+  return groups;
+}
+
+function countArrivalStatuses(items: ArrivalRow[]): ArrivalStatusCounts {
+  const counts: ArrivalStatusCounts = {
+    pendingCount: 0,
+    arrivedCount: 0,
+    cancelledCount: 0,
+    deniedCount: 0,
+  };
+
+  items.forEach((a) => {
+    if (a.status === "cancelled") counts.cancelledCount += 1;
+    else if (a.status === "denied") counts.deniedCount += 1;
+    else if (a.status === "arrived") counts.arrivedCount += 1;
+    else counts.pendingCount += 1;
+  });
+
+  return counts;
+}
+
+// Порядок групп — сначала те, где есть pending-позиции (по убыванию их
+// числа), затем остальные в порядке первого появления в arrivals (Array.sort
+// стабилен, при равенстве компаратора порядок вставки в Map сохраняется).
+function sortByPendingFirst<T extends { pendingCount: number }>(groups: T[]): T[] {
+  return groups.sort((a, b) => {
+    if (a.pendingCount > 0 && b.pendingCount > 0) return b.pendingCount - a.pendingCount;
+    if (a.pendingCount > 0) return -1;
+    if (b.pendingCount > 0) return 1;
+    return 0;
+  });
+}
+
+function buildArrivalProjectGroups(items: ArrivalRow[]): ArrivalGroup[] {
+  const map = new Map<string, ArrivalRow[]>();
+
+  items.forEach((a) => {
+    const key = a.projectId != null ? String(a.projectId) : NO_PROJECT_GROUP_KEY;
+    const bucket = map.get(key);
+    if (bucket) bucket.push(a);
+    else map.set(key, [a]);
+  });
+
+  const groups = Array.from(map.entries()).map(([key, groupItems]) => {
+    const confirmedTimestamps = groupItems
+      .map((it) => (it.confirmedAt ? new Date(it.confirmedAt).getTime() : NaN))
+      .filter((t) => Number.isFinite(t));
+
+    let lastTs: number | null = null;
+    if (confirmedTimestamps.length > 0) {
+      lastTs = Math.max(...confirmedTimestamps);
+    } else {
+      const dateTimestamps = groupItems
+        .map((it) => parseRuDate(it.date))
+        .filter((t) => Number.isFinite(t));
+      if (dateTimestamps.length > 0) lastTs = Math.max(...dateTimestamps);
+    }
+
+    return {
+      key,
+      projectName:
+        key === NO_PROJECT_GROUP_KEY ? "Без проекта (ручной приход)" : groupItems[0].project,
+      items: groupItems,
+      lastMovementLabel: lastTs != null ? new Date(lastTs).toLocaleDateString("ru-RU") : "—",
+      dateGroups: buildArrivalDateGroups(groupItems),
+      ...countArrivalStatuses(groupItems),
+    };
+  });
+
+  return sortByPendingFirst(groups);
+}
+
+// Ключ склада — warehouseId; записи, у которых его нет (бэк не отдал
+// warehouse_id), группируются по названию, чтобы не слипнуться в одну группу
+// с настоящим складом.
+function buildArrivalWarehouseGroups(items: ArrivalRow[]): ArrivalWarehouseGroup[] {
+  const map = new Map<string, ArrivalRow[]>();
+
+  items.forEach((a) => {
+    const key = a.warehouseId != null ? `id:${a.warehouseId}` : `name:${a.warehouseName}`;
+    const bucket = map.get(key);
+    if (bucket) bucket.push(a);
+    else map.set(key, [a]);
+  });
+
+  const groups = Array.from(map.entries()).map(([key, groupItems]) => ({
+    key,
+    warehouseName: groupItems[0].warehouseName,
+    items: groupItems,
+    projectGroups: buildArrivalProjectGroups(groupItems),
+    ...countArrivalStatuses(groupItems),
+  }));
+
+  return sortByPendingFirst(groups);
+}
 
 type ShipmentHistoryItemRow = {
   id: number;
@@ -373,6 +529,36 @@ function mapShipment(item: ShipmentHistoryResponse): ShipmentRow {
       shippedAt: it.shipped_at ?? null,
     })),
   };
+}
+
+// Сводка статусов в шапке группы склада и группы проекта на вкладке "Приход".
+// Только span-элементы: рендерится внутри AccordionTrigger, т.е. внутри
+// <button>, куда блочные теги вкладывать нельзя.
+function ArrivalStatusBadges({ counts }: { counts: ArrivalStatusCounts }) {
+  return (
+    <span className="flex items-center gap-2 flex-wrap">
+      {counts.pendingCount > 0 && (
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-400/20 text-amber-800 dark:text-amber-200 whitespace-nowrap">
+          <Clock size={12} /> ожидает {counts.pendingCount}
+        </span>
+      )}
+      {counts.arrivedCount > 0 && (
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 whitespace-nowrap">
+          <CheckCircle2 size={12} /> принято {counts.arrivedCount}
+        </span>
+      )}
+      {counts.cancelledCount > 0 && (
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 whitespace-nowrap">
+          <XCircle size={12} /> отклонено {counts.cancelledCount}
+        </span>
+      )}
+      {counts.deniedCount > 0 && (
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 dark:bg-rose-400/20 text-rose-700 dark:text-rose-300 whitespace-nowrap">
+          <XCircle size={12} /> отклонено ПМ {counts.deniedCount}
+        </span>
+      )}
+    </span>
+  );
 }
 
 // ==========================================
@@ -1118,6 +1304,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   const [arrivals, setArrivals] = useState<ArrivalRow[]>([]);
   const [arrivalsLoading, setArrivalsLoading] = useState(false);
   const [arrivalsError, setArrivalsError] = useState<string | null>(null);
+  const [arrivalSearch, setArrivalSearch] = useState("");
   const [confirmTarget, setConfirmTarget] = useState<ArrivalRow | null>(null);
   const [detailsTarget, setDetailsTarget] = useState<ArrivalRow | null>(null);
   const [cancellingReceiptId, setCancellingReceiptId] = useState<number | null>(null);
@@ -1138,28 +1325,28 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   // повторных деньгах подряд, а не полагаться только на условный рендер.
   const [reorderRequest, setReorderRequest] = useState<{ prefill: IncomeRequestPrefill; sourceReceiptId: number } | null>(null);
 
-  // NEW: раскрытие групп-проектов на вкладках "Приход"/"Отгрузка". Ключ —
-  // String(projectId) или NO_PROJECT_GROUP_KEY; отсутствие ключа = свёрнута
-  // (по умолчанию всё свёрнуто). Обновляется только точечным
-  // setExpanded(p => ({...p, [key]: !p[key]})) — никогда не пересоздаётся
-  // целиком, поэтому переживает полные перезагрузки arrivals/pendingShipments
-  // после действий (handleConfirmSuccess и т.п. не трогают это состояние).
-  const [expandedArrivalGroups, setExpandedArrivalGroups] = useState<Record<string, boolean>>({});
-  const toggleArrivalGroup = (key: string) => {
-    setExpandedArrivalGroups((p) => ({ ...p, [key]: !p[key] }));
-  };
+  // NEW: раскрытие двух сворачиваемых уровней вкладки "Приход" — склада
+  // (уровень 1) и проекта внутри склада (уровень 2), независимо друг от
+  // друга. Значение — список открытых ключей для Radix Accordion
+  // (type="multiple"), по умолчанию всё свёрнуто. Ключ проекта составной,
+  // `${warehouseKey}::${projectKey}`: один и тот же проект может встретиться
+  // под разными складами. Состояние держим здесь, а не внутри аккордеона,
+  // чтобы оно переживало и схлопывание склада (Radix размонтирует содержимое),
+  // и полные перезагрузки arrivals после действий — handleConfirmSuccess и
+  // т.п. его не трогают.
+  const [expandedArrivalWarehouses, setExpandedArrivalWarehouses] = useState<string[]>([]);
+  const [expandedArrivalGroups, setExpandedArrivalGroups] = useState<string[]>([]);
 
   const [shipments, setShipments] = useState<ShipmentRow[]>([]);
   const [shipmentsLoading, setShipmentsLoading] = useState(false);
   const [shipmentsError, setShipmentsError] = useState<string | null>(null);
+  const [shipmentSearch, setShipmentSearch] = useState("");
 
-  // Раскрытие групп-проектов в истории отгрузок — тот же приём, что у
-  // expandedArrivalGroups: точечный toggle по ключу, чтобы состояние
-  // переживало перезагрузку списка после отгрузки (loadShipments).
-  const [expandedShipmentGroups, setExpandedShipmentGroups] = useState<Record<string, boolean>>({});
-  const toggleShipmentGroup = (key: string) => {
-    setExpandedShipmentGroups((p) => ({ ...p, [key]: !p[key] }));
-  };
+  // Раскрытие групп-проектов в истории отгрузок — список открытых ключей для
+  // Radix Accordion (type="multiple"), как на вкладке "Приход". Состояние
+  // держим здесь, чтобы оно переживало перезагрузку списка после отгрузки
+  // (loadShipments) и схлопывание аккордеона.
+  const [expandedShipmentGroups, setExpandedShipmentGroups] = useState<string[]>([]);
 
   const [shipmentDetailsTarget, setShipmentDetailsTarget] = useState<ShipmentRow | null>(null);
 
@@ -1167,10 +1354,9 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   const [pendingLoading, setPendingLoading] = useState(false);
   const [pendingError, setPendingError] = useState<string | null>(null);
 
-  const [expandedPendingShipmentGroups, setExpandedPendingShipmentGroups] = useState<Record<string, boolean>>({});
-  const togglePendingShipmentGroup = (key: string) => {
-    setExpandedPendingShipmentGroups((p) => ({ ...p, [key]: !p[key] }));
-  };
+  // Ключ группы — String(projectId), как и раньше: уровень один, составные
+  // ключи (как у проектов внутри складов на "Приходе") здесь не нужны.
+  const [expandedPendingShipmentGroups, setExpandedPendingShipmentGroups] = useState<string[]>([]);
 
   const [showShipmentModal, setShowShipmentModal] = useState(false);
   const [showAddStockModal, setShowAddStockModal] = useState(false);
@@ -1663,72 +1849,87 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     }
   };
 
-  // NEW: группировка вкладки "Приход" по проекту. Порядок групп — сначала
-  // те, где есть pending-позиции (по убыванию их числа), затем остальные в
-  // порядке первого появления в arrivals (Array.sort стабилен, при равенстве
-  // компаратора порядок вставки в Map, т.е. порядок arrivals, сохраняется).
-  const arrivalGroups = useMemo<ArrivalGroup[]>(() => {
-    const map = new Map<string, ArrivalGroup>();
+  // Поиск на вкладке "Приход" — по всем полям строки: товар, артикул,
+  // проект, поставщик, склад, номер прихода.
+  const filteredArrivals = useMemo(() => {
+    const q = arrivalSearch.trim().toLowerCase();
+    if (!q) return arrivals;
+    return arrivals.filter(
+      (a) =>
+        a.item.toLowerCase().includes(q) ||
+        a.sku.toLowerCase().includes(q) ||
+        a.project.toLowerCase().includes(q) ||
+        a.supplier.toLowerCase().includes(q) ||
+        a.warehouseName.toLowerCase().includes(q) ||
+        a.receiptNumber.toLowerCase().includes(q)
+    );
+  }, [arrivals, arrivalSearch]);
 
-    arrivals.forEach((a) => {
-      const key = a.projectId != null ? String(a.projectId) : NO_PROJECT_GROUP_KEY;
-      let group = map.get(key);
-      if (!group) {
-        group = {
-          key,
-          projectName: key === NO_PROJECT_GROUP_KEY ? "Без проекта (ручной приход)" : a.project,
-          items: [],
-          pendingCount: 0,
-          arrivedCount: 0,
-          cancelledCount: 0,
-          deniedCount: 0,
-          lastMovementLabel: "—",
-        };
-        map.set(key, group);
-      }
-      group.items.push(a);
-      if (a.status === "cancelled") group.cancelledCount += 1;
-      else if (a.status === "denied") group.deniedCount += 1;
-      else if (a.status === "arrived") group.arrivedCount += 1;
-      else group.pendingCount += 1;
-    });
+  // Группировка вкладки "Приход": склад → проект → дата отправки заявки.
+  const arrivalWarehouseGroups = useMemo<ArrivalWarehouseGroup[]>(
+    () => buildArrivalWarehouseGroups(filteredArrivals),
+    [filteredArrivals]
+  );
 
-    const groups = Array.from(map.values());
+  // При активном поиске все найденные склады и проекты раскрыты принудительно,
+  // чтобы совпадения были видны без клика: в value аккордеонов уходит
+  // объединение ручного состояния со всеми ключами результата. Само ручное
+  // состояние не трогаем — как только строка поиска очищается, value
+  // откатывается на него, и вид возвращается к тому, что было до поиска.
+  // Поэтому же onValueChange на время поиска заморожен: Radix отдал бы в него
+  // отфильтрованное ОБЪЕДИНЕНИЕ, и клик по стрелке затёр бы запомненный выбор
+  // пользователя на «всё найденное, кроме кликнутого».
+  const isSearchingArrivals = arrivalSearch.trim().length > 0;
 
-    groups.forEach((group) => {
-      const confirmedTimestamps = group.items
-        .map((it) => (it.confirmedAt ? new Date(it.confirmedAt).getTime() : NaN))
-        .filter((t) => Number.isFinite(t));
+  const warehouseAccordionValue = useMemo(() => {
+    if (!isSearchingArrivals) return expandedArrivalWarehouses;
+    const allWarehouseKeys = arrivalWarehouseGroups.map((w) => w.key);
+    return Array.from(new Set([...expandedArrivalWarehouses, ...allWarehouseKeys]));
+  }, [isSearchingArrivals, expandedArrivalWarehouses, arrivalWarehouseGroups]);
 
-      let lastTs: number | null = null;
-      if (confirmedTimestamps.length > 0) {
-        lastTs = Math.max(...confirmedTimestamps);
-      } else {
-        const dateTimestamps = group.items
-          .map((it) => parseRuDate(it.date))
-          .filter((t) => Number.isFinite(t));
-        if (dateTimestamps.length > 0) lastTs = Math.max(...dateTimestamps);
-      }
-      group.lastMovementLabel = lastTs != null ? new Date(lastTs).toLocaleDateString("ru-RU") : "—";
-    });
+  const projectAccordionValue = useMemo(() => {
+    if (!isSearchingArrivals) return expandedArrivalGroups;
+    const allProjectKeys = arrivalWarehouseGroups.flatMap((w) =>
+      w.projectGroups.map((g) => `${w.key}::${g.key}`)
+    );
+    return Array.from(new Set([...expandedArrivalGroups, ...allProjectKeys]));
+  }, [isSearchingArrivals, expandedArrivalGroups, arrivalWarehouseGroups]);
 
-    groups.sort((a, b) => {
-      if (a.pendingCount > 0 && b.pendingCount > 0) return b.pendingCount - a.pendingCount;
-      if (a.pendingCount > 0) return -1;
-      if (b.pendingCount > 0) return 1;
-      return 0;
-    });
+  // Поиск на вкладке "Отгрузка" — по названию товара и по проекту, общий для
+  // обоих разделов (проекты к отгрузке и история). Если совпал сам проект —
+  // показываем все его позиции; иначе фильтруем позиции по товару и
+  // оставляем только проекты/накладные, где такие позиции остались.
+  const filteredPendingShipments = useMemo(() => {
+    const q = shipmentSearch.trim().toLowerCase();
+    if (!q) return pendingShipments;
+    return pendingShipments
+      .map((p) =>
+        p.projectName.toLowerCase().includes(q)
+          ? p
+          : { ...p, items: p.items.filter((it) => it.productName.toLowerCase().includes(q)) }
+      )
+      .filter((p) => p.items.length > 0);
+  }, [pendingShipments, shipmentSearch]);
 
-    return groups;
-  }, [arrivals]);
+  const filteredShipmentsForHistory = useMemo(() => {
+    const q = shipmentSearch.trim().toLowerCase();
+    if (!q) return shipments;
+    return shipments
+      .map((s) =>
+        s.projectName.toLowerCase().includes(q)
+          ? s
+          : { ...s, items: s.items.filter((it) => it.productName.toLowerCase().includes(q)) }
+      )
+      .filter((s) => s.items.length > 0);
+  }, [shipments, shipmentSearch]);
 
   // История отгрузок, сгруппированная по проекту — та же схема, что у
-  // arrivalGroups выше, но порядок групп по свежести последней отгрузки
+  // buildArrivalProjectGroups, но порядок групп по свежести последней отгрузки
   // (а не по числу ожидающих позиций): история читается сверху вниз как лента.
   const shipmentHistoryGroups = useMemo<ShipmentHistoryGroup[]>(() => {
     const map = new Map<string, ShipmentHistoryGroup>();
 
-    shipments.forEach((s) => {
+    filteredShipmentsForHistory.forEach((s) => {
       const key = String(s.projectId);
       let group = map.get(key);
       if (!group) {
@@ -1767,7 +1968,29 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     groups.sort((a, b) => (b.lastShipmentTs ?? 0) - (a.lastShipmentTs ?? 0));
 
     return groups;
-  }, [shipments]);
+  }, [filteredShipmentsForHistory]);
+
+  // То же, что warehouseAccordionValue/projectAccordionValue для "Прихода", но
+  // для двух разделов "Отгрузки": при активном поиске найденные группы
+  // раскрыты принудительно (в value уходит объединение ручного состояния со
+  // всеми ключами результата), а ручное состояние не трогается — после очистки
+  // поиска value откатывается на него.
+  // onValueChange на время поиска заморожен по той же причине: Radix отдал бы
+  // в него отфильтрованное ОБЪЕДИНЕНИЕ, и клик по стрелке затёр бы
+  // запомненный выбор пользователя на «всё найденное, кроме кликнутого».
+  const isSearchingShipments = shipmentSearch.trim().length > 0;
+
+  const pendingShipmentAccordionValue = useMemo(() => {
+    if (!isSearchingShipments) return expandedPendingShipmentGroups;
+    const allPendingKeys = filteredPendingShipments.map((p) => String(p.projectId));
+    return Array.from(new Set([...expandedPendingShipmentGroups, ...allPendingKeys]));
+  }, [isSearchingShipments, expandedPendingShipmentGroups, filteredPendingShipments]);
+
+  const shipmentHistoryAccordionValue = useMemo(() => {
+    if (!isSearchingShipments) return expandedShipmentGroups;
+    const allHistoryKeys = shipmentHistoryGroups.map((g) => g.key);
+    return Array.from(new Set([...expandedShipmentGroups, ...allHistoryKeys]));
+  }, [isSearchingShipments, expandedShipmentGroups, shipmentHistoryGroups]);
 
   const filteredStock = useMemo(() => {
     return stock
@@ -2098,7 +2321,16 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
 
       {tab === "arrivals" && (
         <>
-          <div className="flex items-center justify-end mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div className="relative flex-1 min-w-[200px] max-w-xs">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={arrivalSearch}
+                onChange={(e) => setArrivalSearch(e.target.value)}
+                placeholder="Поиск по товару или артикулу…"
+                className="w-full pl-9 pr-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:border-primary bg-card"
+              />
+            </div>
             <button
               onClick={handlePrintArrivals}
               disabled={arrivalsLoading || arrivals.length === 0}
@@ -2124,248 +2356,281 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
             </div>
           ) : arrivals.length === 0 ? (
             <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Нет данных о приходах</div>
+          ) : arrivalWarehouseGroups.length === 0 ? (
+            <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Ничего не найдено</div>
           ) : (
-            <div className="flex flex-col divide-y divide-border">
-              {arrivalGroups.map((group) => {
-                const isExpanded = !!expandedArrivalGroups[group.key];
+            <Accordion
+              type="multiple"
+              value={warehouseAccordionValue}
+              onValueChange={isSearchingArrivals ? () => {} : setExpandedArrivalWarehouses}
+              className="flex flex-col"
+            >
+              {arrivalWarehouseGroups.map((warehouseGroup) => (
+                <AccordionItem key={warehouseGroup.key} value={warehouseGroup.key} className="border-border">
+                  <AccordionTrigger className="items-center gap-3 rounded-none bg-muted/40 px-4 py-3.5 transition-colors hover:bg-muted/60 hover:no-underline [&>svg]:order-first [&>svg]:translate-y-0">
+                    <span className="flex flex-1 flex-wrap items-center justify-between gap-3">
+                      <span className="flex items-center gap-2.5">
+                        <Warehouse size={16} className="shrink-0 text-blue-600 dark:text-blue-400" />
+                        <span className="flex flex-col">
+                          <span className="text-sm font-bold text-foreground">{warehouseGroup.warehouseName}</span>
+                          <span className="text-xs font-normal text-muted-foreground">
+                            {warehouseGroup.items.length} позиций
+                          </span>
+                        </span>
+                      </span>
+                      <ArrivalStatusBadges counts={warehouseGroup} />
+                    </span>
+                  </AccordionTrigger>
 
-                return (
-                  <div key={group.key} className="flex flex-col">
-                    <div
-                      className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5 bg-background/60 cursor-pointer hover:bg-muted/50 transition-colors"
-                      onClick={() => toggleArrivalGroup(group.key)}
+                  <AccordionContent className="p-0">
+                    <Accordion
+                      type="multiple"
+                      value={projectAccordionValue}
+                      onValueChange={isSearchingArrivals ? () => {} : setExpandedArrivalGroups}
+                      className="flex flex-col border-t border-border pl-4"
                     >
-                      <div className="flex items-center gap-3">
-                        <ChevronDown
-                          size={16}
-                          className={`text-muted-foreground transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}
-                        />
-                        <div>
-                          <h3 className="text-sm font-bold text-foreground">{group.projectName}</h3>
-                          <p className="text-xs text-muted-foreground">{group.items.length} позиций</p>
-                        </div>
-                      </div>
+                      {warehouseGroup.projectGroups.map((group) => {
+                        const groupKey = `${warehouseGroup.key}::${group.key}`;
 
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {group.pendingCount > 0 && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-400/20 text-amber-800 dark:text-amber-200 whitespace-nowrap">
-                            <Clock size={12} /> ожидает {group.pendingCount}
-                          </span>
-                        )}
-                        {group.arrivedCount > 0 && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 whitespace-nowrap">
-                            <CheckCircle2 size={12} /> принято {group.arrivedCount}
-                          </span>
-                        )}
-                        {group.cancelledCount > 0 && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 whitespace-nowrap">
-                            <XCircle size={12} /> отклонено {group.cancelledCount}
-                          </span>
-                        )}
-                        {group.deniedCount > 0 && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 dark:bg-rose-400/20 text-rose-700 dark:text-rose-300 whitespace-nowrap">
-                            <XCircle size={12} /> отклонено ПМ {group.deniedCount}
-                          </span>
-                        )}
-                        <span className="text-xs text-muted-foreground whitespace-nowrap">{group.lastMovementLabel}</span>
-                      </div>
-                    </div>
+                        return (
+                          <AccordionItem key={groupKey} value={groupKey} className="border-border">
+                            <AccordionTrigger className="items-center gap-3 rounded-none bg-background/60 px-4 py-3.5 transition-colors hover:bg-muted/50 hover:no-underline [&>svg]:order-first [&>svg]:translate-y-0">
+                              <span className="flex flex-1 flex-wrap items-center justify-between gap-3">
+                                <span className="flex flex-col">
+                                  <span className="text-sm font-bold text-foreground">{group.projectName}</span>
+                                  <span className="text-xs font-normal text-muted-foreground">
+                                    {group.items.length} позиций
+                                  </span>
+                                </span>
 
-                    {isExpanded && (
-                      <div className="overflow-x-auto">
-                        <table className="w-full border-collapse">
-                          <thead>
-                            <tr className="border-b border-border bg-background/60">
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">№ Прихода</th>
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Когда придет товар</th>
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Склад</th>
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Поставщик</th>
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">Артикул</th>
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Название товара</th>
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Количество</th>
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Ед. изм.</th>
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Статус приема</th>
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Действия</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-border">
-                            {group.items.map((a) => {
-                              const isCancelled = a.status === "cancelled";
-                              const isDenied = a.status === "denied";
-                              const isArrived = a.status === "arrived";
+                                <span className="flex items-center gap-2 flex-wrap">
+                                  <ArrivalStatusBadges counts={group} />
+                                  <span className="text-xs font-normal text-muted-foreground whitespace-nowrap">
+                                    {group.lastMovementLabel}
+                                  </span>
+                                </span>
+                              </span>
+                            </AccordionTrigger>
 
-                              return (
-                                <tr key={a.id} className={`hover:bg-background/50 transition-colors ${isCancelled || isDenied ? "opacity-50 bg-background" : ""}`}>
-                                  <td className="px-4 py-3.5 text-xs font-mono font-medium text-foreground">
-                                    {a.receiptNumber}
-                                  </td>
-
-                                  <td className="px-4 py-3.5 text-sm text-muted-foreground">
-                                    {a.date}
-                                  </td>
-
-                                  <td className="px-4 py-3.5 text-sm font-medium text-foreground">
-                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted text-foreground text-xs font-semibold">
-                                      <Building2 size={12} className="text-blue-600 dark:text-blue-400" />
-                                      {a.warehouseName}
+                            <AccordionContent className="p-0">
+                              {group.dateGroups.map((dateGroup) => (
+                                <div key={dateGroup.key} className="flex flex-col border-t border-border/60">
+                                  {/* Уровень 3 — не аккордеон: статичный разделитель над таблицей */}
+                                  <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 pb-1.5">
+                                    <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                      <Clock size={11} className="shrink-0" />
+                                      {dateGroup.dateLabel}
                                     </span>
-                                  </td>
+                                    <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                                      {dateGroup.items.length} позиций
+                                    </span>
+                                  </div>
 
-                                  <td className="px-4 py-3.5 text-sm font-medium text-foreground">
-                                    {a.supplier}
-                                  </td>
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full border-collapse">
+                                      <thead>
+                                        <tr className="border-b border-border bg-background/60">
+                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">№ Прихода</th>
+                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Когда придет товар</th>
+                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Склад</th>
+                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Поставщик</th>
+                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">Артикул</th>
+                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Название товара</th>
+                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Количество</th>
+                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Ед. изм.</th>
+                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Статус приема</th>
+                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Действия</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-border">
+                                        {dateGroup.items.map((a) => {
+                                          const isCancelled = a.status === "cancelled";
+                                          const isDenied = a.status === "denied";
+                                          const isArrived = a.status === "arrived";
 
-                                  <td className="px-4 py-3.5 text-xs font-mono text-muted-foreground whitespace-nowrap">
-                                    {a.sku}
-                                  </td>
+                                          return (
+                                            <tr key={a.id} className={`hover:bg-background/50 transition-colors ${isCancelled || isDenied ? "opacity-50 bg-background" : ""}`}>
+                                              <td className="px-4 py-3.5 text-xs font-mono font-medium text-foreground">
+                                                {a.receiptNumber}
+                                              </td>
 
-                                  <td className="px-4 py-3.5 text-sm text-foreground font-medium">
-                                    <div className="flex flex-col gap-1">
-                                      <span>{a.item}</span>
-                                      {a.kit_group_key ? (
-                                        <span
-                                          className="inline-flex w-fit max-w-[220px] items-center gap-1 rounded-md bg-blue-100 dark:bg-blue-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
-                                          title={`из комплекта «${(a.kit_name || "").trim() || "Комплект"}»${a.quantity_per_kit != null ? ` ×${a.quantity_per_kit}` : ""}`}
-                                        >
-                                          <Package size={10} className="shrink-0" />
-                                          <span className="truncate">
-                                            из комплекта «{(a.kit_name || "").trim() || "Комплект"}»
-                                            {a.quantity_per_kit != null ? ` ×${a.quantity_per_kit}` : ""}
-                                          </span>
-                                        </span>
-                                      ) : null}
-                                      {a.kit_group_key && a.kit_quantity != null ? (
-                                        <span className="text-[11px] text-muted-foreground">
-                                          комплектов в проекте: {a.kit_quantity}
-                                        </span>
-                                      ) : null}
-                                    </div>
-                                  </td>
+                                              <td className="px-4 py-3.5 text-sm text-muted-foreground">
+                                                {a.date}
+                                              </td>
 
-                                  <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">
-                                    {a.qty.toLocaleString("ru-RU")}
-                                    {a.actualQuantity !== null && a.actualQuantity !== a.qty && (
-                                      <span className="block text-xs font-normal text-amber-600 dark:text-amber-400">факт: {a.actualQuantity}</span>
-                                    )}
-                                  </td>
+                                              <td className="px-4 py-3.5 text-sm font-medium text-foreground">
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted text-foreground text-xs font-semibold">
+                                                  <Building2 size={12} className="text-blue-600 dark:text-blue-400" />
+                                                  {a.warehouseName}
+                                                </span>
+                                              </td>
 
-                                  <td className="px-4 py-3.5 text-xs text-muted-foreground">
-                                    {a.unit}
-                                  </td>
+                                              <td className="px-4 py-3.5 text-sm font-medium text-foreground">
+                                                {a.supplier}
+                                              </td>
 
-                                  <td className="px-4 py-3.5 text-center">
-                                    {isCancelled ? (
-                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 whitespace-nowrap" title="Отменено">
-                                        <XCircle size={14} /> Отклонено
-                                      </span>
-                                    ) : isDenied ? (
-                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 dark:bg-rose-400/20 text-rose-700 dark:text-rose-300 whitespace-nowrap" title="Отклонено ПМ">
-                                        <XCircle size={14} /> Отклонено ПМ
-                                      </span>
-                                    ) : isArrived ? (
-                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 whitespace-nowrap" title="Принято кладовщиком">
-                                        <CheckCircle2 size={14} /> Принято
-                                      </span>
-                                    ) : (
-                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-400/20 text-amber-800 dark:text-amber-200 whitespace-nowrap" title="Ожидается доставка">
-                                        <Clock size={14} /> В пути
-                                      </span>
-                                    )}
-                                  </td>
+                                              <td className="px-4 py-3.5 text-xs font-mono text-muted-foreground whitespace-nowrap">
+                                                {a.sku}
+                                              </td>
 
-                                  <td className="px-4 py-3.5 text-center">
-                                    {isCancelled ? (
-                                      <div className="flex flex-col items-center gap-1">
-                                        <span className="text-xs text-muted-foreground italic">Приход отменен</span>
-                                        {isWarehouseUser && (
-                                          <button
-                                            onClick={() => handleToggleCancel(a)}
-                                            disabled={cancellingReceiptId === a.id}
-                                            title="Вернуть в работу"
-                                            className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
-                                          >
-                                            {cancellingReceiptId === a.id ? "…" : "Вернуть"}
-                                          </button>
-                                        )}
-                                      </div>
-                                    ) : isDenied ? (
-                                      <span className="text-xs text-muted-foreground italic">Заявка отклонена ПМ</span>
-                                    ) : isArrived ? (
-                                      <button
-                                        onClick={() => setDetailsTarget(a)}
-                                        className="flex flex-col items-center group cursor-pointer"
-                                        title="Посмотреть детали приёма"
-                                      >
-                                        <span className="text-xs font-semibold text-green-700 dark:text-green-300 flex items-center gap-1 group-hover:underline">
-                                          <PackageCheck size={14} /> Зачислено
-                                        </span>
-                                        {a.warehouseComment && (
-                                          <span className="text-[11px] text-muted-foreground italic max-w-[150px] truncate" title={a.warehouseComment}>
-                                            "{a.warehouseComment}"
-                                          </span>
-                                        )}
-                                      </button>
-                                    ) : isWarehouseUser ? (
-                                      <div className="flex items-center justify-center gap-2">
-                                        <button
-                                          onClick={() => setConfirmTarget(a)}
-                                          title="Принять приход"
-                                          className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 hover:bg-green-200 transition-colors"
-                                        >
-                                          <CheckCircle2 size={16} />
-                                        </button>
-                                        <button
-                                          onClick={() => handleToggleCancel(a)}
-                                          disabled={cancellingReceiptId === a.id}
-                                          title="Отклонить приход"
-                                          className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 hover:bg-red-200 transition-colors disabled:opacity-50"
-                                        >
-                                          {cancellingReceiptId === a.id ? (
-                                            <Loader2 size={16} className="animate-spin" />
-                                          ) : (
-                                            <XCircle size={16} />
-                                          )}
-                                        </button>
-                                      </div>
-                                    ) : isPm ? (
-                                      <div className="flex flex-col items-center gap-1">
-                                        <span className="text-xs text-muted-foreground italic">Ожидает кладовщика</span>
-                                        <div className="flex items-center gap-2">
-                                          {a.source === "pm_request" && (
-                                            <button
-                                              onClick={() => openDeleteReceipt(a)}
-                                              title="Удалить заявку, если отправили по ошибке"
-                                              className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
-                                            >
-                                              <Trash2 size={12} />
-                                              Удалить
-                                            </button>
-                                          )}
-                                          <button
-                                            onClick={() => openDenyReceipt(a)}
-                                            title="Отклонить эту позицию прихода"
-                                            className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
-                                          >
-                                            <XCircle size={12} />
-                                            Отклонить
-                                          </button>
-                                        </div>
-                                      </div>
-                                    ) : (
-                                      <span className="text-xs text-muted-foreground italic">Ожидает кладовщика</span>
-                                    )}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                                              <td className="px-4 py-3.5 text-sm text-foreground font-medium">
+                                                <div className="flex flex-col gap-1">
+                                                  <span>{a.item}</span>
+                                                  {a.kit_group_key ? (
+                                                    <span
+                                                      className="inline-flex w-fit max-w-[220px] items-center gap-1 rounded-md bg-blue-100 dark:bg-blue-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                                                      title={`из комплекта «${(a.kit_name || "").trim() || "Комплект"}»${a.quantity_per_kit != null ? ` ×${a.quantity_per_kit}` : ""}`}
+                                                    >
+                                                      <Package size={10} className="shrink-0" />
+                                                      <span className="truncate">
+                                                        из комплекта «{(a.kit_name || "").trim() || "Комплект"}»
+                                                        {a.quantity_per_kit != null ? ` ×${a.quantity_per_kit}` : ""}
+                                                      </span>
+                                                    </span>
+                                                  ) : null}
+                                                  {a.kit_group_key && a.kit_quantity != null ? (
+                                                    <span className="text-[11px] text-muted-foreground">
+                                                      комплектов в проекте: {a.kit_quantity}
+                                                    </span>
+                                                  ) : null}
+                                                </div>
+                                              </td>
+
+                                              <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">
+                                                {a.qty.toLocaleString("ru-RU")}
+                                                {a.actualQuantity !== null && a.actualQuantity !== a.qty && (
+                                                  <span className="block text-xs font-normal text-amber-600 dark:text-amber-400">факт: {a.actualQuantity}</span>
+                                                )}
+                                              </td>
+
+                                              <td className="px-4 py-3.5 text-xs text-muted-foreground">
+                                                {a.unit}
+                                              </td>
+
+                                              <td className="px-4 py-3.5 text-center">
+                                                {isCancelled ? (
+                                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 whitespace-nowrap" title="Отменено">
+                                                    <XCircle size={14} /> Отклонено
+                                                  </span>
+                                                ) : isDenied ? (
+                                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 dark:bg-rose-400/20 text-rose-700 dark:text-rose-300 whitespace-nowrap" title="Отклонено ПМ">
+                                                    <XCircle size={14} /> Отклонено ПМ
+                                                  </span>
+                                                ) : isArrived ? (
+                                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 whitespace-nowrap" title="Принято кладовщиком">
+                                                    <CheckCircle2 size={14} /> Принято
+                                                  </span>
+                                                ) : (
+                                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-400/20 text-amber-800 dark:text-amber-200 whitespace-nowrap" title="Ожидается доставка">
+                                                    <Clock size={14} /> В пути
+                                                  </span>
+                                                )}
+                                              </td>
+
+                                              <td className="px-4 py-3.5 text-center">
+                                                {isCancelled ? (
+                                                  <div className="flex flex-col items-center gap-1">
+                                                    <span className="text-xs text-muted-foreground italic">Приход отменен</span>
+                                                    {isWarehouseUser && (
+                                                      <button
+                                                        onClick={() => handleToggleCancel(a)}
+                                                        disabled={cancellingReceiptId === a.id}
+                                                        title="Вернуть в работу"
+                                                        className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
+                                                      >
+                                                        {cancellingReceiptId === a.id ? "…" : "Вернуть"}
+                                                      </button>
+                                                    )}
+                                                  </div>
+                                                ) : isDenied ? (
+                                                  <span className="text-xs text-muted-foreground italic">Заявка отклонена ПМ</span>
+                                                ) : isArrived ? (
+                                                  <button
+                                                    onClick={() => setDetailsTarget(a)}
+                                                    className="flex flex-col items-center group cursor-pointer"
+                                                    title="Посмотреть детали приёма"
+                                                  >
+                                                    <span className="text-xs font-semibold text-green-700 dark:text-green-300 flex items-center gap-1 group-hover:underline">
+                                                      <PackageCheck size={14} /> Зачислено
+                                                    </span>
+                                                    {a.warehouseComment && (
+                                                      <span className="text-[11px] text-muted-foreground italic max-w-[150px] truncate" title={a.warehouseComment}>
+                                                        "{a.warehouseComment}"
+                                                      </span>
+                                                    )}
+                                                  </button>
+                                                ) : isWarehouseUser ? (
+                                                  <div className="flex items-center justify-center gap-2">
+                                                    <button
+                                                      onClick={() => setConfirmTarget(a)}
+                                                      title="Принять приход"
+                                                      className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 hover:bg-green-200 transition-colors"
+                                                    >
+                                                      <CheckCircle2 size={16} />
+                                                    </button>
+                                                    <button
+                                                      onClick={() => handleToggleCancel(a)}
+                                                      disabled={cancellingReceiptId === a.id}
+                                                      title="Отклонить приход"
+                                                      className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 hover:bg-red-200 transition-colors disabled:opacity-50"
+                                                    >
+                                                      {cancellingReceiptId === a.id ? (
+                                                        <Loader2 size={16} className="animate-spin" />
+                                                      ) : (
+                                                        <XCircle size={16} />
+                                                      )}
+                                                    </button>
+                                                  </div>
+                                                ) : isPm ? (
+                                                  <div className="flex flex-col items-center gap-1">
+                                                    <span className="text-xs text-muted-foreground italic">Ожидает кладовщика</span>
+                                                    {/* Действие зависит от источника записи: свою заявку ПМ
+                                                        удаляет (её ещё никто не согласовывал), а проектный
+                                                        приход из Закупок только отклоняет — удалить его нельзя,
+                                                        за ним стоит строка проекта. */}
+                                                    <div className="flex items-center gap-2">
+                                                      {a.source === "pm_request" ? (
+                                                        <button
+                                                          onClick={() => openDeleteReceipt(a)}
+                                                          title="Удалить заявку, если отправили по ошибке"
+                                                          className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+                                                        >
+                                                          <Trash2 size={12} />
+                                                          Удалить
+                                                        </button>
+                                                      ) : (
+                                                        <button
+                                                          onClick={() => openDenyReceipt(a)}
+                                                          title="Отклонить эту позицию прихода"
+                                                          className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+                                                        >
+                                                          <XCircle size={12} />
+                                                          Отклонить
+                                                        </button>
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                ) : (
+                                                  <span className="text-xs text-muted-foreground italic">Ожидает кладовщика</span>
+                                                )}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              ))}
+                            </AccordionContent>
+                          </AccordionItem>
+                        );
+                      })}
+                    </Accordion>
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
           )}
         </div>
         </>
@@ -2373,6 +2638,16 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
 
       {tab === "shipments" && (
         <>
+          <div className="relative mb-4 max-w-xs">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={shipmentSearch}
+              onChange={(e) => setShipmentSearch(e.target.value)}
+              placeholder="Поиск по товару…"
+              className="w-full pl-9 pr-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:border-primary bg-card"
+            />
+          </div>
+
           {pendingError && (
             <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg mb-4">
               <AlertTriangle size={15} className="text-destructive mt-0.5 shrink-0" />
@@ -2389,9 +2664,18 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
             <div className="py-8 text-center text-sm text-muted-foreground bg-card rounded-lg border border-dashed border-border mb-6">
               Нет проектов, готовых к отгрузке
             </div>
+          ) : filteredPendingShipments.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground bg-card rounded-lg border border-dashed border-border mb-6">
+              Ничего не найдено
+            </div>
           ) : (
-            <div className="space-y-4 mb-8">
-              {pendingShipments.map((proj) => {
+            <Accordion
+              type="multiple"
+              value={pendingShipmentAccordionValue}
+              onValueChange={isSearchingShipments ? () => {} : setExpandedPendingShipmentGroups}
+              className="space-y-4 mb-8"
+            >
+              {filteredPendingShipments.map((proj) => {
                 const checkedItems = proj.items.filter((it) => it.checked);
                 const canSubmit =
                   checkedItems.length > 0 &&
@@ -2407,33 +2691,41 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                   }
                 }
 
-                const isPendingGroupExpanded = !!expandedPendingShipmentGroups[String(proj.projectId)];
+                const projectKey = String(proj.projectId);
 
                 return (
-                  <div key={proj.projectId} className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
-                    <div
-                      className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 bg-background border-b border-border cursor-pointer hover:bg-muted/50 transition-colors"
-                      onClick={() => togglePendingShipmentGroup(String(proj.projectId))}
-                    >
-                      <div className="flex items-center gap-3">
-                        <ChevronDown
-                          size={16}
-                          className={`text-muted-foreground transition-transform duration-200 ${isPendingGroupExpanded ? "rotate-180" : ""}`}
-                        />
-                        <div>
-                          <h3 className="text-sm font-bold text-foreground">{proj.projectName}</h3>
-                          <p className="text-xs text-muted-foreground">
-                            {proj.items.length} позиций к сборке
-                            {checkedItems.length > 0 && ` · отмечено ${checkedItems.length}`}
-                          </p>
-                        </div>
+                  <AccordionItem
+                    key={projectKey}
+                    value={projectKey}
+                    // last:border-b возвращает нижнюю рамку, которую снимает
+                    // last:border-b-0 из AccordionItem: здесь элементы — не строки
+                    // списка с разделителями, а отдельные карточки с рамкой по кругу.
+                    className="bg-card rounded-lg border border-border last:border-b shadow-sm overflow-hidden"
+                  >
+                    {/* Кнопка "Список" и ProjectRevertControl лежат рядом с
+                        AccordionTrigger, а не внутри: триггер — это <button>, и
+                        вложенные в него кнопки/меню были бы невалидной вложенностью
+                        интерактивных элементов. Поэтому и stopPropagation на них
+                        больше не нужен — клик по шапке больше не тогглит группу. */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 bg-background border-b border-border">
+                      <div className="min-w-0 flex-1">
+                        <AccordionTrigger className="items-center gap-3 rounded-none px-5 py-3.5 transition-colors hover:bg-muted/50 hover:no-underline [&>svg]:order-first [&>svg]:translate-y-0">
+                          {/* flex-1 обязателен: у триггера justify-between, и без
+                              растягивания текста шеврон с order-first ушёл бы влево,
+                              а название прижалось бы к правому краю триггера. */}
+                          <span className="flex flex-1 flex-col">
+                            <span className="text-sm font-bold text-foreground">{proj.projectName}</span>
+                            <span className="text-xs font-normal text-muted-foreground">
+                              {proj.items.length} позиций к сборке
+                              {checkedItems.length > 0 && ` · отмечено ${checkedItems.length}`}
+                            </span>
+                          </span>
+                        </AccordionTrigger>
                       </div>
-                      <div className="flex items-center gap-2">
+
+                      <div className="flex items-center gap-2 pr-5">
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDownloadChecklist(proj.projectId);
-                          }}
+                          onClick={() => handleDownloadChecklist(proj.projectId)}
                           disabled={downloadingChecklistId === proj.projectId}
                           title="Распечатать список на отгрузку"
                           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-border text-foreground hover:bg-background disabled:opacity-50"
@@ -2452,187 +2744,185 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                             сам факт присутствия в этом списке означает, что проект уже
                             на этапе "На отгрузке" (иначе он не попал бы в pending-выборку
                             бэкенда), поэтому currentStatus передаём фиксированным. */}
-                        <div onClick={(e) => e.stopPropagation()}>
-                          <ProjectRevertControl
-                            projectId={proj.projectId}
-                            currentStatus="На отгрузке"
-                            onReverted={async () => {
-                              // Сразу убираем строку локально — не ждём
-                              // ответа рефетча, чтобы проект не "висел" на
-                              // экране лишний цикл сети. loadPendingShipments
-                              // ниже подтягивает настоящее состояние с
-                              // backend и служит источником истины: если
-                              // проект туда вернётся, это будет означать,
-                              // что backend не снял резерв при откате.
-                              setPendingShipments((prev) =>
-                                prev.filter((p) => p.projectId !== proj.projectId),
-                              );
-                              await loadPendingShipments();
-                            }}
-                          />
-                        </div>
+                        <ProjectRevertControl
+                          projectId={proj.projectId}
+                          currentStatus="На отгрузке"
+                          onReverted={async () => {
+                            // Сразу убираем строку локально — не ждём
+                            // ответа рефетча, чтобы проект не "висел" на
+                            // экране лишний цикл сети. loadPendingShipments
+                            // ниже подтягивает настоящее состояние с
+                            // backend и служит источником истины: если
+                            // проект туда вернётся, это будет означать,
+                            // что backend не снял резерв при откате.
+                            setPendingShipments((prev) =>
+                              prev.filter((p) => p.projectId !== proj.projectId),
+                            );
+                            await loadPendingShipments();
+                          }}
+                        />
                       </div>
                     </div>
 
-                    {isPendingGroupExpanded && proj.error && (
-                      <div className="mx-5 mt-3 flex items-start gap-2 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 text-red-700 dark:text-red-300 px-3 py-2 rounded-lg text-xs">
-                        <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-                        {proj.error}
-                      </div>
-                    )}
+                    <AccordionContent className="p-0">
+                      {proj.error && (
+                        <div className="mx-5 mt-3 flex items-start gap-2 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 text-red-700 dark:text-red-300 px-3 py-2 rounded-lg text-xs">
+                          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                          {proj.error}
+                        </div>
+                      )}
 
-                    {isPendingGroupExpanded && (
-                    <div className="overflow-x-auto">
-                      <table className="w-full border-collapse">
-                        <thead>
-                          <tr className="border-b border-border bg-background/40">
-                            <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left w-10"></th>
-                            <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Товар</th>
-                            <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Кол.</th>
-                            <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Ед.</th>
-                            <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Склад</th>
-                            <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Фото</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border">
-                          {proj.items.map((it) => (
-                            <tr key={it.id} className={`hover:bg-background/40 transition-colors ${it.checked ? "bg-primary/5" : ""}`}>
-                              <td className="px-5 py-3 text-center">
-                              {isWarehouseUser && (
-                              <input
-                                type="checkbox"
-                                checked={it.checked}
-                                disabled={proj.submitting || !it.warehouseId}
-                                onChange={() => toggleShipmentItemChecked(proj.projectId, it.id)}
-                                className="w-4 h-4 accent-primary cursor-pointer disabled:cursor-not-allowed"
-                              />
-                              )}
-                              </td>
-                              <td className="px-5 py-3 text-sm font-medium text-foreground">
-                                <div className="flex flex-col gap-1">
-                                  <span>{it.productName}</span>
-                                  {it.kitGroupKey ? (
-                                    <span
-                                      className="inline-flex w-fit max-w-[220px] items-center gap-1 rounded-md bg-blue-100 dark:bg-blue-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
-                                      title={`из комплекта «${(it.kitName || "").trim() || "Комплект"}»${it.quantityPerKit != null ? ` ×${it.quantityPerKit}` : ""}`}
-                                    >
-                                      <Package size={10} className="shrink-0" />
-                                      <span className="truncate">
-                                        из комплекта «{(it.kitName || "").trim() || "Комплект"}»
-                                        {it.quantityPerKit != null ? ` ×${it.quantityPerKit}` : ""}
-                                      </span>
-                                    </span>
-                                  ) : null}
-                                  {it.kitGroupKey && it.kitQuantity != null ? (
-                                    <span className="text-[11px] text-muted-foreground">
-                                      комплектов в проекте: {it.kitQuantity}
-                                    </span>
-                                  ) : null}
-                                </div>
-                              </td>
-                              <td className="px-5 py-3 text-sm font-mono text-foreground text-center">{it.quantity}</td>
-                              <td className="px-5 py-3 text-xs text-muted-foreground">{it.unit}</td>
-                              <td className="px-5 py-3">
-                                {it.availableWarehouses.length === 0 ? (
-                                  <span className="text-xs text-destructive italic">Нет резерва ни на одном складе</span>
-                                ) : (
-                                  <div className="flex items-center gap-1.5">
-                                    <Building2 size={13} className="text-muted-foreground" />
-                                    <select
-                                      value={it.warehouseId ?? ""}
-                                      onChange={(e) => setShipmentItemWarehouse(proj.projectId, it.id, Number(e.target.value))}
-                                      disabled={proj.submitting}
-                                      className="text-sm border border-border rounded-lg px-2 py-1 focus:outline-none focus:border-primary bg-card"
-                                    >
-                                      {it.availableWarehouses.map((wh) => (
-                                        <option key={wh.warehouseId} value={wh.warehouseId}>
-                                          {wh.warehouseName}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full border-collapse">
+                          <thead>
+                            <tr className="border-b border-border bg-background/40">
+                              <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left w-10"></th>
+                              <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Товар</th>
+                              <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Кол.</th>
+                              <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Ед.</th>
+                              <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Склад</th>
+                              <th className="px-5 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Фото</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {proj.items.map((it) => (
+                              <tr key={it.id} className={`hover:bg-background/40 transition-colors ${it.checked ? "bg-primary/5" : ""}`}>
+                                <td className="px-5 py-3 text-center">
+                                {isWarehouseUser && (
+                                <input
+                                  type="checkbox"
+                                  checked={it.checked}
+                                  disabled={proj.submitting || !it.warehouseId}
+                                  onChange={() => toggleShipmentItemChecked(proj.projectId, it.id)}
+                                  className="w-4 h-4 accent-primary cursor-pointer disabled:cursor-not-allowed"
+                                />
                                 )}
-                              </td>
-                              <td className="px-5 py-3">
-                                {isWarehouseUser && it.checked ? (
+                                </td>
+                                <td className="px-5 py-3 text-sm font-medium text-foreground">
                                   <div className="flex flex-col gap-1">
-                                    <div className="flex items-center gap-1.5">
-                                      <label
-                                        className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-lg cursor-pointer transition-colors ${
-                                          it.photo
-                                            ? "border-green-300 dark:border-green-400/40 bg-green-50 dark:bg-green-400/10 text-green-700 dark:text-green-300"
-                                            : "border-dashed border-border text-muted-foreground hover:bg-background"
-                                        }`}
+                                    <span>{it.productName}</span>
+                                    {it.kitGroupKey ? (
+                                      <span
+                                        className="inline-flex w-fit max-w-[220px] items-center gap-1 rounded-md bg-blue-100 dark:bg-blue-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                                        title={`из комплекта «${(it.kitName || "").trim() || "Комплект"}»${it.quantityPerKit != null ? ` ×${it.quantityPerKit}` : ""}`}
                                       >
-                                        {it.photo ? <CheckCircle2 size={13} /> : <Camera size={13} className="text-primary" />}
-                                        <span className="truncate max-w-[110px]">{it.photo ? it.photo.name : "Приложить фото"}</span>
-                                        <input
-                                          type="file"
-                                          accept="image/*"
-                                          className="hidden"
-                                          disabled={proj.submitting}
-                                          onChange={(e) => setShipmentItemPhoto(proj.projectId, it.id, e.target.files?.[0] || null)}
-                                        />
-                                      </label>
-                                      {it.photo ? (
-                                        <button
-                                          type="button"
-                                          onClick={() => setShipmentItemPhoto(proj.projectId, it.id, null)}
-                                          disabled={proj.submitting}
-                                          title="Убрать фото"
-                                          className="text-muted-foreground hover:text-destructive"
+                                        <Package size={10} className="shrink-0" />
+                                        <span className="truncate">
+                                          из комплекта «{(it.kitName || "").trim() || "Комплект"}»
+                                          {it.quantityPerKit != null ? ` ×${it.quantityPerKit}` : ""}
+                                        </span>
+                                      </span>
+                                    ) : null}
+                                    {it.kitGroupKey && it.kitQuantity != null ? (
+                                      <span className="text-[11px] text-muted-foreground">
+                                        комплектов в проекте: {it.kitQuantity}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </td>
+                                <td className="px-5 py-3 text-sm font-mono text-foreground text-center">{it.quantity}</td>
+                                <td className="px-5 py-3 text-xs text-muted-foreground">{it.unit}</td>
+                                <td className="px-5 py-3">
+                                  {it.availableWarehouses.length === 0 ? (
+                                    <span className="text-xs text-destructive italic">Нет резерва ни на одном складе</span>
+                                  ) : (
+                                    <div className="flex items-center gap-1.5">
+                                      <Building2 size={13} className="text-muted-foreground" />
+                                      <select
+                                        value={it.warehouseId ?? ""}
+                                        onChange={(e) => setShipmentItemWarehouse(proj.projectId, it.id, Number(e.target.value))}
+                                        disabled={proj.submitting}
+                                        className="text-sm border border-border rounded-lg px-2 py-1 focus:outline-none focus:border-primary bg-card"
+                                      >
+                                        {it.availableWarehouses.map((wh) => (
+                                          <option key={wh.warehouseId} value={wh.warehouseId}>
+                                            {wh.warehouseName}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="px-5 py-3">
+                                  {isWarehouseUser && it.checked ? (
+                                    <div className="flex flex-col gap-1">
+                                      <div className="flex items-center gap-1.5">
+                                        <label
+                                          className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-lg cursor-pointer transition-colors ${
+                                            it.photo
+                                              ? "border-green-300 dark:border-green-400/40 bg-green-50 dark:bg-green-400/10 text-green-700 dark:text-green-300"
+                                              : "border-dashed border-border text-muted-foreground hover:bg-background"
+                                          }`}
                                         >
-                                          <X size={13} />
-                                        </button>
-                                      ) : (
-                                        <span className="text-[11px] text-muted-foreground/70 italic whitespace-nowrap">необязательно</span>
+                                          {it.photo ? <CheckCircle2 size={13} /> : <Camera size={13} className="text-primary" />}
+                                          <span className="truncate max-w-[110px]">{it.photo ? it.photo.name : "Приложить фото"}</span>
+                                          <input
+                                            type="file"
+                                            accept="image/*"
+                                            className="hidden"
+                                            disabled={proj.submitting}
+                                            onChange={(e) => setShipmentItemPhoto(proj.projectId, it.id, e.target.files?.[0] || null)}
+                                          />
+                                        </label>
+                                        {it.photo ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => setShipmentItemPhoto(proj.projectId, it.id, null)}
+                                            disabled={proj.submitting}
+                                            title="Убрать фото"
+                                            className="text-muted-foreground hover:text-destructive"
+                                          >
+                                            <X size={13} />
+                                          </button>
+                                        ) : (
+                                          <span className="text-[11px] text-muted-foreground/70 italic whitespace-nowrap">необязательно</span>
+                                        )}
+                                      </div>
+                                      {proj.submitting && it.photo && it.photoUploadProgress != null && (
+                                        <div className="h-1 w-28 rounded-full bg-muted overflow-hidden">
+                                          <div
+                                            className="h-full bg-primary transition-all"
+                                            style={{ width: `${it.photoUploadProgress}%` }}
+                                          />
+                                        </div>
                                       )}
                                     </div>
-                                    {proj.submitting && it.photo && it.photoUploadProgress != null && (
-                                      <div className="h-1 w-28 rounded-full bg-muted overflow-hidden">
-                                        <div
-                                          className="h-full bg-primary transition-all"
-                                          style={{ width: `${it.photoUploadProgress}%` }}
-                                        />
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <span className="text-xs text-muted-foreground/60 italic">—</span>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    )}
-
-                    {isPendingGroupExpanded && isWarehouseUser && (
-                      <div className="flex flex-wrap items-center justify-end gap-3 px-5 py-3.5 border-t border-border bg-background/40">
-                        <div className="flex flex-col items-end gap-1">
-                          {helperText && (
-                            <p className="text-xs text-amber-600 dark:text-amber-400">{helperText}</p>
-                          )}
-                          <button
-                            onClick={() => handleSendToShipment(proj.projectId)}
-                            disabled={!canSubmit}
-                            className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg shadow-sm transition-colors ${
-                              canSubmit
-                                ? "bg-green-600 hover:bg-success/90 text-white cursor-pointer"
-                                : "bg-slate-200 text-muted-foreground cursor-not-allowed"
-                            }`}
-                          >
-                            {proj.submitting ? <Loader2 size={15} className="animate-spin" /> : <PackageCheck size={15} />}
-                            Отправить на отгрузку{checkedItems.length > 0 ? ` (${checkedItems.length})` : ""}
-                          </button>
-                        </div>
+                                  ) : (
+                                    <span className="text-xs text-muted-foreground/60 italic">—</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
-                    )}
-                  </div>
+
+                      {isWarehouseUser && (
+                        <div className="flex flex-wrap items-center justify-end gap-3 px-5 py-3.5 border-t border-border bg-background/40">
+                          <div className="flex flex-col items-end gap-1">
+                            {helperText && (
+                              <p className="text-xs text-amber-600 dark:text-amber-400">{helperText}</p>
+                            )}
+                            <button
+                              onClick={() => handleSendToShipment(proj.projectId)}
+                              disabled={!canSubmit}
+                              className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg shadow-sm transition-colors ${
+                                canSubmit
+                                  ? "bg-green-600 hover:bg-success/90 text-white cursor-pointer"
+                                  : "bg-slate-200 text-muted-foreground cursor-not-allowed"
+                              }`}
+                            >
+                              {proj.submitting ? <Loader2 size={15} className="animate-spin" /> : <PackageCheck size={15} />}
+                              Отправить на отгрузку{checkedItems.length > 0 ? ` (${checkedItems.length})` : ""}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </AccordionContent>
+                  </AccordionItem>
                 );
               })}
-            </div>
+            </Accordion>
           )}
 
           <div className="flex items-center gap-2 mb-3">
@@ -2653,33 +2943,29 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
               <Loader2 size={24} className="animate-spin text-primary mb-2" />
               <p className="text-sm text-muted-foreground">Загрузка отгрузок…</p>
             </div>
-          ) : shipmentHistoryGroups.length === 0 ? (
+          ) : shipments.length === 0 ? (
             <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Нет данных об отгрузках</div>
+          ) : shipmentHistoryGroups.length === 0 ? (
+            <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Ничего не найдено</div>
           ) : (
-            <div className="flex flex-col divide-y divide-border">
-              {shipmentHistoryGroups.map((group) => {
-                const isExpanded = !!expandedShipmentGroups[group.key];
+            <Accordion
+              type="multiple"
+              value={shipmentHistoryAccordionValue}
+              onValueChange={isSearchingShipments ? () => {} : setExpandedShipmentGroups}
+              className="flex flex-col"
+            >
+              {shipmentHistoryGroups.map((group) => (
+                <AccordionItem key={group.key} value={group.key} className="border-border">
+                  <AccordionTrigger className="items-center gap-3 rounded-none bg-background/60 px-4 py-3.5 transition-colors hover:bg-muted/50 hover:no-underline [&>svg]:order-first [&>svg]:translate-y-0">
+                    <span className="flex flex-1 flex-wrap items-center justify-between gap-3">
+                      <span className="flex flex-col">
+                        <span className="text-sm font-bold text-foreground">{group.projectName}</span>
+                        <span className="text-xs font-normal text-muted-foreground">
+                          {group.shipments.length} отгрузок · {group.itemsCount} позиций
+                        </span>
+                      </span>
 
-                return (
-                  <div key={group.key} className="flex flex-col">
-                    <div
-                      className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5 bg-background/60 cursor-pointer hover:bg-muted/50 transition-colors"
-                      onClick={() => toggleShipmentGroup(group.key)}
-                    >
-                      <div className="flex items-center gap-3">
-                        <ChevronDown
-                          size={16}
-                          className={`text-muted-foreground transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}
-                        />
-                        <div>
-                          <h3 className="text-sm font-bold text-foreground">{group.projectName}</h3>
-                          <p className="text-xs text-muted-foreground">
-                            {group.shipments.length} отгрузок · {group.itemsCount} позиций
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 flex-wrap">
+                      <span className="flex items-center gap-2 flex-wrap">
                         {group.photosCount > 0 && (
                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-100 dark:bg-blue-400/20 text-primary whitespace-nowrap">
                             <Camera size={12} /> фото {group.photosCount}
@@ -2688,89 +2974,89 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 whitespace-nowrap">
                           <CheckCircle2 size={12} /> отгружено {group.itemsCount}
                         </span>
-                        <span className="text-xs text-muted-foreground whitespace-nowrap">{group.lastShipmentLabel}</span>
-                      </div>
+                        <span className="text-xs font-normal text-muted-foreground whitespace-nowrap">{group.lastShipmentLabel}</span>
+                      </span>
+                    </span>
+                  </AccordionTrigger>
+
+                  <AccordionContent className="p-0">
+                    <div className="overflow-x-auto">
+                      <table className="w-full border-collapse">
+                        <thead>
+                          <tr className="border-b border-border bg-background/60">
+                            <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">№ Накладной</th>
+                            <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Дата</th>
+                            <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Товары</th>
+                            <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center whitespace-nowrap">Позиций</th>
+                            <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Фото</th>
+                            <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Отгрузил</th>
+                            <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Статус</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {group.shipments.map((s, index) => {
+                            const photosCount = s.items.filter((it) => it.photoUrl).length;
+                            const shippedBy = s.items.find((it) => it.shippedBy)?.shippedBy || null;
+                            const productSummary = s.items.map((it) => it.productName).join(", ");
+
+                            return (
+                              <tr
+                                key={s.id ?? `${group.key}-${index}`}
+                                onClick={() => setShipmentDetailsTarget(s)}
+                                title="Открыть детали отгрузки"
+                                className="hover:bg-background/50 transition-colors cursor-pointer"
+                              >
+                                <td className="px-4 py-3.5 text-xs font-mono font-medium text-foreground whitespace-nowrap">
+                                  {s.id != null ? `№${s.id}` : "—"}
+                                </td>
+                                <td className="px-4 py-3.5 text-sm text-muted-foreground whitespace-nowrap">{s.dateLabel}</td>
+                                <td className="px-4 py-3.5 text-sm text-foreground">
+                                  <span className="block max-w-[320px] truncate" title={productSummary}>
+                                    {productSummary || "—"}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">
+                                  {s.items.length}
+                                </td>
+                                <td className="px-4 py-3.5 text-center">
+                                  {photosCount > 0 ? (
+                                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary">
+                                      <Camera size={13} /> {photosCount}
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs text-muted-foreground/60 italic">—</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3.5 text-sm text-foreground">
+                                  {shippedBy ? (
+                                    <span className="inline-flex items-center gap-1.5 text-xs font-medium">
+                                      <User size={12} className="text-muted-foreground" />
+                                      {shippedBy}
+                                    </span>
+                                  ) : (
+                                    <span
+                                      className="text-xs text-muted-foreground/60 italic"
+                                      title="Не зафиксировано — отгрузка до внедрения учёта исполнителя"
+                                    >
+                                      —
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3.5 text-center">
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 whitespace-nowrap">
+                                    <CheckCircle2 size={14} /> {s.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
-
-                    {isExpanded && (
-                      <div className="overflow-x-auto">
-                        <table className="w-full border-collapse">
-                          <thead>
-                            <tr className="border-b border-border bg-background/60">
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">№ Накладной</th>
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Дата</th>
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Товары</th>
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center whitespace-nowrap">Позиций</th>
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Фото</th>
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Отгрузил</th>
-                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Статус</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-border">
-                            {group.shipments.map((s, index) => {
-                              const photosCount = s.items.filter((it) => it.photoUrl).length;
-                              const shippedBy = s.items.find((it) => it.shippedBy)?.shippedBy || null;
-                              const productSummary = s.items.map((it) => it.productName).join(", ");
-
-                              return (
-                                <tr
-                                  key={s.id ?? `${group.key}-${index}`}
-                                  onClick={() => setShipmentDetailsTarget(s)}
-                                  title="Открыть детали отгрузки"
-                                  className="hover:bg-background/50 transition-colors cursor-pointer"
-                                >
-                                  <td className="px-4 py-3.5 text-xs font-mono font-medium text-foreground whitespace-nowrap">
-                                    {s.id != null ? `№${s.id}` : "—"}
-                                  </td>
-                                  <td className="px-4 py-3.5 text-sm text-muted-foreground whitespace-nowrap">{s.dateLabel}</td>
-                                  <td className="px-4 py-3.5 text-sm text-foreground">
-                                    <span className="block max-w-[320px] truncate" title={productSummary}>
-                                      {productSummary || "—"}
-                                    </span>
-                                  </td>
-                                  <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">
-                                    {s.items.length}
-                                  </td>
-                                  <td className="px-4 py-3.5 text-center">
-                                    {photosCount > 0 ? (
-                                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary">
-                                        <Camera size={13} /> {photosCount}
-                                      </span>
-                                    ) : (
-                                      <span className="text-xs text-muted-foreground/60 italic">—</span>
-                                    )}
-                                  </td>
-                                  <td className="px-4 py-3.5 text-sm text-foreground">
-                                    {shippedBy ? (
-                                      <span className="inline-flex items-center gap-1.5 text-xs font-medium">
-                                        <User size={12} className="text-muted-foreground" />
-                                        {shippedBy}
-                                      </span>
-                                    ) : (
-                                      <span
-                                        className="text-xs text-muted-foreground/60 italic"
-                                        title="Не зафиксировано — отгрузка до внедрения учёта исполнителя"
-                                      >
-                                        —
-                                      </span>
-                                    )}
-                                  </td>
-                                  <td className="px-4 py-3.5 text-center">
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 whitespace-nowrap">
-                                      <CheckCircle2 size={14} /> {s.status}
-                                    </span>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
           )}
           </div>
         </>
