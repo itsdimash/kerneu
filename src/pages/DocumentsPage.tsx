@@ -398,17 +398,11 @@ export function DocumentsPage({
   // документов — блокировка остаётся навсегда, а не только до завершения проекта.
   const docsLocked = completed || uploadsLocked || reviewInFlight || reviewStage === "approved";
 
-  // НОВОЕ: счёт на оплату покупателю разблокируется РАНЬШЕ, чем остальные
-  // документы — сразу после того, как клиент подписал (одобрил) КП, а не
-  // после подписания договора, как доверенность/накладная выше (docsLocked
-  // завязан на contractSigned). Для express-проектов КП вообще нет
-  // (kpRequired === false, см. выше) — тогда ждать нечего, счёт открыт
-  // сразу. Проверка документов директором (reviewInFlight/approved) и
-  // завершённый проект (completed) блокируют его так же, как и остальные —
-  // раз пакет ушёл на согласование или проект закрыт, редактировать нельзя.
-  const kpSignedOrNotRequired = !kpRequired || hasApprovedKp;
-  const paymentInvoiceLocked =
-    completed || !kpSignedOrNotRequired || reviewInFlight || reviewStage === "approved";
+  // Счёт на оплату покупателю доступен ДО подписания договора (в отличие от
+  // доверенности и накладной, у которых docsLocked завязан на
+  // uploadsLocked/contractSigned) — но так же, как и они, блокируется на
+  // этапе проверки документов директором и после завершения проекта.
+  const paymentInvoiceLocked = completed || reviewInFlight || reviewStage === "approved";
 
   const poaPlaceholder: ProjectDocument = {
     id: "poa-placeholder",
@@ -1300,12 +1294,21 @@ export function DocumentsPage({
               )}
               </div>
             </div>
+          </div>
+          )}
 
-            {/* Счет на оплату (покупателю): Dropzone — необязательный документ,
-                не входит в прогресс/блокировку завершения проекта, в отличие
-                от доверенности и накладной выше. Разблокируется отдельно от
-                docsLocked — см. paymentInvoiceLocked выше (по подписанию КП,
-                а не договора). */}
+          {/* Счет на оплату (покупателю): доступен ДО подписания договора,
+              поэтому вынесен ИЗ-ПОД условия "!reviewInFlight && reviewStage
+              !== 'approved' && !completed" выше, которое прячет
+              доверенность/накладную целиком — иначе карточка тоже
+              схлопывалась бы на этапе проверки, притом что
+              paymentInvoiceLocked как раз для этого этапа и предназначен.
+              Здесь карточка всегда видна, но помечается "недоступно" именно
+              на проверке/после завершения — так же по смыслу, как
+              доверенность/накладная, только без привязки к договору.
+              Необязательный документ, не входит в прогресс/блокировку
+              завершения проекта (см. requiredDocCount/doneDocCount выше). */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <div className="bg-card rounded-lg border border-border p-4">
               <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center justify-between gap-2">
                 <span className="flex items-center gap-2">
@@ -1340,7 +1343,7 @@ export function DocumentsPage({
                   <p className="text-xs text-muted-foreground">
                     <span className="font-medium text-muted-foreground">Недоступно</span>
                     <br />
-                    {!kpSignedOrNotRequired ? "до подписания КП" : "проверка документов"}
+                    проверка документов
                   </p>
                 ) : uploadingPaymentInvoice ? (
                   <p className="text-xs text-muted-foreground">Загрузка...</p>
@@ -1352,15 +1355,9 @@ export function DocumentsPage({
                   </p>
                 )}
               </div>
-              {!kpSignedOrNotRequired && (
-                <div className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 -translate-y-[calc(100%+8px)] whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 z-10">
-                  Доступно только после подписания КП
-                </div>
-              )}
               </div>
             </div>
           </div>
-          )}
 
         </div>
 
