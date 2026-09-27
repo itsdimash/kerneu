@@ -3,7 +3,10 @@ import { toast } from "sonner";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { Chip } from "../app/components/common/Chip";
 import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
+import { InlineSearchToggle, useInlineSearch } from "../app/components/common/InlineSearchToggle";
 import { ProcurementSummaryView } from "./ProcurementSummaryView";
+import { Popover, PopoverContent, PopoverTrigger } from "../app/components/ui/popover";
+import { Command, CommandInput, CommandList, CommandItem, CommandEmpty } from "../app/components/ui/command";
 import { fmt } from "../lib/format";
 import { exportSupplierPurchasesToExcel } from "../utils/excelExport";
 import type { Role, ProjectState } from "../types";
@@ -322,6 +325,7 @@ export function ProcurementPage({
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [selectedProject, setSelectedProject] = useState<ProjectListItem | null>(null);
+  const [isProjectPickerOpen, setIsProjectPickerOpen] = useState(false);
 
   // NEW: переключатель «По проектам / Сводно» — сводный режим только
   // читает агрегированные по товару данные (см. ProcurementSummaryView),
@@ -563,16 +567,14 @@ export function ProcurementPage({
     }
   };
 
-  const handleProjectSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const pId = e.target.value;
-    setSelectedProjectId(pId);
-    const p = projects.find(x => String(x.id) === pId);
-    if (p) {
-      loadProjectPurchases(p);
-    } else {
-      setSelectedProject(null);
-      setPurchaseItems([]);
-    }
+  // NEW: раньше был onChange нативного <select> (событие -> поиск проекта
+  // по id в списке); комбобокс на Command/Popover отдаёт сам объект
+  // проекта напрямую, поэтому лукап по id больше не нужен — сама логика
+  // выбора (setSelectedProjectId + loadProjectPurchases) не изменилась.
+  const handleProjectSelect = (p: ProjectListItem) => {
+    setSelectedProjectId(String(p.id));
+    setIsProjectPickerOpen(false);
+    loadProjectPurchases(p);
   };
 
   // NEW: клик по проекту в подтаблице сводного режима — переключает
@@ -618,6 +620,28 @@ export function ProcurementPage({
 
   const groupedItems = useMemo(() => groupBySupplier(purchaseItems), [purchaseItems]);
   const supplierKeys = Object.keys(groupedItems);
+
+  // Поиск по товарам закупки — тот же паттерн (кнопка -> инлайн-инпут,
+  // useDeferredValue, "Совпадений не найдено"), что уже реализован на
+  // ProjectPage для поиска товара в ML-импорте, вынесенный в общий хук/
+  // компонент InlineSearchToggle. Совпадение — по названию продукта ИЛИ
+  // поставщика; раз поставщик — это ключ группы (все строки внутри одной
+  // группы имеют один и тот же supplier), совпадение по имени поставщика
+  // делает видимой ВСЮ группу, а не только строки с совпавшим товаром.
+  const purchaseSearch = useInlineSearch();
+  const matchesSupplierSearch = (supplier: string, items: ProcurementProjectItem[]) => {
+    if (!purchaseSearch.normalizedQuery) return true;
+    if (supplier.toLowerCase().includes(purchaseSearch.normalizedQuery)) return true;
+    return items.some((item) => getItemName(item).toLowerCase().includes(purchaseSearch.normalizedQuery));
+  };
+  const getVisibleSupplierItems = (supplier: string, items: ProcurementProjectItem[]) => {
+    if (!purchaseSearch.normalizedQuery) return items;
+    if (supplier.toLowerCase().includes(purchaseSearch.normalizedQuery)) return items;
+    return items.filter((item) => getItemName(item).toLowerCase().includes(purchaseSearch.normalizedQuery));
+  };
+  const visibleSupplierKeys = supplierKeys.filter((supplier) =>
+    matchesSupplierSearch(supplier, groupedItems[supplier]),
+  );
 
   // NEW: список складов, показываемых в модалке "Отправить на приход" —
   // по умолчанию только те, где уже есть хотя бы один товар из счёта
@@ -1142,21 +1166,44 @@ export function ProcurementPage({
         <div className="flex-1">
           <label className="block text-xs font-medium text-muted-foreground mb-1.5">Выберите активный проект</label>
           <div className="flex items-center gap-3">
-            <select
-              value={selectedProjectId}
-              onChange={handleProjectSelect}
-              disabled={projectsLoading}
-              className="flex-1 max-w-md border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:bg-background"
-            >
-              <option value="" disabled>
-                {projectsLoading ? "Загрузка проектов..." : "— Нажмите, чтобы выбрать проект —"}
-              </option>
-              {projects.map(p => (
-                <option key={p.id} value={p.id}>
-                  {getProjectName(p)}
-                </option>
-              ))}
-            </select>
+            <Popover open={isProjectPickerOpen} onOpenChange={setIsProjectPickerOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  disabled={projectsLoading}
+                  className="flex-1 max-w-md flex items-center justify-between gap-2 border border-border rounded-lg px-3 py-2 text-sm text-left focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:bg-background"
+                >
+                  <span className={`truncate ${selectedProject ? "text-foreground" : "text-muted-foreground"}`}>
+                    {projectsLoading
+                      ? "Загрузка проектов..."
+                      : selectedProject
+                      ? getProjectName(selectedProject)
+                      : "— Нажмите, чтобы выбрать проект —"}
+                  </span>
+                  <ChevronDown
+                    size={14}
+                    className={`flex-shrink-0 text-muted-foreground transition-transform ${isProjectPickerOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0">
+                <Command>
+                  <CommandInput placeholder="Поиск проекта…" />
+                  <CommandList>
+                    <CommandEmpty>Проект не найден</CommandEmpty>
+                    {projects.map(p => (
+                      <CommandItem
+                        key={p.id}
+                        value={getProjectName(p)}
+                        onSelect={() => handleProjectSelect(p)}
+                      >
+                        {getProjectName(p)}
+                      </CommandItem>
+                    ))}
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
             {selectedProject && (
               <button
                 onClick={() => loadProjectPurchases(selectedProject)}
@@ -1214,8 +1261,29 @@ export function ProcurementPage({
         </div>
       )}
 
-      {supplierKeys.map(supplier => {
+      {selectedProject && !purchaseLoading && supplierKeys.length > 0 && (
+        <div className="flex items-center justify-end mb-4">
+          <InlineSearchToggle
+            isOpen={purchaseSearch.isOpen}
+            query={purchaseSearch.query}
+            onQueryChange={purchaseSearch.setQuery}
+            onOpen={purchaseSearch.open}
+            onClose={purchaseSearch.close}
+            label="Поиск продукта или поставщика"
+            placeholder="Поиск по товару или поставщику…"
+          />
+        </div>
+      )}
+
+      {selectedProject && !purchaseLoading && supplierKeys.length > 0 && visibleSupplierKeys.length === 0 && (
+        <div className="py-16 text-center bg-card rounded-lg border border-border">
+          <p className="text-sm font-medium text-muted-foreground">Совпадений не найдено</p>
+        </div>
+      )}
+
+      {visibleSupplierKeys.map(supplier => {
         const items = groupedItems[supplier];
+        const visibleItems = getVisibleSupplierItems(supplier, items);
         const isExpanded = expandedSuppliers[supplier] || false;
         const wfState = supplierWorkflows[supplier] || { file: null, status: 'draft', directorApproved: false, accountantApproved: false };
         const hasFile = !!(wfState.file || wfState.fileName);
@@ -1234,7 +1302,11 @@ export function ProcurementPage({
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-foreground">{supplier}</h3>
-                  <p className="text-xs text-muted-foreground">{items.length} позиций</p>
+                  <p className="text-xs text-muted-foreground">
+                    {visibleItems.length === items.length
+                      ? `${items.length} позиций`
+                      : `${visibleItems.length} из ${items.length} позиций`}
+                  </p>
                 </div>
               </div>
 
@@ -1475,7 +1547,7 @@ export function ProcurementPage({
                     </thead>
                     <tbody className="divide-y divide-border">
                       {(() => {
-                        return items.map((item) => {
+                        return visibleItems.map((item) => {
                         const quantity = toNumber(item.procurement_quantity ?? item.required_quantity ?? item.quantity);
                         const unit = safeTrim(item.product?.unit) || safeTrim(item.unit) || "шт";
                         const costPrice = getPurchasePrice(item);
