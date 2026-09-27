@@ -5,6 +5,7 @@ import { Chip } from "../app/components/common/Chip";
 import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
 import { ProcurementSummaryView } from "./ProcurementSummaryView";
 import { fmt } from "../lib/format";
+import { exportSupplierPurchasesToExcel } from "../utils/excelExport";
 import type { Role, ProjectState } from "../types";
 import {
   getProjectItems,
@@ -38,7 +39,8 @@ import {
   Pencil,
   Search,
   Plus,
-  Package
+  Package,
+  FileSpreadsheet
 } from "lucide-react";
 
 type ProjectListItem = {
@@ -1349,6 +1351,25 @@ export function ProcurementPage({
                   </div>
 
                   <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => {
+                        const rows = items.map((item) => {
+                          const quantity = toNumber(item.procurement_quantity ?? item.required_quantity ?? item.quantity);
+                          const unit = safeTrim(item.product?.unit) || safeTrim(item.unit) || "шт";
+                          return {
+                            "Товар": getItemName(item),
+                            "Кол-во": quantity,
+                            "Ед.": unit,
+                          };
+                        });
+                        exportSupplierPurchasesToExcel(supplier, rows);
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 bg-card border border-border text-foreground text-sm font-medium rounded-lg hover:bg-muted transition-colors"
+                    >
+                      <FileSpreadsheet size={14} />
+                      Скачать Excel
+                    </button>
+
                     {/* NEW: "Отправить на проверку" для ЭТОГО поставщика —
                         доступно PM и бухгалтеру, пока файл загружен и счёт
                         ещё не отправлен (draft / отклонён). */}

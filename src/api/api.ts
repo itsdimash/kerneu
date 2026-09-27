@@ -1414,6 +1414,7 @@ export interface ProcurementSummaryProjectRow {
   ordered_quantity?: number | string | null;
   to_buy_quantity?: number | string | null;
   stage?: ProcurementSummaryStage;
+  receipt_status?: "pending" | "transit" | string | null;
 }
 
 export interface ProcurementSummaryItem {
