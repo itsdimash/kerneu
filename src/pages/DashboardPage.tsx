@@ -529,6 +529,7 @@ const handleSave = async () => {
       projectId,
       projectName,
       fileName: kpFile.name,
+      isContractMode,
     });
   } catch (error) {
     console.error("Ошибка создания проекта:", error);

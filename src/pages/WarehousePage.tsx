@@ -23,6 +23,8 @@ import {
   Trash2,
   ChevronDown,
   Package,
+  Truck,
+  User,
 } from "lucide-react";
 import type { ProjectState, Role } from "../types";
 import {
@@ -41,13 +43,17 @@ import {
   fetchWarehouseList,
   downloadShipmentChecklist,
   uploadShipmentPhoto,
+  presignReceiptPhotoUpload,
+  presignShipmentPhotoUpload,
   resolveDefectReplacement,
   WarehouseStockResponse,
   WarehouseReceiptResponse,
   WarehouseInfo,
   ShipmentPendingProject,
+  ShipmentHistoryResponse,
   ReceiptStatus,
 } from "../api/api";
+import { uploadFileToR2 } from "../lib/uploadToR2";
 
 type StockQuantityField = "total" | "reserved" | "defective" | "available";
 
@@ -94,6 +100,8 @@ type ArrivalRow = {
   actualQuantity: number | null;
   warehouseComment: string | null;
   photoPath: string | null;
+  // Готовый URL с бэкенда — рендерить фото только через него.
+  photoUrl: string | null;
   confirmedAt: string | null;
   defectiveQuantity: number;
   defectResolved: boolean;
@@ -134,13 +142,48 @@ const parseRuDate = (value: string): number => {
   return new Date(Number(y), Number(m) - 1, Number(d)).getTime();
 };
 
-type ShipmentRow = {
+type ShipmentHistoryItemRow = {
   id: number;
+  productName: string;
+  quantity: number;
+  unit: string;
+  // null — легитимное значение для бэкфилл-записей (отгрузки до появления
+  // таблицы shipments): склад тогда не фиксировался. Схлопывать его в
+  // плейсхолдер в маппере нельзя — тогда точка рендера не отличит его от
+  // настоящего названия склада.
+  warehouseName: string | null;
+  kitGroupKey: string | null;
+  kitName: string | null;
+  kitQuantity: number | string | null;
+  quantityPerKit: number | string | null;
+  comment: string | null;
+  photoPath: string | null;
+  // Готовый URL с бэкенда — рендерить фото только через него.
+  photoUrl: string | null;
+  shippedBy: string | null;
+  shippedAt: string | null;
+};
+
+type ShipmentRow = {
+  id: number | null;
   projectId: number;
-  date: string;
-  project: string;
-  items: number;
+  projectName: string;
+  // shippedAt хранится сырым ISO (в отличие от ArrivalRow.date, уже
+  // отформатированного) — по нему сортируются группы, dateLabel только для показа.
+  shippedAt: string | null;
+  dateLabel: string;
   status: string;
+  items: ShipmentHistoryItemRow[];
+};
+
+type ShipmentHistoryGroup = {
+  key: string;
+  projectName: string;
+  shipments: ShipmentRow[];
+  itemsCount: number;
+  photosCount: number;
+  lastShipmentLabel: string;
+  lastShipmentTs: number | null;
 };
 
 type PendingShipmentItemRow = {
@@ -152,6 +195,7 @@ type PendingShipmentItemRow = {
   warehouseId: number | null;
   availableWarehouses: { warehouseId: number; warehouseName: string }[];
   photo: File | null;
+  photoUploadProgress?: number | null;
   kitGroupKey: string | null;
   kitName: string | null;
   kitQuantity: number | string | null;
@@ -288,6 +332,7 @@ function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
     actualQuantity: item.actual_quantity ?? null,
     warehouseComment: item.warehouse_comment ?? null,
     photoPath: item.photo_path ?? null,
+    photoUrl: item.photo_url ?? null,
     confirmedAt: item.confirmed_at ?? null,
     defectiveQuantity: item.defective_quantity ?? 0,
     defectResolved: item.defect_resolved ?? false,
@@ -296,6 +341,37 @@ function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
     kit_name: item.kit_name ?? null,
     kit_quantity: item.kit_quantity ?? null,
     quantity_per_kit: item.quantity_per_kit ?? null,
+  };
+}
+
+function mapShipment(item: ShipmentHistoryResponse): ShipmentRow {
+  return {
+    id: item.id ?? null,
+    projectId: item.project_id,
+    projectName: item.project_name || `Проект #${item.project_id}`,
+    shippedAt: item.shipped_at ?? null,
+    dateLabel: item.shipped_at ? new Date(item.shipped_at).toLocaleDateString("ru-RU") : "—",
+    status: item.status || "Отгружено",
+    items: (item.items || []).map((it) => ({
+      id: it.id,
+      productName: it.product_name || (it.product_id ? `Товар #${it.product_id}` : "—"),
+      quantity: it.quantity ?? 0,
+      unit: it.unit || "шт",
+      warehouseName: it.warehouse_name || (it.warehouse_id != null ? `Склад №${it.warehouse_id}` : null),
+      kitGroupKey: it.kit_group_key ?? null,
+      kitName: it.kit_name ?? null,
+      kitQuantity: it.kit_quantity ?? null,
+      quantityPerKit: it.quantity_per_kit ?? null,
+      comment: it.comment ?? null,
+      // Бэкенд отдаёт фото списком (photos[]) — на позицию обычно ровно
+      // одно, берём первое. Раньше здесь читалось несуществующее
+      // it.photo_path/it.photo_url (их нет в ShipmentHistoryItem, только в
+      // элементах photos[]), из-за чего фото никогда не отображалось.
+      photoPath: it.photos?.[0]?.photo_path ?? null,
+      photoUrl: it.photos?.[0]?.photo_url ?? null,
+      shippedBy: it.shipped_by ?? null,
+      shippedAt: it.shipped_at ?? null,
+    })),
   };
 }
 
@@ -450,6 +526,7 @@ function ConfirmReceiptModal({
   const [comment, setComment] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async () => {
@@ -472,21 +549,48 @@ function ConfirmReceiptModal({
 
     setSubmitting(true);
     setError(null);
+    setUploadProgress(null);
+
+    // Фото грузится в два независимых шага (PUT в R2, затем подтверждение
+    // на бэкенде) — ошибки на них означают разное для пользователя, поэтому
+    // различаем сообщения, а не сводим всё к одному "не удалось".
+    let photoObjectKey: string | null = null;
+    if (photo) {
+      try {
+        const presign = await presignReceiptPhotoUpload(receipt.id, photo.type || "application/octet-stream", photo.name);
+        setUploadProgress(0);
+        await uploadFileToR2(presign.upload_url, photo, setUploadProgress);
+        photoObjectKey = presign.object_key;
+      } catch (e) {
+        console.error("Не удалось загрузить фото прихода в R2", e);
+        setError("Не удалось загрузить фото. Проверьте соединение и попробуйте ещё раз.");
+        setSubmitting(false);
+        setUploadProgress(null);
+        return;
+      }
+    }
 
     try {
       await confirmReceipt(receipt.id, {
         actual_quantity: qty,
         defective_quantity: defQty,
         comment,
-        photo,
+        photo_object_key: photoObjectKey,
       });
       onSuccess();
       onClose();
     } catch (e: any) {
       const detail = e?.response?.data?.detail;
-      setError(typeof detail === "string" ? detail : "Не удалось подтвердить приход");
+      setError(
+        photoObjectKey
+          ? "Фото загружено, но не удалось подтвердить приход. Попробуйте ещё раз."
+          : typeof detail === "string"
+          ? detail
+          : "Не удалось подтвердить приход"
+      );
     } finally {
       setSubmitting(false);
+      setUploadProgress(null);
     }
   };
 
@@ -580,6 +684,14 @@ function ConfirmReceiptModal({
                 onChange={(e) => setPhoto(e.target.files?.[0] || null)}
               />
             </label>
+            {uploadProgress != null && (
+              <div className="mt-1.5 h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+            )}
           </div>
         </div>
 
@@ -602,10 +714,23 @@ function ConfirmReceiptModal({
 }
 
 // ==========================================
+// Лайтбокс увеличенного просмотра фото — общий для ReceiptDetailsModal и
+// ShipmentDetailsModal (был захардкожен только под отгрузку).
+// ==========================================
+function PhotoLightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4"
+      onClick={onClose}
+    >
+      <img src={src} alt={alt} className="max-h-[90vh] max-w-full rounded-lg object-contain" />
+    </div>
+  );
+}
+
+// ==========================================
 // Модалка просмотра деталей уже подтверждённого прихода
 // ==========================================
-const RECEIPT_PHOTO_BASE = "";
-
 function ReceiptDetailsModal({
   receipt,
   canEdit,
@@ -621,26 +746,53 @@ function ReceiptDetailsModal({
   const [comment, setComment] = useState(receipt.warehouseComment || "");
   const [photo, setPhoto] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
-  const photoUrl = receipt.photoPath
-    ? `${RECEIPT_PHOTO_BASE}/${receipt.photoPath.replace(/^\//, "")}`
-    : null;
+  const photoUrl = receipt.photoUrl;
 
   const handleSave = async () => {
     setSubmitting(true);
     setError(null);
+    setUploadProgress(null);
+
+    // См. ConfirmReceiptModal.handleSubmit — тот же принцип раздельных
+    // сообщений об ошибке для шага загрузки в R2 и шага сохранения.
+    let photoObjectKey: string | undefined;
+    if (photo) {
+      try {
+        const presign = await presignReceiptPhotoUpload(receipt.id, photo.type || "application/octet-stream", photo.name);
+        setUploadProgress(0);
+        await uploadFileToR2(presign.upload_url, photo, setUploadProgress);
+        photoObjectKey = presign.object_key;
+      } catch (e) {
+        console.error("Не удалось загрузить фото прихода в R2", e);
+        setError("Не удалось загрузить фото. Проверьте соединение и попробуйте ещё раз.");
+        setSubmitting(false);
+        setUploadProgress(null);
+        return;
+      }
+    }
+
     try {
-      const updated = await updateReceiptDetails(receipt.id, { comment, photo });
+      const updated = await updateReceiptDetails(receipt.id, { comment, photo_object_key: photoObjectKey });
       onSuccess(mapReceipt(updated));
       setEditing(false);
       setPhoto(null);
     } catch (e: any) {
       const detail = e?.response?.data?.detail;
-      setError(typeof detail === "string" ? detail : "Не удалось сохранить изменения");
+      setError(
+        photoObjectKey
+          ? "Фото загружено, но не удалось сохранить изменения. Попробуйте ещё раз."
+          : typeof detail === "string"
+          ? detail
+          : "Не удалось сохранить изменения"
+      );
     } finally {
       setSubmitting(false);
+      setUploadProgress(null);
     }
   };
 
@@ -708,7 +860,12 @@ function ReceiptDetailsModal({
         )}
 
         {photoUrl && !editing && (
-          <img src={photoUrl} alt="Фото товара" className="w-full rounded-lg border border-border mb-4 max-h-64 object-contain bg-background" />
+          <img
+            src={photoUrl}
+            alt="Фото товара"
+            onClick={() => setPreviewOpen(true)}
+            className="w-full rounded-lg border border-border mb-4 max-h-64 object-contain bg-background cursor-pointer"
+          />
         )}
 
         {!editing ? (
@@ -752,6 +909,14 @@ function ReceiptDetailsModal({
                   onChange={(e) => setPhoto(e.target.files?.[0] || null)}
                 />
               </label>
+              {uploadProgress != null && (
+                <div className="mt-1.5 h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                  <div
+                    className="h-full bg-primary transition-all"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-1">
@@ -777,6 +942,157 @@ function ReceiptDetailsModal({
           </div>
         )}
       </div>
+
+      {previewOpen && photoUrl && (
+        <PhotoLightbox src={photoUrl} alt="Фото товара" onClose={() => setPreviewOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+// ==========================================
+// Модалка деталей уже выполненной отгрузки (read-only) — позиции накладной
+// с фото, которое кладовщик приложил в момент отгрузки
+// ==========================================
+function ShipmentDetailsModal({
+  shipment,
+  onClose,
+}: {
+  shipment: ShipmentRow;
+  onClose: () => void;
+}) {
+  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+
+  const shippedBy = shipment.items.find((it) => it.shippedBy)?.shippedBy || null;
+  const photosCount = shipment.items.filter((it) => it.photoUrl).length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+      <div className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-xl bg-card p-6 shadow-xl">
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h3 className="text-base font-semibold text-foreground">
+              Отгрузка {shipment.id != null ? `№${shipment.id}` : ""}
+            </h3>
+            <p className="text-xs text-muted-foreground mt-0.5">{shipment.projectName}</p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-muted-foreground">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="space-y-2 text-sm mb-5">
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Дата отгрузки</span>
+            <span className="font-medium text-foreground">
+              {shipment.shippedAt ? new Date(shipment.shippedAt).toLocaleString("ru-RU") : shipment.dateLabel}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Позиций</span>
+            <span className="font-mono font-medium text-foreground">{shipment.items.length}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Отгрузил</span>
+            {shippedBy ? (
+              <span className="font-medium text-foreground">{shippedBy}</span>
+            ) : (
+              <span className="text-muted-foreground italic">не зафиксировано</span>
+            )}
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Фото</span>
+            <span className="font-mono font-medium text-foreground">
+              {photosCount} из {shipment.items.length}
+            </span>
+          </div>
+        </div>
+
+        {shipment.items.length === 0 ? (
+          <div className="py-8 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground">
+            <Inbox size={22} className="text-muted-foreground/50" />
+            В накладной нет позиций
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {shipment.items.map((it) => {
+              const photoUrl = it.photoUrl;
+
+              return (
+                <div key={it.id} className="flex items-start gap-3 rounded-lg border border-border p-3">
+                  {photoUrl ? (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewPhoto(photoUrl)}
+                      title="Открыть фото"
+                      className="shrink-0 overflow-hidden rounded-md border border-border hover:border-primary transition-colors"
+                    >
+                      <img
+                        src={photoUrl}
+                        alt={`Фото ${it.productName}`}
+                        className="h-32 w-32 object-cover bg-background"
+                      />
+                    </button>
+                  ) : (
+                    <div className="flex h-32 w-32 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border text-muted-foreground/60">
+                      <Camera size={14} />
+                      <span className="text-[10px]">нет фото</span>
+                    </div>
+                  )}
+
+                  <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    <span className="text-sm font-medium text-foreground">{it.productName}</span>
+
+                    {it.kitGroupKey ? (
+                      <span
+                        className="inline-flex w-fit max-w-[220px] items-center gap-1 rounded-md bg-blue-100 dark:bg-blue-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                        title={`из комплекта «${(it.kitName || "").trim() || "Комплект"}»${it.quantityPerKit != null ? ` ×${it.quantityPerKit}` : ""}`}
+                      >
+                        <Package size={10} className="shrink-0" />
+                        <span className="truncate">
+                          из комплекта «{(it.kitName || "").trim() || "Комплект"}»
+                          {it.quantityPerKit != null ? ` ×${it.quantityPerKit}` : ""}
+                        </span>
+                      </span>
+                    ) : null}
+
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="font-mono font-semibold text-foreground">
+                        {it.quantity.toLocaleString("ru-RU")} {it.unit}
+                      </span>
+                      {it.warehouseName ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2 py-0.5 font-medium text-foreground">
+                          <Building2 size={11} className="text-blue-600 dark:text-blue-400" />
+                          {it.warehouseName}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground italic">склад не зафиксирован</span>
+                      )}
+                      {it.shippedAt && (
+                        <span className="text-muted-foreground">
+                          {new Date(it.shippedAt).toLocaleString("ru-RU")}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* null (комментария не было) и непустая строка — разные
+                        случаи: у бэкфилл-строк здесь лежит пояснение с
+                        бэкенда, и оно должно рендериться. Пустую строку и
+                        пробелы отсекаем отдельно, чтобы не показывать «""». */}
+                    {it.comment != null && it.comment.trim() !== "" && (
+                      <p className="text-xs text-muted-foreground italic">"{it.comment.trim()}"</p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {previewPhoto && (
+        <PhotoLightbox src={previewPhoto} alt="Фото отгрузки" onClose={() => setPreviewPhoto(null)} />
+      )}
     </div>
   );
 }
@@ -836,6 +1152,16 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   const [shipments, setShipments] = useState<ShipmentRow[]>([]);
   const [shipmentsLoading, setShipmentsLoading] = useState(false);
   const [shipmentsError, setShipmentsError] = useState<string | null>(null);
+
+  // Раскрытие групп-проектов в истории отгрузок — тот же приём, что у
+  // expandedArrivalGroups: точечный toggle по ключу, чтобы состояние
+  // переживало перезагрузку списка после отгрузки (loadShipments).
+  const [expandedShipmentGroups, setExpandedShipmentGroups] = useState<Record<string, boolean>>({});
+  const toggleShipmentGroup = (key: string) => {
+    setExpandedShipmentGroups((p) => ({ ...p, [key]: !p[key] }));
+  };
+
+  const [shipmentDetailsTarget, setShipmentDetailsTarget] = useState<ShipmentRow | null>(null);
 
   const [pendingShipments, setPendingShipments] = useState<PendingShipmentProjectRow[]>([]);
   const [pendingLoading, setPendingLoading] = useState(false);
@@ -903,16 +1229,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     setShipmentsError(null);
     try {
       const data = await fetchWarehouseShipments();
-      setShipments(
-        data.map((item) => ({
-          id: item.id,
-          projectId: item.project_id,
-          date: item.date ? new Date(item.date).toLocaleDateString("ru-RU") : "—",
-          project: item.project_name,
-          items: item.items_count,
-          status: item.status,
-        }))
-      );
+      setShipments(data.map(mapShipment));
     } catch (e) {
       setShipmentsError(e instanceof Error ? e.message : "Не удалось загрузить отгрузки");
     } finally {
@@ -991,8 +1308,25 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
           ? p
           : {
               ...p,
-              items: p.items.map((it) => (it.id === itemId ? { ...it, photo: file } : it)),
+              items: p.items.map((it) =>
+                it.id === itemId ? { ...it, photo: file, photoUploadProgress: null } : it
+              ),
               error: null,
+            }
+      )
+    );
+  };
+
+  const setShipmentItemPhotoProgress = (projectId: number, itemId: number, percent: number) => {
+    setPendingShipments((prev) =>
+      prev.map((p) =>
+        p.projectId !== projectId
+          ? p
+          : {
+              ...p,
+              items: p.items.map((it) =>
+                it.id === itemId ? { ...it, photoUploadProgress: percent } : it
+              ),
             }
       )
     );
@@ -1029,18 +1363,48 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
 
       // Фото — отдельно на каждую отгружаемую позицию, но необязательно:
       // грузим только те позиции, для которых кладовщик реально прикрепил файл.
-      // NOTE: uploadShipmentPhoto нужно расширить в api.ts третьим необязательным
-      // параметром itemId, чтобы фото сохранялось в shipment_photos с привязкой
-      // к project_item_id, а не только к проекту.
+      // Presigned-флоу — это два независимых сетевых запроса (PUT в R2, потом
+      // подтверждение на бэкенде), и ошибка на любом из них не должна
+      // блокировать саму отгрузку (она уже прошла шагом выше) — только
+      // всплыть пользователю через alert, т.к. позиция тут же исчезает из
+      // списка и локальное состояние ошибки на строке никто не увидит.
+      const photoFailures: string[] = [];
+
       await Promise.all(
         checkedItems
           .filter((it) => it.photo)
-          .map((it) =>
-            uploadShipmentPhoto(projectId, it.photo as File, it.id).catch((photoErr) => {
+          .map(async (it) => {
+            const file = it.photo as File;
+            let objectKey: string;
+            try {
+              const presign = await presignShipmentPhotoUpload(
+                projectId,
+                file.type || "application/octet-stream",
+                file.name,
+                it.id
+              );
+              await uploadFileToR2(presign.upload_url, file, (percent) =>
+                setShipmentItemPhotoProgress(projectId, it.id, percent)
+              );
+              objectKey = presign.object_key;
+            } catch (photoErr) {
               console.error(`Не удалось загрузить фото для позиции ${it.id}`, photoErr);
-            })
-          )
+              photoFailures.push(`«${it.productName}»: не удалось загрузить фото`);
+              return;
+            }
+
+            try {
+              await uploadShipmentPhoto(projectId, objectKey, it.id);
+            } catch (confirmErr) {
+              console.error(`Фото для позиции ${it.id} загружено, но не сохранено`, confirmErr);
+              photoFailures.push(`«${it.productName}»: фото загружено, но не удалось сохранить`);
+            }
+          })
       );
+
+      if (photoFailures.length > 0) {
+        alert(`Отгрузка оформлена, но есть проблемы с фото:\n${photoFailures.join("\n")}`);
+      }
 
       const remainingCount = proj.items.length - checkedItems.length;
 
@@ -1358,6 +1722,53 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     return groups;
   }, [arrivals]);
 
+  // История отгрузок, сгруппированная по проекту — та же схема, что у
+  // arrivalGroups выше, но порядок групп по свежести последней отгрузки
+  // (а не по числу ожидающих позиций): история читается сверху вниз как лента.
+  const shipmentHistoryGroups = useMemo<ShipmentHistoryGroup[]>(() => {
+    const map = new Map<string, ShipmentHistoryGroup>();
+
+    shipments.forEach((s) => {
+      const key = String(s.projectId);
+      let group = map.get(key);
+      if (!group) {
+        group = {
+          key,
+          projectName: s.projectName,
+          shipments: [],
+          itemsCount: 0,
+          photosCount: 0,
+          lastShipmentLabel: "—",
+          lastShipmentTs: null,
+        };
+        map.set(key, group);
+      }
+      group.shipments.push(s);
+      group.itemsCount += s.items.length;
+      group.photosCount += s.items.filter((it) => it.photoUrl).length;
+
+      const ts = s.shippedAt ? new Date(s.shippedAt).getTime() : NaN;
+      if (Number.isFinite(ts) && (group.lastShipmentTs == null || ts > group.lastShipmentTs)) {
+        group.lastShipmentTs = ts;
+        group.lastShipmentLabel = new Date(ts).toLocaleDateString("ru-RU");
+      }
+    });
+
+    const groups = Array.from(map.values());
+
+    groups.forEach((group) => {
+      group.shipments.sort((a, b) => {
+        const aTs = a.shippedAt ? new Date(a.shippedAt).getTime() : 0;
+        const bTs = b.shippedAt ? new Date(b.shippedAt).getTime() : 0;
+        return bTs - aTs;
+      });
+    });
+
+    groups.sort((a, b) => (b.lastShipmentTs ?? 0) - (a.lastShipmentTs ?? 0));
+
+    return groups;
+  }, [shipments]);
+
   const filteredStock = useMemo(() => {
     return stock
       .filter((item) => {
@@ -1503,6 +1914,13 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     }}
   />
 )}
+
+      {shipmentDetailsTarget && (
+        <ShipmentDetailsModal
+          shipment={shipmentDetailsTarget}
+          onClose={() => setShipmentDetailsTarget(null)}
+        />
+      )}
 
       {showShipmentModal && (
         <ShipmentModal onClose={() => setShowShipmentModal(false)} onSuccess={loadShipments} />
@@ -2137,36 +2555,46 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                               </td>
                               <td className="px-5 py-3">
                                 {isWarehouseUser && it.checked ? (
-                                  <div className="flex items-center gap-1.5">
-                                    <label
-                                      className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-lg cursor-pointer transition-colors ${
-                                        it.photo
-                                          ? "border-green-300 dark:border-green-400/40 bg-green-50 dark:bg-green-400/10 text-green-700 dark:text-green-300"
-                                          : "border-dashed border-border text-muted-foreground hover:bg-background"
-                                      }`}
-                                    >
-                                      {it.photo ? <CheckCircle2 size={13} /> : <Camera size={13} className="text-primary" />}
-                                      <span className="truncate max-w-[110px]">{it.photo ? it.photo.name : "Приложить фото"}</span>
-                                      <input
-                                        type="file"
-                                        accept="image/*"
-                                        className="hidden"
-                                        disabled={proj.submitting}
-                                        onChange={(e) => setShipmentItemPhoto(proj.projectId, it.id, e.target.files?.[0] || null)}
-                                      />
-                                    </label>
-                                    {it.photo ? (
-                                      <button
-                                        type="button"
-                                        onClick={() => setShipmentItemPhoto(proj.projectId, it.id, null)}
-                                        disabled={proj.submitting}
-                                        title="Убрать фото"
-                                        className="text-muted-foreground hover:text-destructive"
+                                  <div className="flex flex-col gap-1">
+                                    <div className="flex items-center gap-1.5">
+                                      <label
+                                        className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded-lg cursor-pointer transition-colors ${
+                                          it.photo
+                                            ? "border-green-300 dark:border-green-400/40 bg-green-50 dark:bg-green-400/10 text-green-700 dark:text-green-300"
+                                            : "border-dashed border-border text-muted-foreground hover:bg-background"
+                                        }`}
                                       >
-                                        <X size={13} />
-                                      </button>
-                                    ) : (
-                                      <span className="text-[11px] text-muted-foreground/70 italic whitespace-nowrap">необязательно</span>
+                                        {it.photo ? <CheckCircle2 size={13} /> : <Camera size={13} className="text-primary" />}
+                                        <span className="truncate max-w-[110px]">{it.photo ? it.photo.name : "Приложить фото"}</span>
+                                        <input
+                                          type="file"
+                                          accept="image/*"
+                                          className="hidden"
+                                          disabled={proj.submitting}
+                                          onChange={(e) => setShipmentItemPhoto(proj.projectId, it.id, e.target.files?.[0] || null)}
+                                        />
+                                      </label>
+                                      {it.photo ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => setShipmentItemPhoto(proj.projectId, it.id, null)}
+                                          disabled={proj.submitting}
+                                          title="Убрать фото"
+                                          className="text-muted-foreground hover:text-destructive"
+                                        >
+                                          <X size={13} />
+                                        </button>
+                                      ) : (
+                                        <span className="text-[11px] text-muted-foreground/70 italic whitespace-nowrap">необязательно</span>
+                                      )}
+                                    </div>
+                                    {proj.submitting && it.photo && it.photoUploadProgress != null && (
+                                      <div className="h-1 w-28 rounded-full bg-muted overflow-hidden">
+                                        <div
+                                          className="h-full bg-primary transition-all"
+                                          style={{ width: `${it.photoUploadProgress}%` }}
+                                        />
+                                      </div>
                                     )}
                                   </div>
                                 ) : (
@@ -2207,6 +2635,11 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
             </div>
           )}
 
+          <div className="flex items-center gap-2 mb-3">
+            <Truck size={15} className="text-muted-foreground" />
+            <h3 className="text-sm font-semibold text-foreground">История отгрузок</h3>
+          </div>
+
           <div className="bg-card rounded-lg border border-border overflow-hidden">
           {shipmentsError && (
             <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-400/15 border-b border-red-200 dark:border-red-400/25">
@@ -2220,36 +2653,123 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
               <Loader2 size={24} className="animate-spin text-primary mb-2" />
               <p className="text-sm text-muted-foreground">Загрузка отгрузок…</p>
             </div>
-          ) : shipments.length === 0 ? (
+          ) : shipmentHistoryGroups.length === 0 ? (
             <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Нет данных об отгрузках</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="border-b border-border bg-background/60">
-                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">№ Накладной</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Проект</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Дата</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Количество позиций</th>
-                    <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Статус</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {shipments.map((s) => (
-                    <tr key={s.id} className="hover:bg-background/50 transition-colors">
-                      <td className="px-4 py-3.5 text-xs font-mono font-medium text-foreground">№{s.id}</td>
-                      <td className="px-4 py-3.5 text-sm font-bold text-foreground">{s.project}</td>
-                      <td className="px-4 py-3.5 text-sm text-muted-foreground">{s.date}</td>
-                      <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">{s.items}</td>
-                      <td className="px-4 py-3.5 text-center">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300">
-                          <CheckCircle2 size={14} /> {s.status || "Отгружено"}
+            <div className="flex flex-col divide-y divide-border">
+              {shipmentHistoryGroups.map((group) => {
+                const isExpanded = !!expandedShipmentGroups[group.key];
+
+                return (
+                  <div key={group.key} className="flex flex-col">
+                    <div
+                      className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5 bg-background/60 cursor-pointer hover:bg-muted/50 transition-colors"
+                      onClick={() => toggleShipmentGroup(group.key)}
+                    >
+                      <div className="flex items-center gap-3">
+                        <ChevronDown
+                          size={16}
+                          className={`text-muted-foreground transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}
+                        />
+                        <div>
+                          <h3 className="text-sm font-bold text-foreground">{group.projectName}</h3>
+                          <p className="text-xs text-muted-foreground">
+                            {group.shipments.length} отгрузок · {group.itemsCount} позиций
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {group.photosCount > 0 && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-100 dark:bg-blue-400/20 text-primary whitespace-nowrap">
+                            <Camera size={12} /> фото {group.photosCount}
+                          </span>
+                        )}
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 whitespace-nowrap">
+                          <CheckCircle2 size={12} /> отгружено {group.itemsCount}
                         </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">{group.lastShipmentLabel}</span>
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="overflow-x-auto">
+                        <table className="w-full border-collapse">
+                          <thead>
+                            <tr className="border-b border-border bg-background/60">
+                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">№ Накладной</th>
+                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Дата</th>
+                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Товары</th>
+                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center whitespace-nowrap">Позиций</th>
+                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Фото</th>
+                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Отгрузил</th>
+                              <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Статус</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {group.shipments.map((s, index) => {
+                              const photosCount = s.items.filter((it) => it.photoUrl).length;
+                              const shippedBy = s.items.find((it) => it.shippedBy)?.shippedBy || null;
+                              const productSummary = s.items.map((it) => it.productName).join(", ");
+
+                              return (
+                                <tr
+                                  key={s.id ?? `${group.key}-${index}`}
+                                  onClick={() => setShipmentDetailsTarget(s)}
+                                  title="Открыть детали отгрузки"
+                                  className="hover:bg-background/50 transition-colors cursor-pointer"
+                                >
+                                  <td className="px-4 py-3.5 text-xs font-mono font-medium text-foreground whitespace-nowrap">
+                                    {s.id != null ? `№${s.id}` : "—"}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-sm text-muted-foreground whitespace-nowrap">{s.dateLabel}</td>
+                                  <td className="px-4 py-3.5 text-sm text-foreground">
+                                    <span className="block max-w-[320px] truncate" title={productSummary}>
+                                      {productSummary || "—"}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">
+                                    {s.items.length}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-center">
+                                    {photosCount > 0 ? (
+                                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary">
+                                        <Camera size={13} /> {photosCount}
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-muted-foreground/60 italic">—</span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-sm text-foreground">
+                                    {shippedBy ? (
+                                      <span className="inline-flex items-center gap-1.5 text-xs font-medium">
+                                        <User size={12} className="text-muted-foreground" />
+                                        {shippedBy}
+                                      </span>
+                                    ) : (
+                                      <span
+                                        className="text-xs text-muted-foreground/60 italic"
+                                        title="Не зафиксировано — отгрузка до внедрения учёта исполнителя"
+                                      >
+                                        —
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3.5 text-center">
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 whitespace-nowrap">
+                                      <CheckCircle2 size={14} /> {s.status}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
           </div>

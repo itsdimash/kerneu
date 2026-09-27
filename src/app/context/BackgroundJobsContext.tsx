@@ -9,6 +9,9 @@ export type BackgroundJob = {
   status: ParseJobStatusValue;
   errorMessage?: string | null;
   mlImportId?: number | null;
+  // startContractParseJob не создаёт промежуточный Excel — у таких джоб нет
+  // result_path, поэтому кнопку скачивания результата для них не показываем.
+  isContractMode?: boolean;
 };
 
 const PARSE_POLL_INTERVAL_MS = 3000;
@@ -20,6 +23,7 @@ type BackgroundJobsContextValue = {
     projectId: number;
     projectName: string;
     fileName: string;
+    isContractMode?: boolean;
   }) => void;
   dismissBackgroundJob: (jobId: string) => void;
 };
@@ -84,7 +88,13 @@ export function BackgroundJobsProvider({ children }: { children: React.ReactNode
   }, []);
 
   const startBackgroundJob = useCallback(
-    (job: { jobId: string; projectId: number; projectName: string; fileName: string }) => {
+    (job: {
+      jobId: string;
+      projectId: number;
+      projectName: string;
+      fileName: string;
+      isContractMode?: boolean;
+    }) => {
       setBackgroundJobs((prev) => [
         ...prev,
         {
@@ -93,6 +103,7 @@ export function BackgroundJobsProvider({ children }: { children: React.ReactNode
           projectName: job.projectName,
           fileName: job.fileName,
           status: "pending",
+          isContractMode: job.isContractMode,
         },
       ]);
       pollJobStatus(job.jobId);

@@ -1,5 +1,7 @@
-import { Loader2, CheckCircle2, XCircle, X, ChevronRight } from "lucide-react";
+import { useState } from "react";
+import { Loader2, CheckCircle2, XCircle, X, ChevronRight, Download } from "lucide-react";
 import { useBackgroundJobs } from "../../context/BackgroundJobsContext";
+import { downloadParseJobResult } from "../../../api/api";
 import type { Page } from "../../../types";
 
 type Props = {
@@ -12,8 +14,21 @@ type Props = {
 // при переходе на другую страницу.
 export function BackgroundJobsToast({ onOpenProject }: Props) {
   const { backgroundJobs, dismissBackgroundJob } = useBackgroundJobs();
+  const [downloadingJobId, setDownloadingJobId] = useState<string | null>(null);
 
   if (backgroundJobs.length === 0) return null;
+
+  const handleDownload = async (jobId: string) => {
+    setDownloadingJobId(jobId);
+    try {
+      await downloadParseJobResult(jobId);
+    } catch (e) {
+      console.error(`Не удалось скачать результат обработки файла (job ${jobId})`, e);
+      alert("Не удалось скачать результат обработки файла. Попробуйте ещё раз.");
+    } finally {
+      setDownloadingJobId(null);
+    }
+  };
 
   return (
     <div className="fixed bottom-4 right-4 z-40 flex flex-col gap-2 w-80">
@@ -55,15 +70,32 @@ export function BackgroundJobsToast({ onOpenProject }: Props) {
           </div>
 
           {job.status === "done" && (
-            <button
-              onClick={() => {
-                dismissBackgroundJob(job.jobId);
-                onOpenProject(job.projectId);
-              }}
-              className="mt-2 text-xs font-semibold text-primary hover:text-primary/80 flex items-center gap-0.5"
-            >
-              Открыть проект <ChevronRight size={12} />
-            </button>
+            <div className="mt-2 flex items-center gap-3">
+              <button
+                onClick={() => {
+                  dismissBackgroundJob(job.jobId);
+                  onOpenProject(job.projectId);
+                }}
+                className="text-xs font-semibold text-primary hover:text-primary/80 flex items-center gap-0.5"
+              >
+                Открыть проект <ChevronRight size={12} />
+              </button>
+
+              {!job.isContractMode && (
+                <button
+                  onClick={() => handleDownload(job.jobId)}
+                  disabled={downloadingJobId === job.jobId}
+                  className="text-xs font-semibold text-muted-foreground hover:text-foreground flex items-center gap-1 disabled:opacity-60"
+                >
+                  {downloadingJobId === job.jobId ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <Download size={12} />
+                  )}
+                  Скачать результат
+                </button>
+              )}
+            </div>
           )}
         </div>
       ))}
