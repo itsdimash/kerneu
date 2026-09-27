@@ -199,8 +199,21 @@ export function IncomeRequestModal({
     return stock
       .filter((s) => {
         const sn = normName(s.name);
+        // Порог длины нужен на обеих сторонах: без него однобуквенный мусор в
+        // каталоге ("h") ловится веткой n.includes(sn) почти на любой ввод —
+        // "iphone 18" содержит "h".
+        if (sn.length < 3) return false;
         return sn !== n && (sn.includes(n) || n.includes(sn));
       })
+      // Порядок в stock произвольный, поэтому ранжируем сами: ближе к длине
+      // введённого текста, а не просто длиннее — иначе длинный хвост
+      // ("iPhone 18 Pro Max 256Gb") обгоняет более точное "iPhone 18", а
+      // случайное короткое совпадение вытесняет релевантное из трёх показываемых.
+      .sort(
+        (a, b) =>
+          Math.abs(normName(a.name).length - n.length) -
+          Math.abs(normName(b.name).length - n.length)
+      )
       .slice(0, 3);
   };
 
@@ -527,7 +540,7 @@ export function IncomeRequestModal({
                                     >
                                       {s.name}{" "}
                                       <span className="text-muted-foreground">
-                                        ({livingWarehouseIds(s).map(whShort).join(", ") || "—"})
+                                        ({livingWarehouseIds(s).map(whShort).join(", ") || "без остатков"})
                                       </span>
                                     </button>
                                   ))}
