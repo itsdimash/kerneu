@@ -518,6 +518,17 @@ export function DocumentsPage({
   // карточку нажали.
   const [onecModal, setOnecModal] = useState<{ docType: OnecDocType; docLabel: string } | null>(null);
 
+  // Подсказки-напоминания после загрузки доверенности/накладной — 1С не
+  // передаёт часть реквизитов бланка (см. generator.py:
+  // _build_power_of_attorney_context — паспорт получателя вписывается от
+  // руки; _build_waybill_context — "По доверенности"/"выданной" тоже TODO,
+  // реального поля в 1С не нашли), поэтому эти строки в загруженном файле
+  // остаются пустыми и PM должен вписать их сам. Показываем один раз сразу
+  // после успешной загрузки — неважно, вручную или через «Из 1С», отсюда
+  // проверка стоит и в handleDocUpload, и в handleOnecDocumentLinked.
+  const [showPoaReminder, setShowPoaReminder] = useState(false);
+  const [showWaybillReminder, setShowWaybillReminder] = useState(false);
+
   const handleOnecDocumentLinked = (docType: OnecDocType, doc: ProjectDocumentResponse) => {
     documentsStore.addDocument(selectedProjectId, {
       id: `backend-${doc.id}`,
@@ -528,6 +539,8 @@ export function DocumentsPage({
       fileName: doc.file_name,
       backendDocument: doc,
     });
+    if (docType === "power_of_attorney") setShowPoaReminder(true);
+    if (docType === "waybill") setShowWaybillReminder(true);
   };
 
   const handleDeleteDoc = (doc: ProjectDocument) => {
@@ -573,6 +586,10 @@ export function DocumentsPage({
         fileName: file.name,
         backendDocument: uploadedDoc,
       });
+      // См. комментарий у showPoaReminder/showWaybillReminder выше — то же
+      // напоминание нужно и при обычной ручной загрузке, не только «Из 1С».
+      if (category === "power_of_attorney") setShowPoaReminder(true);
+      if (category === "waybill") setShowWaybillReminder(true);
     } catch (error) {
       console.error(error);
       alert(`Не удалось загрузить документ. Попробуйте еще раз.`);
@@ -1484,6 +1501,81 @@ export function DocumentsPage({
               ) : (
                 "Удалить"
               )}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {showPoaReminder && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4"
+        onClick={() => setShowPoaReminder(false)}
+      >
+        <div
+          className="w-full max-w-sm rounded-xl bg-card p-6 shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-blue-50 dark:bg-blue-400/15">
+              <FileCheck size={18} className="text-primary" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-foreground">
+                Не забудьте про удостоверение личности
+              </h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                1С не передаёт данные удостоверения личности получателя — впишите их
+                в загруженную доверенность от руки (серия, номер, кем и когда выдано).
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setShowPoaReminder(false)}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90"
+            >
+              Понятно
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {showWaybillReminder && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4"
+        onClick={() => setShowWaybillReminder(false)}
+      >
+        <div
+          className="w-full max-w-sm rounded-xl bg-card p-6 shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-amber-50 dark:bg-amber-400/15">
+              <AlertTriangle size={18} className="text-amber-600 dark:text-amber-400" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-foreground">
+                Проверьте доверенность в накладной
+              </h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                В накладной остаются пустыми поля «По доверенности» (номер) и «выдана»
+                (кому) — 1С их не передаёт. Впишите вручную в загруженный файл, кем и
+                по какому номеру выдана доверенность на получение груза.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setShowWaybillReminder(false)}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90"
+            >
+              Понятно
             </button>
           </div>
         </div>
