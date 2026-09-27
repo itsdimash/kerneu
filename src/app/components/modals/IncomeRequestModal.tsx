@@ -350,7 +350,7 @@ export function IncomeRequestModal({
         if (e.key === "Escape") handleClose();
       }}
     >
-      <div className="w-full max-w-2xl rounded-xl bg-card p-6 shadow-xl">
+      <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-card p-6 shadow-xl">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-semibold text-foreground">Заявка на приход</h3>
           <button onClick={handleClose} className="text-muted-foreground hover:text-muted-foreground">
@@ -459,7 +459,9 @@ export function IncomeRequestModal({
 
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">Товары *</label>
-            <div className="space-y-2 max-h-[22rem] overflow-y-auto pr-1">
+            {/* 33rem — пять свёрнутых строк (5×98px + 4×8px зазоров ≈ 32.6rem);
+                45vh не даёт списку вытолкнуть шапку и футер на низком экране. */}
+            <div className="space-y-2 max-h-[min(33rem,45vh)] overflow-y-auto pr-1">
               {rows.map((row) => (
                 <div key={row.key} className="rounded-lg border border-border p-2.5 space-y-2">
                   <div className="flex items-center justify-between">
