@@ -52,6 +52,18 @@ const isoToday = (): string => new Date().toISOString().slice(0, 10);
 
 const isoStartOfYear = (): string => `${new Date().getFullYear()}-01-01`;
 
+const currentYear = (): number => new Date().getFullYear();
+
+/**
+ * Годы для выбора при поиске статуса оплаты. Нумерация документов
+ * реализации в 1С сбрасывается каждый год, поэтому без явного указания
+ * года бэкенд может найти документ с совпадающим номером из другого года.
+ */
+const PAYMENT_SEARCH_YEARS: number[] = Array.from(
+  { length: 6 },
+  (_, index) => currentYear() - index,
+);
+
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
   minimumFractionDigits: 0,
   maximumFractionDigits: 0,
@@ -193,8 +205,12 @@ export function OneCPage() {
 
   // ── Статус оплаты ───────────────────────────────────────
   const [documentNumber, setDocumentNumber] = useState("");
+  const [paymentYear, setPaymentYear] = useState<number>(currentYear());
   const [payment, setPayment] = useState<PaymentStatusResponse | null>(null);
-  const [paymentNotFound, setPaymentNotFound] = useState<string | null>(null);
+  const [paymentNotFound, setPaymentNotFound] = useState<{
+    number: string;
+    year: number;
+  } | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
 
@@ -208,11 +224,11 @@ export function OneCPage() {
     setPayment(null);
 
     try {
-      const result = await fetchPaymentStatus(trimmed);
+      const result = await fetchPaymentStatus(trimmed, paymentYear);
       if (result) {
         setPayment(result);
       } else {
-        setPaymentNotFound(trimmed);
+        setPaymentNotFound({ number: trimmed, year: paymentYear });
       }
     } catch (error) {
       setPaymentError(
@@ -221,7 +237,7 @@ export function OneCPage() {
     } finally {
       setPaymentLoading(false);
     }
-  }, [documentNumber]);
+  }, [documentNumber, paymentYear]);
 
   // Баланс — единственный запрос на автозагрузку: он один, без цикла по
   // контрагентам, и это то, ради чего страницу открывают чаще всего.
@@ -540,6 +556,24 @@ export function OneCPage() {
                   placeholder="Например: КГ-000123"
                   className="w-full rounded-md border border-input bg-input-background px-3 py-2 text-sm transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Нумерация в 1С сбрасывается каждый год — обязательно уточните год документа.
+                </p>
+              </div>
+
+              <div className="w-28">
+                <label className="mb-1 block text-xs text-muted-foreground">Год</label>
+                <select
+                  value={paymentYear}
+                  onChange={(event) => setPaymentYear(Number(event.target.value))}
+                  className="w-full rounded-md border border-input bg-input-background px-3 py-2 text-sm transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  {PAYMENT_SEARCH_YEARS.map((yearOption) => (
+                    <option key={yearOption} value={yearOption}>
+                      {yearOption}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <button
@@ -563,8 +597,9 @@ export function OneCPage() {
             <div className="rounded-lg border border-warning/20 bg-warning-muted px-4 py-3">
               <p className="text-sm font-medium text-warning">Документ не найден</p>
               <p className="mt-1 text-xs text-warning/90">
-                В 1С нет реализации с номером «{paymentNotFound}». Проверьте номер — он должен
-                совпадать с тем, что стоит в самом документе 1С.
+                В 1С нет реализации с номером «{paymentNotFound.number}» за {paymentNotFound.year}{" "}
+                год. Проверьте номер (он должен совпадать с тем, что стоит в самом документе 1С)
+                и выбранный год.
               </p>
             </div>
           )}

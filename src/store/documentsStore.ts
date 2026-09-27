@@ -7,7 +7,13 @@ import {
   completeProjectOnBackend, // <-- ДОБАВЛЕН ИМПОРТ
 } from "../api/api";
 
-export type DocCategory = "kp" | "contract" | "power_of_attorney" | "invoice" | "waybill";
+export type DocCategory =
+  | "kp"
+  | "contract"
+  | "power_of_attorney"
+  | "invoice"
+  | "waybill"
+  | "payment_invoice"; // счёт на оплату клиенту (не путать с "invoice" — закупочным счётом от поставщика)
 export type DocStatus = "pending" | "uploaded" | "generated" | "approved" | "rejected";
 
 export interface ProjectDocument {
@@ -27,11 +33,6 @@ export interface ProjectSummary {
   name: string;
   contractSigned: boolean;
   statusName: string;
-  // Экспресс-проект («Загрузить договор» на дашборде). КП по нему не
-  // формируется в принципе: договор подписан до создания проекта, и
-  // согласовывать коммерческое предложение не с кем. DocumentsPage по
-  // этому флагу исключает КП из обязательных документов.
-  isExpress: boolean;
 }
 
 // ИЗМЕНЕНО: шаг бухгалтера убран из цепочки согласования документов —

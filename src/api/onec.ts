@@ -1,5 +1,5 @@
 import axios from "axios";
-import { api } from "./api";
+import { api, type ProjectDocumentResponse } from "./api";
 
 // ==========================================
 // ИНТЕГРАЦИЯ С 1С:БУХГАЛТЕРИЯ
@@ -58,6 +58,101 @@ export interface PaymentStatusResponse {
   /** "оплачен" | "частично оплачен" | "не оплачен" */
   status: string;
   currency: string;
+}
+
+// ==========================================
+// ПОИСК И ЗАГРУЗКА ДОКУМЕНТОВ ИЗ 1С (накладная / счёт на оплату / доверенность)
+//
+// GET /onec/documents/search — точный поиск по БИН/ИИН контрагента+периоду (уже
+// реализован на бэке, доступен ролям pm/accountant/commercial_director/admin
+// — ОТДЕЛЬНЫЙ список ролей от balance/debtors выше, ПМ туда не пускают, сюда —
+// пускают).
+// POST /onec/documents/link — сохранить выбранный документ в архив проекта.
+// ЕЩЁ НЕ РЕАЛИЗОВАН НА БЭКЕНДЕ (ждёт модель Project/Client и модель
+// documents) — функция готова заранее, чтобы не переделывать фронт потом.
+// Пока backend не готов, вызов answer'ит 404/500.
+// ==========================================
+
+export type OnecDocType = "waybill" | "payment_invoice" | "power_of_attorney";
+
+export interface OnecDocumentCandidate {
+  ref_key: string;
+  number: string | null;
+  /** ISO yyyy-mm-dd */
+  date: string;
+  /** Только для отображения — не используется как фильтр поиска */
+  sum: Numeric | null;
+  counterparty_name: string;
+  /**
+   * Заполнены только для doc_type="payment_invoice" — оплата и отгрузка по
+   * этому счёту, приближённо (сопоставление по контрагенту+сумме+периоду,
+   * см. коммент у search_documents_by_counterparty на бэкенде). Для
+   * waybill/power_of_attorney — null.
+   */
+  payment_status?: "не оплачен" | "частично оплачен" | "оплачен" | null;
+  paid_amount?: Numeric | null;
+  shipment_status?: "не отгружен" | "частично отгружен" | "отгружен" | null;
+  shipped_amount?: Numeric | null;
+}
+
+interface OnecDocumentSearchApiResponse {
+  doc_type: string;
+  candidates: OnecDocumentCandidate[];
+}
+
+const DOCUMENTS_SEARCH_TIMEOUT_MS = 60_000;
+
+/**
+ * Точный поиск документа-кандидата в 1С по БИН/ИИН контрагента+периоду —
+ * для кнопки «Загрузить из 1С» на странице документов проекта. БИН/ИИН —
+ * уникальный номер, поэтому поиск однозначный, в отличие от названия
+ * компании (короткое/полное, опечатки).
+ */
+export async function searchOnecDocuments(
+  docType: OnecDocType,
+  binIin: string,
+  dateFrom: string,
+  dateTo?: string,
+): Promise<OnecDocumentCandidate[]> {
+  try {
+    const { data } = await api.get<OnecDocumentSearchApiResponse>("/onec/documents/search", {
+      params: {
+        doc_type: docType,
+        bin_iin: binIin,
+        date_from: dateFrom,
+        ...(dateTo ? { date_to: dateTo } : {}),
+      },
+      timeout: DOCUMENTS_SEARCH_TIMEOUT_MS,
+    });
+    return data.candidates;
+  } catch (error) {
+    throw friendlyError(error, "Не удалось найти документ в 1С");
+  }
+}
+
+/**
+ * Сохранить выбранный пользователем документ 1С в архив проекта — тот же
+ * тип ответа, что и обычная ручная загрузка (ProjectDocumentResponse),
+ * поэтому дальше по коду (documentsStore.addDocument и т.д.) обрабатывается
+ * одинаково независимо от источника файла.
+ *
+ * TODO backend: эндпоинт /onec/documents/link ещё не реализован.
+ */
+export async function linkOnecDocument(
+  projectId: string | number,
+  docType: OnecDocType,
+  refKey: string,
+): Promise<ProjectDocumentResponse> {
+  try {
+    const { data } = await api.post<ProjectDocumentResponse>("/onec/documents/link", {
+      project_id: projectId,
+      doc_type: docType,
+      ref_key: refKey,
+    });
+    return data;
+  } catch (error) {
+    throw friendlyError(error, "Не удалось сохранить документ из 1С");
+  }
 }
 
 /** Decimal с бэка приходит строкой — приводим к числу для расчётов и форматирования. */
@@ -152,14 +247,23 @@ export async function fetchDebtors(
  * Статус оплаты документа реализации по его номеру.
  * Возвращает null, если документа с таким номером в 1С нет (404 с бэка) —
  * это штатный результат поиска, а не ошибка.
+ *
+ * @param documentNumber Номер документа реализации, как он указан в 1С
+ * @param year Год документа. Нумерация реализаций в 1С сбрасывается каждый
+ *   год, поэтому один и тот же номер может встречаться в разные годы —
+ *   без year бэкенд может вернуть не тот документ (самый старый найденный).
  */
 export async function fetchPaymentStatus(
   documentNumber: string,
+  year?: number,
 ): Promise<PaymentStatusResponse | null> {
   try {
     const { data } = await api.get<PaymentStatusResponse>(
       `/onec/payment-status/${encodeURIComponent(documentNumber)}`,
-      { timeout: PAYMENT_TIMEOUT_MS },
+      {
+        params: { ...(year ? { year } : {}) },
+        timeout: PAYMENT_TIMEOUT_MS,
+      },
     );
     return data;
   } catch (error) {
