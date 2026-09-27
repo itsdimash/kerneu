@@ -398,6 +398,12 @@ export function DocumentsPage({
   // документов — блокировка остаётся навсегда, а не только до завершения проекта.
   const docsLocked = completed || uploadsLocked || reviewInFlight || reviewStage === "approved";
 
+  // Счёт на оплату покупателю доступен ДО подписания договора (в отличие от
+  // доверенности и накладной, у которых docsLocked завязан на
+  // uploadsLocked/contractSigned) — но так же, как и они, блокируется на
+  // этапе проверки документов директором и после завершения проекта.
+  const paymentInvoiceLocked = completed || reviewInFlight || reviewStage === "approved";
+
   const poaPlaceholder: ProjectDocument = {
     id: "poa-placeholder",
     projectId: selectedProjectId,
@@ -544,7 +550,10 @@ export function DocumentsPage({
   };
 
   const handleDeleteDoc = (doc: ProjectDocument) => {
-    if (docsLocked) return;
+    // См. paymentInvoiceLocked выше — у счёта на оплату покупателю своё,
+    // более раннее условие разблокировки, отдельное от остальных категорий.
+    const locked = doc.category === "payment_invoice" ? paymentInvoiceLocked : docsLocked;
+    if (locked) return;
     setDocToDelete(doc);
   };
 
@@ -626,12 +635,12 @@ export function DocumentsPage({
 
   const handlePaymentInvoiceDrop = async (e: React.DragEvent) => {
     e.preventDefault();
-    if (docsLocked || uploadingPaymentInvoice) return;
+    if (paymentInvoiceLocked || uploadingPaymentInvoice) return;
     const file = e.dataTransfer.files?.[0];
     if (file) await handleDocUpload(file, "payment_invoice", "Счет на оплату", paymentInvoiceDocs.length, setUploadingPaymentInvoice);
   };
   const handlePaymentInvoiceInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (docsLocked || uploadingPaymentInvoice) return;
+    if (paymentInvoiceLocked || uploadingPaymentInvoice) return;
     const file = e.target.files?.[0];
     if (file) await handleDocUpload(file, "payment_invoice", "Счет на оплату", paymentInvoiceDocs.length, setUploadingPaymentInvoice);
     if (paymentInvoiceFileRef.current) paymentInvoiceFileRef.current.value = "";
@@ -909,7 +918,9 @@ export function DocumentsPage({
                     >
                       <Download size={12} />Скачать
                     </button>
-                    {!docsLocked && !doc.id.includes("placeholder") && !['kp', 'contract', 'invoice'].includes(doc.category) && (
+                    {(doc.category === "payment_invoice" ? !paymentInvoiceLocked : !docsLocked) &&
+                      !doc.id.includes("placeholder") &&
+                      !['kp', 'contract', 'invoice'].includes(doc.category) && (
                       <AppTooltip text="Удалить документ">
                         <button
                           onClick={() => handleDeleteDoc(doc)}
@@ -1283,16 +1294,27 @@ export function DocumentsPage({
               )}
               </div>
             </div>
+          </div>
+          )}
 
-            {/* Счет на оплату (покупателю): Dropzone — необязательный документ,
-                не входит в прогресс/блокировку завершения проекта, в отличие
-                от доверенности и накладной выше. */}
+          {/* Счет на оплату (покупателю): доступен ДО подписания договора,
+              поэтому вынесен ИЗ-ПОД условия "!reviewInFlight && reviewStage
+              !== 'approved' && !completed" выше, которое прячет
+              доверенность/накладную целиком — иначе карточка тоже
+              схлопывалась бы на этапе проверки, притом что
+              paymentInvoiceLocked как раз для этого этапа и предназначен.
+              Здесь карточка всегда видна, но помечается "недоступно" именно
+              на проверке/после завершения — так же по смыслу, как
+              доверенность/накладная, только без привязки к договору.
+              Необязательный документ, не входит в прогресс/блокировку
+              завершения проекта (см. requiredDocCount/doneDocCount выше). */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <div className="bg-card rounded-lg border border-border p-4">
               <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center justify-between gap-2">
                 <span className="flex items-center gap-2">
                   <FileCheck size={14} className="text-teal-500 dark:text-teal-400" />Счет на оплату покупателю
                 </span>
-                {!docsLocked && (
+                {!paymentInvoiceLocked && (
                   <button
                     type="button"
                     onClick={() => setOnecModal({ docType: "payment_invoice", docLabel: "Счет на оплату покупателю" })}
@@ -1304,24 +1326,24 @@ export function DocumentsPage({
               </h3>
               <div className="relative w-full group">
               <div
-                onDragOver={e => { if (!docsLocked) e.preventDefault(); }}
+                onDragOver={e => { if (!paymentInvoiceLocked) e.preventDefault(); }}
                 onDrop={handlePaymentInvoiceDrop}
-                onClick={() => !docsLocked && paymentInvoiceFileRef.current?.click()}
+                onClick={() => !paymentInvoiceLocked && paymentInvoiceFileRef.current?.click()}
                 className={`flex flex-col items-center justify-center gap-1.5 min-h-[112px] w-full px-4 rounded-lg border-2 border-dashed text-center transition-all ${
-                  docsLocked || uploadingPaymentInvoice
+                  paymentInvoiceLocked || uploadingPaymentInvoice
                     ? "border-border bg-background cursor-not-allowed"
                     : "border-border hover:border-primary/40 hover:bg-accent/40 cursor-pointer"
                 }`}
               >
                 <input ref={paymentInvoiceFileRef} type="file" className="hidden" onChange={handlePaymentInvoiceInput} />
-                {docsLocked || uploadingPaymentInvoice
+                {paymentInvoiceLocked || uploadingPaymentInvoice
                   ? (uploadingPaymentInvoice ? <Loader2 size={18} className="text-blue-500 dark:text-blue-400 animate-spin" /> : <Lock size={18} className="text-muted-foreground" />)
                   : <Upload size={18} className="text-muted-foreground" />}
-                {docsLocked ? (
+                {paymentInvoiceLocked ? (
                   <p className="text-xs text-muted-foreground">
                     <span className="font-medium text-muted-foreground">Недоступно</span>
                     <br />
-                    {uploadsLocked ? "до подписания договора" : "проверка документов"}
+                    проверка документов
                   </p>
                 ) : uploadingPaymentInvoice ? (
                   <p className="text-xs text-muted-foreground">Загрузка...</p>
@@ -1333,15 +1355,9 @@ export function DocumentsPage({
                   </p>
                 )}
               </div>
-              {uploadsLocked && (
-                <div className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 -translate-y-[calc(100%+8px)] whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 z-10">
-                  Доступно только после подписания договора
-                </div>
-              )}
               </div>
             </div>
           </div>
-          )}
 
         </div>
 
