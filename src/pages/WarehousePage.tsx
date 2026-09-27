@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { toast } from "sonner";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { ShipmentModal } from "../app/components/modals/ShipmentModal";
 import { IncomeRequestModal, IncomeRequestPrefill } from "../app/components/modals/IncomeRequestModal";
@@ -53,6 +54,8 @@ import {
   presignReceiptPhotoUpload,
   presignShipmentPhotoUpload,
   resolveDefectReplacement,
+  updateProductName,
+  deleteProduct,
   WarehouseStockResponse,
   WarehouseReceiptResponse,
   WarehouseInfo,
@@ -1353,6 +1356,8 @@ function ShipmentDetailsModal({
 export function WarehousePage({ role, projectState }: { role: Role; projectState: ProjectState }) {
   const isWarehouseUser = role === "warehouse";
   const isPm = role === "pm" || role === "admin";
+  // "director" — легаси-алиас commercial_director, см. ProjectPage.tsx:4071.
+  const isCommercialDirector = role === "commercial_director" || (role as string) === "director";
 
   const [tab, setTab] = useState<"stock" | "arrivals" | "shipments">("stock");
 
@@ -1367,6 +1372,24 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   const [stockSortField, setStockSortField] = useState<StockQuantityField | null>("available");
   const [stockSortDir, setStockSortDir] = useState<"asc" | "desc">("desc");
   const [isStockSortMenuOpen, setIsStockSortMenuOpen] = useState(false);
+  // Поле "Наименование" по умолчанию readOnly для директора; клик/фокус на
+  // нём не редактирует его напрямую, а открывает renameUnlockTarget —
+  // диалог подтверждения ДО того, как директор начал печатать (см.
+  // openRenameUnlock/confirmRenameUnlock ниже). unlockedRenameProductId —
+  // строка (по item.id), для которой это подтверждение уже получено и
+  // textarea реально редактируема; nameTextareaRefs нужен, чтобы
+  // программно сфокусировать её сразу после подтверждения.
+  const [renameUnlockTarget, setRenameUnlockTarget] = useState<{
+    rowId: number;
+    productId: number;
+    name: string;
+  } | null>(null);
+  const [unlockedRenameProductId, setUnlockedRenameProductId] = useState<number | null>(null);
+  const nameTextareaRefs = useRef<Map<number, HTMLTextAreaElement>>(new Map());
+  const [renamingProductId, setRenamingProductId] = useState<number | null>(null);
+  const [deleteProductTarget, setDeleteProductTarget] = useState<StockRow | null>(null);
+  const [deletingProductId, setDeletingProductId] = useState<number | null>(null);
+  const [deleteProductError, setDeleteProductError] = useState<string | null>(null);
 
   const [arrivals, setArrivals] = useState<ArrivalRow[]>([]);
   const [arrivalsLoading, setArrivalsLoading] = useState(false);
@@ -1424,6 +1447,10 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   const [pendingShipments, setPendingShipments] = useState<PendingShipmentProjectRow[]>([]);
   const [pendingLoading, setPendingLoading] = useState(false);
   const [pendingError, setPendingError] = useState<string | null>(null);
+  // Ключ вида "{projectId}:{warehouseId}" — раздельный loading-статус для
+  // кнопок "Список KAR"/"Список AB", чтобы не путать их с обычным
+  // "Список" (downloadingChecklistId) при параллельных загрузках.
+  const [downloadingWarehouseChecklistKey, setDownloadingWarehouseChecklistKey] = useState<string | null>(null);
 
   // Ключ группы — String(projectId), как и раньше: уровень один, составные
   // ключи (как у проектов внутри складов на "Приходе") здесь не нужны.
@@ -1465,6 +1492,130 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
       setStockError(e instanceof Error ? e.message : "Не удалось загрузить остатки склада");
     } finally {
       setStockLoading(false);
+    }
+  };
+
+  // Автоподгонка высоты <textarea> под содержимое — без неё однострочный
+  // инпут либо обрезал длинные названия по ширине, либо заставлял листать
+  // текст внутри узкого поля (см. баг: "Набор резцов по дереву Китай
+  // компл" — конец не влезал). Textarea вместо <input> переносит текст на
+  // несколько строк, как уже сделано для "Исходный товар"/триггера
+  // "Совпавший товар" на ProjectPage; высота растёт по scrollHeight и на
+  // вводе, и сразу после revert (см. ниже), чтобы поле не оставалось
+  // "растянутым" под уже не показываемый текст.
+  const autoResizeNameTextarea = (el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  };
+
+  // Инлайн-переименование товара (только commercial_director). Поле
+  // readOnly, пока строка не в unlockedRenameProductId — клик/фокус на нём
+  // не редактирует его напрямую, а сразу открывает диалог подтверждения
+  // (см. openRenameUnlock ниже), ДО того как директор вообще начал
+  // печатать. Только после явного "Изменить" в этом диалоге поле
+  // становится редактируемым и получает фокус (см. useEffect по
+  // unlockedRenameProductId ниже) — а вот САМО сохранение при уходе с
+  // поля (blur/Enter) происходит уже без второго диалога, напрямую (см.
+  // handleProductNameBlur), раз подтверждение на вход в редактирование
+  // уже было получено.
+  const openRenameUnlock = (item: StockRow) => {
+    setRenameUnlockTarget({ rowId: item.id, productId: item.productId, name: item.name });
+  };
+
+  const closeRenameUnlock = () => {
+    setRenameUnlockTarget(null);
+  };
+
+  const confirmRenameUnlock = () => {
+    if (!renameUnlockTarget) return;
+    setUnlockedRenameProductId(renameUnlockTarget.rowId);
+    setRenameUnlockTarget(null);
+  };
+
+  // Фокус переносим сюда (а не сразу в confirmRenameUnlock), потому что на
+  // момент вызова confirmRenameUnlock textarea в DOM ещё readOnly —
+  // readOnly=false применится только после ре-рендера с новым
+  // unlockedRenameProductId, и .focus() нужно вызывать уже после него.
+  useEffect(() => {
+    if (unlockedRenameProductId === null) return;
+    nameTextareaRefs.current.get(unlockedRenameProductId)?.focus();
+  }, [unlockedRenameProductId]);
+
+  // Сохранение по blur/Enter — без диалога (подтверждение уже получено на
+  // входе в редактирование, см. openRenameUnlock/confirmRenameUnlock
+  // выше). Как и раньше у cost_price-подобных полей: сохраняем, только
+  // если значение реально изменилось; при ошибке (в т.ч. 400 "имя уже
+  // занято" — см. throwWithDetail в api.ts) — toast + revert значения.
+  // В любом случае (сохранили, ошиблись или ничего не поменяли) поле
+  // возвращается в readOnly.
+  const handleProductNameBlur = async (
+    item: StockRow,
+    event: React.FocusEvent<HTMLTextAreaElement>,
+  ) => {
+    const previous = item.name;
+    const target = event.target;
+    const nextName = target.value.trim();
+
+    if (!nextName) {
+      toast.error("Название товара не может быть пустым");
+      target.value = previous;
+      autoResizeNameTextarea(target);
+      setUnlockedRenameProductId(null);
+      return;
+    }
+    if (nextName === previous) {
+      setUnlockedRenameProductId(null);
+      return;
+    }
+
+    setRenamingProductId(item.productId);
+    try {
+      const updated = await updateProductName(item.productId, nextName);
+      setStock((prev) =>
+        prev.map((row) => (row.id === item.id ? { ...row, name: updated.name } : row)),
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось изменить название товара");
+      target.value = previous;
+      autoResizeNameTextarea(target);
+    } finally {
+      setRenamingProductId(null);
+      setUnlockedRenameProductId(null);
+    }
+  };
+
+  // Удаление товара (только commercial_director) — кнопка всегда видна,
+  // но задизейблена, пока на складе есть остаток/резерв/брак (см. условие
+  // в рендере таблицы). Подтверждение — тот же ConfirmDialog, что и у
+  // удаления заявки на приход (openDeleteReceipt выше), не window.confirm.
+  const openDeleteProduct = (item: StockRow) => {
+    setDeleteProductError(null);
+    setDeleteProductTarget(item);
+  };
+
+  const closeDeleteProduct = () => {
+    if (deletingProductId !== null) return;
+    setDeleteProductTarget(null);
+    setDeleteProductError(null);
+  };
+
+  const confirmDeleteProduct = async () => {
+    if (!deleteProductTarget) return;
+    const target = deleteProductTarget;
+
+    setDeletingProductId(target.productId);
+    setDeleteProductError(null);
+    try {
+      await deleteProduct(target.productId);
+      setStock((prev) => prev.filter((row) => row.id !== target.id));
+      setDeleteProductTarget(null);
+    } catch (error) {
+      setDeleteProductError(
+        error instanceof Error ? error.message : "Не удалось удалить товар",
+      );
+    } finally {
+      setDeletingProductId(null);
     }
   };
 
@@ -1735,15 +1886,40 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     }
   };
 
-  const handleDownloadChecklist = async (projectId: number) => {
+  const handleDownloadChecklist = async (projectId: number, projectName: string) => {
     setDownloadingChecklistId(projectId);
     try {
-      await downloadShipmentChecklist(projectId);
+      await downloadShipmentChecklist(projectId, { projectName });
     } catch (e: any) {
       const detail = e?.response?.data?.detail;
       alert(typeof detail === "string" ? detail : "Не удалось скачать список на отгрузку");
     } finally {
       setDownloadingChecklistId(null);
+    }
+  };
+
+  // "Список KAR"/"Список AB" — тот же .docx-генератор, что и обычный
+  // "Список" выше, с warehouseId для фильтрации позиций на backend (см.
+  // ПРЕДПОЛОЖЕНИЕ у downloadShipmentChecklist в api.ts). warehouseName —
+  // то же WarehouseInfo.name, что и подпись "Список {wh.code}" ниже,
+  // никакого отдельного словаря кодов на фронте не заводим. Раздельный
+  // downloadingWarehouseChecklistKey — чтобы не путать спиннер с обычным
+  // "Список" (downloadingChecklistId), если их скачивают почти одновременно.
+  const handleDownloadWarehouseChecklist = async (
+    projectId: number,
+    projectName: string,
+    warehouseId: number,
+    warehouseName: string,
+  ) => {
+    const key = `${projectId}:${warehouseId}`;
+    setDownloadingWarehouseChecklistKey(key);
+    try {
+      await downloadShipmentChecklist(projectId, { warehouseId, projectName, warehouseName });
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail;
+      alert(typeof detail === "string" ? detail : "Не удалось скачать список на отгрузку по складу");
+    } finally {
+      setDownloadingWarehouseChecklistKey((current) => (current === key ? null : current));
     }
   };
 
@@ -2550,6 +2726,31 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
         </ConfirmDialog>
       )}
 
+      {renameUnlockTarget && (
+        <ConfirmDialog
+          title={`Изменить название товара «${renameUnlockTarget.name}»?`}
+          confirmLabel="Изменить"
+          tone="primary"
+          onConfirm={confirmRenameUnlock}
+          onCancel={closeRenameUnlock}
+        />
+      )}
+
+      {deleteProductTarget && (
+        <ConfirmDialog
+          title="Удалить товар?"
+          description="Товар будет удалён из каталога. Это действие нельзя отменить."
+          confirmLabel="Удалить"
+          loading={deletingProductId === deleteProductTarget.productId}
+          error={deleteProductError}
+          onConfirm={confirmDeleteProduct}
+          onCancel={closeDeleteProduct}
+        >
+          <p className="text-xs font-mono text-muted-foreground">{deleteProductTarget.sku}</p>
+          <p className="mt-0.5 text-sm font-semibold text-foreground">{deleteProductTarget.name}</p>
+        </ConfirmDialog>
+      )}
+
       {confirmTarget && (
         <ConfirmReceiptModal receipt={confirmTarget} onClose={() => setConfirmTarget(null)} onSuccess={() => handleConfirmSuccess(confirmTarget)} />
       )}
@@ -2709,13 +2910,66 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                       <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right whitespace-nowrap">В резерве</th>
                       <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right whitespace-nowrap">Брак</th>
                       <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right whitespace-nowrap">Доступно</th>
+                      {isCommercialDirector && (
+                        <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center whitespace-nowrap"></th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {filteredStock.map((item) => (
+                    {filteredStock.map((item) => {
+                      const blocksDelete = item.reserved !== 0 || item.defective !== 0 || item.total !== 0;
+                      return (
                       <tr key={item.id} className="hover:bg-background/50 transition-colors">
                         <td className="px-4 py-3 text-xs font-mono text-muted-foreground whitespace-nowrap">{item.sku}</td>
-                        <td className="px-4 py-3 text-sm font-medium text-foreground">{item.name}</td>
+                        <td className="px-4 py-3 text-sm font-medium text-foreground">
+                          {isCommercialDirector ? (() => {
+                            const isUnlocked = unlockedRenameProductId === item.id;
+                            return (
+                              <textarea
+                                  key={`${item.id}-name-${item.name}`}
+                                  ref={(el) => {
+                                    if (el) {
+                                      nameTextareaRefs.current.set(item.id, el);
+                                      autoResizeNameTextarea(el);
+                                    } else {
+                                      nameTextareaRefs.current.delete(item.id);
+                                    }
+                                  }}
+                                  rows={1}
+                                  defaultValue={item.name}
+                                  readOnly={!isUnlocked}
+                                  disabled={renamingProductId === item.productId}
+                                  onMouseDown={(event) => {
+                                    if (!isUnlocked) {
+                                      event.preventDefault();
+                                      openRenameUnlock(item);
+                                    }
+                                  }}
+                                  onFocus={(event) => {
+                                    if (!isUnlocked) {
+                                      event.target.blur();
+                                      openRenameUnlock(item);
+                                    }
+                                  }}
+                                  onInput={(event) => autoResizeNameTextarea(event.currentTarget)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      event.currentTarget.blur();
+                                    }
+                                  }}
+                                  onBlur={(event) => {
+                                    if (isUnlocked) void handleProductNameBlur(item, event);
+                                  }}
+                                  className={`w-full resize-none overflow-hidden px-2 py-1 text-sm font-medium border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted ${
+                                    isUnlocked ? "border-primary cursor-text" : "border-border cursor-pointer"
+                                  }`}
+                              />
+                            );
+                          })() : (
+                            item.name
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{item.unit}</td>
                         {warehouses.map((wh) => (
                           <td key={wh.id} className="px-4 py-3 text-sm font-mono text-foreground text-right whitespace-nowrap">
@@ -2738,8 +2992,25 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                         <td className="px-4 py-3 text-right font-mono text-sm text-green-600 dark:text-green-400 font-semibold whitespace-nowrap">
                           {item.available.toLocaleString("ru-RU")}
                         </td>
+                        {isCommercialDirector && (
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            {blocksDelete ? null : (
+                              <div className="flex justify-center">
+                                <button
+                                    type="button"
+                                    onClick={() => openDeleteProduct(item)}
+                                    aria-label={`Удалить товар ${item.name}`}
+                                    className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-400/20 transition-colors"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        )}
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -2920,7 +3191,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
 
                       <div className="flex items-center gap-2 pr-5">
                         <button
-                          onClick={() => handleDownloadChecklist(proj.projectId)}
+                          onClick={() => handleDownloadChecklist(proj.projectId, proj.projectName)}
                           disabled={downloadingChecklistId === proj.projectId}
                           title="Распечатать список на отгрузку"
                           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-border text-foreground hover:bg-background disabled:opacity-50"
@@ -2932,6 +3203,29 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                           )}
                           Список
                         </button>
+                        {warehouses.map((wh) => {
+                          const isDownloading =
+                            downloadingWarehouseChecklistKey === `${proj.projectId}:${wh.id}`;
+                          return (
+                            <button
+                              key={wh.id}
+                              type="button"
+                              onClick={() =>
+                                handleDownloadWarehouseChecklist(proj.projectId, proj.projectName, wh.id, wh.name)
+                              }
+                              disabled={isDownloading}
+                              title={`Распечатать список на отгрузку по складу «${wh.name}»`}
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-border text-foreground hover:bg-background disabled:opacity-50"
+                            >
+                              {isDownloading ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <FileText size={14} />
+                              )}
+                              Список {wh.code}
+                            </button>
+                          );
+                        })}
                         <span className="px-2.5 py-1 text-xs font-semibold bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 rounded-full flex items-center gap-1">
                           <PackageCheck size={12} /> Зарезервировано
                         </span>

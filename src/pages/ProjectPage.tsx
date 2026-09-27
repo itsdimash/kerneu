@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
-import { createPortal } from "react-dom";
+import React, { useState, useEffect, useRef, useDeferredValue } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import type { Role, Page, ProjectState, Receipt } from "../types";
@@ -52,6 +51,7 @@ import type {
 import { MultiSelectCombobox } from "../app/components/ui/multi-select";
 import { ProductSearchCombobox } from "../app/components/ui/product-search-combobox";
 import { Checkbox } from "../app/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "../app/components/ui/popover";
 import { StockStatusBadge } from "../app/components/common/StockStatusBadge";
 import { KitGroupHeaderRow } from "../app/components/common/KitGroupHeaderRow";
 import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
@@ -100,43 +100,6 @@ const getSimilarVariantLabels = (item: MlImportItemResponse): string[] =>
     })
     .filter((label): label is string => Boolean(label));
 
-// Позиция и допустимая высота выпадашки «Совпавший товар» — top при
-// открытии вниз, bottom при открытии вверх (см. computePickerPosition).
-type PickerPosition = { left: number; width: number; maxHeight: number } & (
-  | { top: number; bottom?: undefined }
-  | { bottom: number; top?: undefined }
-);
-
-// Раньше высота выпадашки была фиксированной константой (28rem/448px)
-// независимо от того, где на экране открыт триггер — из-за этого при
-// открытии в нижней половине окна весь блок (включая sticky-футер с
-// кнопкой «Применить») мог целиком уезжать за нижний край видимого
-// вьюпорта: sticky корректно прилипал к низу СВОЕГО скролл-контейнера,
-// но сам контейнер был ниже видимой области, и футер был не виден без
-// скролла страницы. Теперь высота считается по фактически доступному
-// пространству в выбранную сторону, а при недостатке места снизу список
-// открывается вверх от триггера.
-const PICKER_PREFERRED_MAX_HEIGHT = 448; // px, было max-h-[28rem]
-const PICKER_VIEWPORT_MARGIN = 8;
-const PICKER_MIN_HEIGHT = 160;
-
-const computePickerPosition = (rect: DOMRect): PickerPosition => {
-  const left = rect.left;
-  const width = Math.max(rect.width, 416);
-
-  const spaceBelow = window.innerHeight - rect.bottom - 4 - PICKER_VIEWPORT_MARGIN;
-  const spaceAbove = rect.top - 4 - PICKER_VIEWPORT_MARGIN;
-  const openUpward = spaceBelow < PICKER_MIN_HEIGHT && spaceAbove > spaceBelow;
-
-  const maxHeight = Math.max(
-    PICKER_MIN_HEIGHT,
-    Math.min(PICKER_PREFERRED_MAX_HEIGHT, openUpward ? spaceAbove : spaceBelow),
-  );
-
-  return openUpward
-    ? { bottom: window.innerHeight - rect.top + 4, left, width, maxHeight }
-    : { top: rect.bottom + 4, left, width, maxHeight };
-};
 
 type CatalogProduct = {
   id: number;
@@ -412,22 +375,22 @@ export function ProjectPagePM({
   const [productCatalog, setProductCatalog] = useState<CatalogProduct[]>([]);
   const [productCatalogLoading, setProductCatalogLoading] = useState(false);
   const [openVariantPickerId, setOpenVariantPickerId] = useState<number | null>(null);
-  // Выпадашка выбора товара рендерится порталом в <body> (см. ниже), а не
-  // внутри таблицы — контейнер таблицы имеет overflow-x-auto, а CSS в этом
-  // случае автоматически делает overflow-y тоже обрезающим, из-за чего
-  // список обрезался снизу и требовал скролла внутри крошечной области.
-  // Позиция считается от кнопки-триггера в момент открытия.
-  // top задан при открытии вниз (обычный случай), bottom — при открытии
-  // вверх, когда снизу триггера не хватает места. maxHeight считается по
-  // фактически доступному пространству вьюпорта в выбранную сторону, а не
-  // фиксированной константой — иначе при открытии в нижней половине экрана
-  // сам блок (включая sticky-футер с «Применить») мог целиком уезжать за
-  // нижний край окна, и его было не видно без скролла СТРАНИЦЫ (см. баг:
-  // «Применить» рендерился в DOM и sticky работал корректно относительно
-  // своего скролл-контейнера, но сам контейнер помещался ниже видимой
-  // области viewport).
-  const [pickerPosition, setPickerPosition] = useState<PickerPosition | null>(null);
   const [productSearch, setProductSearch] = useState("");
+  // Поиск/фильтр по строкам таблицы товаров ML-импорта (иконка Search рядом
+  // с таблицей). Полностью клиентский, не путать с productSearch выше —
+  // тот отвечает за подсказки внутри дропдауна «Совпавший товар» одной
+  // строки, а не за фильтрацию всей таблицы.
+  const [isMlItemsSearchOpen, setIsMlItemsSearchOpen] = useState(false);
+  const [mlItemsSearchQuery, setMlItemsSearchQuery] = useState("");
+  const deferredMlItemsSearchQuery = useDeferredValue(mlItemsSearchQuery);
+  const normalizedMlItemsSearchQuery = deferredMlItemsSearchQuery.trim().toLowerCase();
+  // Индекс сохраняется как у исходного (нефильтрованного) списка, чтобы
+  // номер строки «№» не «прыгал» при фильтрации.
+  const visibleMlImportItems: { item: MlImportItemResponse; index: number }[] = (mlImport?.items ?? [])
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) =>
+      !normalizedMlItemsSearchQuery || item.input_product.toLowerCase().includes(normalizedMlItemsSearchQuery),
+    );
   // Отметки чекбоксами в открытом дропдауне «Совпавший товар» — общие для
   // всего компонента, а не per-row, потому что дропдаун в любой момент
   // открыт максимум для одной строки (openVariantPickerId). Сбрасываются
@@ -687,18 +650,6 @@ export function ProjectPagePM({
   // в следующую строку.
   useEffect(() => {
     setSelectedProductIdsInDropdown([]);
-  }, [openVariantPickerId]);
-
-  useEffect(() => {
-    if (openVariantPickerId === null) return;
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as HTMLElement;
-      if (!target.closest(`[data-variant-picker="${openVariantPickerId}"]`)) {
-        setOpenVariantPickerId(null);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [openVariantPickerId]);
 
   // Баннер с ошибкой ML-импорта висит НАД таблицей, а таблица широкая
@@ -1932,7 +1883,51 @@ export function ProjectPagePM({
         )}
 
         <div className="mt-2">
-            <div className="flex items-center justify-end gap-4 mb-3">
+            <div className="flex items-center justify-between gap-4 mb-3">
+                {mlImport ? (
+                  <div className="flex items-center">
+                    {isMlItemsSearchOpen ? (
+                      <div className="relative w-64">
+                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                        <input
+                            autoFocus
+                            value={mlItemsSearchQuery}
+                            onChange={(event) => setMlItemsSearchQuery(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") {
+                                setIsMlItemsSearchOpen(false);
+                                setMlItemsSearchQuery("");
+                              }
+                            }}
+                            placeholder="Поиск по наименованию…"
+                            className="w-full pl-9 pr-8 py-2.5 text-sm border border-border rounded-lg focus:outline-none focus:border-primary bg-card"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => {
+                              setIsMlItemsSearchOpen(false);
+                              setMlItemsSearchQuery("");
+                            }}
+                            aria-label="Закрыть поиск"
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          <XCircle size={14} />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                          type="button"
+                          onClick={() => setIsMlItemsSearchOpen(true)}
+                          className="flex items-center gap-2 px-5 py-2.5 border border-border bg-card text-sm font-medium text-foreground rounded-lg hover:bg-background transition-colors whitespace-nowrap"
+                      >
+                        <Search size={14} />
+                        Поиск продукта
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div />
+                )}
                 <div className="flex items-center gap-3">
                   {/* Экспресс-проект: КП генерировать не нужно и согласовывать
                       не с кем — договор подписан до создания проекта. Вместо
@@ -2219,7 +2214,10 @@ export function ProjectPagePM({
                       {mlImport.items.length === 0 && !isAddingRow && (
                         <tr><td colSpan={isWarehouseRequest ? 9 : 11} className="px-4 py-10 text-center text-sm text-muted-foreground">В ML-импорте нет товаров</td></tr>
                       )}
-                      {mlImport.items.map((item, index) => {
+                      {mlImport.items.length > 0 && visibleMlImportItems.length === 0 && (
+                        <tr><td colSpan={isWarehouseRequest ? 9 : 11} className="px-4 py-10 text-center text-sm text-muted-foreground">Совпадений не найдено</td></tr>
+                      )}
+                      {visibleMlImportItems.map(({ item, index }) => {
                           const isUpdating = updatingItemId === item.id;
                           const isDeleting = deletingItemId === item.id;
                           const canDeleteRow =
@@ -2329,7 +2327,7 @@ export function ProjectPagePM({
                                       // присылает similar_variants в ответе, но
                                       // по этому статусу мы уже знаем, что товара
                                       // нет и что подбирать нечего: секция
-                                      // "Похожие по данным ML" не должна
+                                      // "Похожие по данным склада" не должна
                                       // рендериться, пикер сразу открывается на
                                       // "Весь каталог".
                                       const isNewProductStatus = normalizedStatus === NEW_PRODUCT_ML_STATUS;
@@ -2380,63 +2378,42 @@ export function ProjectPagePM({
                                         0;
 
                                       return (
-                                        <div className="relative" data-variant-picker={item.id}>
-                                          <button
-                                              type="button"
-                                              disabled={isUpdating}
-                                              onClick={(event) => {
-                                                const willOpen = openVariantPickerId !== item.id;
-                                                const rect = event.currentTarget.getBoundingClientRect();
+                                        <div className="relative">
+                                          <Popover
+                                              open={isPickerOpen}
+                                              onOpenChange={(nextOpen) => {
                                                 setProductSearch("");
-                                                if (willOpen) {
-                                                  setPickerPosition(computePickerPosition(rect));
-                                                }
-                                                setOpenVariantPickerId(willOpen ? item.id : null);
+                                                setOpenVariantPickerId(nextOpen ? item.id : null);
                                               }}
-                                              className={`w-72 flex items-center justify-between gap-2 px-2 py-1.5 text-sm border rounded-md bg-card text-left disabled:bg-muted disabled:cursor-not-allowed ${
-                                                item.selected_product_id != null ? "border-border" : "border-orange-300 dark:border-orange-400/30"
-                                              }`}
                                           >
-                                            <span className={`truncate ${selectedProductName ? "text-foreground" : "text-muted-foreground"}`}>
-                                              {selectedProductName ??
-                                                (productCatalogLoading
-                                                  ? "Загрузка каталога…"
-                                                  : !isNewProductStatus && item.matched_product?.trim()
-                                                  ? `Подтвердите: ${item.matched_product.trim()}`
-                                                  : "Выберите товар")}
-                                            </span>
-                                            <ChevronDown
-                                                size={14}
-                                                className={`flex-shrink-0 text-muted-foreground transition-transform ${isPickerOpen ? "rotate-180" : ""}`}
-                                            />
-                                          </button>
+                                            <PopoverTrigger asChild>
+                                              <button
+                                                  type="button"
+                                                  disabled={isUpdating}
+                                                  className={`w-full flex items-start justify-between gap-2 px-2 py-1.5 text-sm border rounded-md bg-card text-left disabled:bg-muted disabled:cursor-not-allowed ${
+                                                    item.selected_product_id != null ? "border-border" : "border-orange-300 dark:border-orange-400/30"
+                                                  }`}
+                                              >
+                                                <span className={`min-w-0 flex-1 whitespace-normal break-words ${selectedProductName ? "text-foreground" : "text-muted-foreground"}`}>
+                                                  {selectedProductName ??
+                                                    (productCatalogLoading
+                                                      ? "Загрузка каталога…"
+                                                      : !isNewProductStatus && item.matched_product?.trim()
+                                                      ? `Подтвердите: ${item.matched_product.trim()}`
+                                                      : "Выберите товар")}
+                                                </span>
+                                                <ChevronDown
+                                                    size={14}
+                                                    className={`flex-shrink-0 mt-0.5 text-muted-foreground transition-transform ${isPickerOpen ? "rotate-180" : ""}`}
+                                                />
+                                              </button>
+                                            </PopoverTrigger>
 
-                                          {selectedCatalogProduct?.is_kit && (
-                                            <button
-                                                type="button"
-                                                onClick={() => void openKitPicker(item, selectedCatalogProduct)}
-                                                className="mt-1 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                                            <PopoverContent
+                                                align="start"
+                                                collisionPadding={8}
+                                                className="w-[416px] max-h-[min(28rem,var(--radix-popover-content-available-height))] overflow-y-auto bg-card border border-border rounded-lg shadow-lg p-0 py-1"
                                             >
-                                              <Pencil size={11} />
-                                              {selectedKitComponentsCount > 0
-                                                ? `Состав комплекта: ${selectedKitComponentsCount}`
-                                                : "Выбрать состав комплекта"}
-                                            </button>
-                                          )}
-
-                                          {isPickerOpen && pickerPosition && createPortal(
-                                            <div
-                                                data-variant-picker={item.id}
-                                                style={{
-                                                  position: "fixed",
-                                                  left: pickerPosition.left,
-                                                  width: pickerPosition.width,
-                                                  maxHeight: pickerPosition.maxHeight,
-                                                  ...(pickerPosition.top !== undefined
-                                                    ? { top: pickerPosition.top }
-                                                    : { bottom: pickerPosition.bottom }),
-                                                }}
-                                                className="z-50 overflow-y-auto bg-card border border-border rounded-lg shadow-lg py-1">
                                               <div className="sticky top-0 bg-card px-2 pb-1.5 pt-1">
                                                 <div className="relative">
                                                   <Search
@@ -2457,7 +2434,7 @@ export function ProjectPagePM({
                                               {shownSuggested.length > 0 && (
                                                 <>
                                                   <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                                    Похожие по данным ML
+                                                    Похожие по данным склада
                                                   </p>
                                                   {shownSuggested.map((product) => {
                                                     const isChecked = selectedProductIdsInDropdown.includes(String(product.id));
@@ -2579,8 +2556,20 @@ export function ProjectPagePM({
                                                     : "Применить"}
                                                 </button>
                                               </div>
-                                            </div>,
-                                            document.body,
+                                            </PopoverContent>
+                                          </Popover>
+
+                                          {selectedCatalogProduct?.is_kit && (
+                                            <button
+                                                type="button"
+                                                onClick={() => void openKitPicker(item, selectedCatalogProduct)}
+                                                className="mt-1 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                                            >
+                                              <Pencil size={11} />
+                                              {selectedKitComponentsCount > 0
+                                                ? `Состав комплекта: ${selectedKitComponentsCount}`
+                                                : "Выбрать состав комплекта"}
+                                            </button>
                                           )}
                                         </div>
                                       );

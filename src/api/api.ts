@@ -363,6 +363,38 @@ export async function updateProductKitFlag(
   }
 }
 
+// ПРЕДПОЛОЖЕНИЕ (backend реализуется отдельно): PATCH /products/{id}/name
+// принимает { name } и возвращает обновлённый товар. При конфликте имени
+// backend отвечает 400 с detail — throwWithDetail пробрасывает detail как
+// есть, поэтому UI покажет ровно то сообщение, которое пришлёт backend
+// (например, "Имя уже занято"), без отдельного разбора статус-кода.
+export async function updateProductName(
+  productId: number,
+  name: string,
+): Promise<{ id: number; name: string }> {
+  try {
+    const { data } = await api.patch<{ id: number; name: string }>(
+      `/products/${productId}/name`,
+      { name },
+    );
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось изменить название товара");
+  }
+}
+
+// ПРЕДПОЛОЖЕНИЕ: DELETE /products/{id} удаляет товар из каталога. Наличие
+// остатка/резерва/брака — авторитетная проверка backend'а; фронт (см.
+// WarehousePage) дублирует её на уровне disabled-кнопки только для UX,
+// чтобы не давать пользователю впустую открывать диалог подтверждения.
+export async function deleteProduct(productId: number): Promise<void> {
+  try {
+    await api.delete(`/products/${productId}`);
+  } catch (error) {
+    throwWithDetail(error, "Не удалось удалить товар");
+  }
+}
+
 // Ручное добавление строки в черновик импорта. Обязательны только
 // наименование и количество — остальное дозаполняется инлайн-полями
 // таблицы, как у распарсенных строк.
@@ -1822,16 +1854,37 @@ export const fetchWarehouseShipments = async (): Promise<ShipmentHistoryResponse
 // отгрузки, по позициям проекта, готовым к отгрузке (STATUS_RESERVED).
 // ==========================================
 
-export const downloadShipmentChecklist = async (projectId: number): Promise<void> => {
+// ПРЕДПОЛОЖЕНИЕ (backend реализуется отдельно — репозиторий с генератором
+// документов недоступен из этой сессии, поэтому нельзя ни посмотреть, ни
+// изменить сам шаблон/эндпоинт): опциональный warehouseId передаётся как
+// query-параметр warehouse_id — backend должен отфильтровать позиции по
+// этому складу перед рендером ТОГО ЖЕ шаблона, что и без параметра, и
+// вернуть filename в виде "Список на отгрузку {project.name}[ {warehouse.
+// name}].docx" через Content-Disposition (он уже приоритетнее fallback-
+// имени ниже — тот нужен только на случай, если backend ещё не успел
+// проставить Content-Disposition для конкретного склада). projectName/
+// warehouseName у нас уже есть на фронте (тот же объект, что рендерит
+// кнопки), поэтому локальный fallback собирается из них, а не из голого
+// id. Без поддержки warehouse_id на backend кнопки "Список KAR"/"Список
+// AB" будут просто скачивать тот же файл (с той же выборкой позиций), что
+// и обычный "Список".
+export const downloadShipmentChecklist = async (
+  projectId: number,
+  options?: { warehouseId?: number; projectName?: string; warehouseName?: string },
+): Promise<void> => {
   const response = await api.get(`/warehouse/shipments/${projectId}/document`, {
     responseType: "blob",
+    params: options?.warehouseId != null ? { warehouse_id: options.warehouseId } : undefined,
   });
 
   const blob = new Blob([response.data], {
     type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   });
 
-  let filename = `Список_на_отгрузку_проект_${projectId}.docx`;
+  const baseName = options?.projectName
+    ? `Список на отгрузку ${options.projectName}`
+    : `Список на отгрузку проект ${projectId}`;
+  let filename = options?.warehouseName ? `${baseName} ${options.warehouseName}.docx` : `${baseName}.docx`;
   const disposition = response.headers["content-disposition"];
   if (disposition && disposition.includes("filename*=UTF-8''")) {
     filename = decodeURIComponent(disposition.split("filename*=UTF-8''")[1]);
