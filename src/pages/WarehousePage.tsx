@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { ShipmentModal } from "../app/components/modals/ShipmentModal";
 import { IncomeRequestModal, IncomeRequestPrefill } from "../app/components/modals/IncomeRequestModal";
@@ -31,6 +31,7 @@ import {
   Truck,
   User,
   Warehouse,
+  History,
 } from "lucide-react";
 import type { ProjectState, Role } from "../types";
 import {
@@ -120,9 +121,10 @@ type ArrivalRow = {
 };
 
 // Группа вкладки "Приход" по проекту. NO_PROJECT_GROUP_KEY — записи без
-// projectId (ручной приход кладовщика через AddStockModal — она не
-// передаёт project_id вообще, см. handleSubmit ниже).
+// projectId: это заявки ПМ, отправленные не из проекта, а с дашборда
+// (/warehouse/income-request без project_id).
 const NO_PROJECT_GROUP_KEY = "no-project";
+const NO_PROJECT_GROUP_NAME = "Заявка PM";
 
 // Иерархия вкладки "Приход": склад (уровень 1) → проект (уровень 2) → дата
 // (уровень 3). Первые два уровня сворачиваются, дата — статичный
@@ -174,6 +176,19 @@ const parseRuDate = (value: string): number => {
   return new Date(Number(y), Number(m) - 1, Number(d)).getTime();
 };
 
+// Печать собирает HTML строкой и отдаёт его document.write в новом окне,
+// поэтому любое значение из БД (название товара, поставщик, проект) должно быть
+// экранировано: иначе товар с именем вида <img src=x onerror=...> исполнится в
+// окне печати.
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // Группирует позиции по a.date (уже отформатированная строка), свежие даты —
 // сверху; записи без даты ("—", parseRuDate вернёт NaN) — в конец.
 function buildArrivalDateGroups(items: ArrivalRow[]): ArrivalDateGroup[] {
@@ -205,6 +220,23 @@ function buildArrivalDateGroups(items: ArrivalRow[]): ArrivalDateGroup[] {
   return groups;
 }
 
+// "Ждёт действия кладовщика" — всё, что не принято и не отклонено. Неизвестный
+// статус с бэка считаем ожидающим: лучше показать лишнюю строку в работе, чем
+// спрятать её в историю. Единственное определение pending на весь файл —
+// от него зависит и подсчёт статусов, и перенос в историю.
+const isPendingArrivalStatus = (status: ReceiptStatus) =>
+  status !== "cancelled" && status !== "denied" && status !== "arrived";
+
+// Ключи уровней дерева. Вынесены, чтобы разбивка на "в работе"/"историю"
+// (splitArrivalsByCompletion) считала группы ровно теми же, что потом строит
+// buildArrival*Groups — иначе критерий завершённости молча разъедется с тем,
+// что видно на экране.
+const arrivalWarehouseKey = (a: ArrivalRow) =>
+  a.warehouseId != null ? `id:${a.warehouseId}` : `name:${a.warehouseName}`;
+
+const arrivalProjectKey = (a: ArrivalRow) =>
+  a.projectId != null ? String(a.projectId) : NO_PROJECT_GROUP_KEY;
+
 function countArrivalStatuses(items: ArrivalRow[]): ArrivalStatusCounts {
   const counts: ArrivalStatusCounts = {
     pendingCount: 0,
@@ -214,13 +246,40 @@ function countArrivalStatuses(items: ArrivalRow[]): ArrivalStatusCounts {
   };
 
   items.forEach((a) => {
-    if (a.status === "cancelled") counts.cancelledCount += 1;
+    if (isPendingArrivalStatus(a.status)) counts.pendingCount += 1;
+    else if (a.status === "cancelled") counts.cancelledCount += 1;
     else if (a.status === "denied") counts.deniedCount += 1;
-    else if (a.status === "arrived") counts.arrivedCount += 1;
-    else counts.pendingCount += 1;
+    else counts.arrivedCount += 1;
   });
 
   return counts;
+}
+
+// Минимальная единица переноса в историю — дата-группа внутри проекта и склада
+// (то, что на экране является одной таблицей): она завершена, когда ни одна её
+// позиция не ждёт кладовщика. Делим сами строки, а не собранное дерево, —
+// тогда оба дерева собираются теми же build*-функциями, и счётчики в шапках,
+// сортировка и отбрасывание пустых групп получаются сами собой.
+function splitArrivalsByCompletion(items: ArrivalRow[]): {
+  active: ArrivalRow[];
+  history: ArrivalRow[];
+} {
+  const dateGroupKey = (a: ArrivalRow) =>
+    `${arrivalWarehouseKey(a)}::${arrivalProjectKey(a)}::${a.date}`;
+
+  const unfinished = new Set<string>();
+  items.forEach((a) => {
+    if (isPendingArrivalStatus(a.status)) unfinished.add(dateGroupKey(a));
+  });
+
+  const active: ArrivalRow[] = [];
+  const history: ArrivalRow[] = [];
+  items.forEach((a) => {
+    if (unfinished.has(dateGroupKey(a))) active.push(a);
+    else history.push(a);
+  });
+
+  return { active, history };
 }
 
 // Порядок групп — сначала те, где есть pending-позиции (по убыванию их
@@ -239,7 +298,7 @@ function buildArrivalProjectGroups(items: ArrivalRow[]): ArrivalGroup[] {
   const map = new Map<string, ArrivalRow[]>();
 
   items.forEach((a) => {
-    const key = a.projectId != null ? String(a.projectId) : NO_PROJECT_GROUP_KEY;
+    const key = arrivalProjectKey(a);
     const bucket = map.get(key);
     if (bucket) bucket.push(a);
     else map.set(key, [a]);
@@ -262,8 +321,7 @@ function buildArrivalProjectGroups(items: ArrivalRow[]): ArrivalGroup[] {
 
     return {
       key,
-      projectName:
-        key === NO_PROJECT_GROUP_KEY ? "Без проекта (ручной приход)" : groupItems[0].project,
+      projectName: key === NO_PROJECT_GROUP_KEY ? NO_PROJECT_GROUP_NAME : groupItems[0].project,
       items: groupItems,
       lastMovementLabel: lastTs != null ? new Date(lastTs).toLocaleDateString("ru-RU") : "—",
       dateGroups: buildArrivalDateGroups(groupItems),
@@ -274,14 +332,23 @@ function buildArrivalProjectGroups(items: ArrivalRow[]): ArrivalGroup[] {
   return sortByPendingFirst(groups);
 }
 
-// Ключ склада — warehouseId; записи, у которых его нет (бэк не отдал
-// warehouse_id), группируются по названию, чтобы не слипнуться в одну группу
-// с настоящим складом.
+// Ключи всех групп дерева — для форсированного раскрытия при поиске. Ключ
+// проекта здесь тот же составной, что и в рендере (`${warehouseKey}::${key}`).
+const warehouseKeysOf = (groups: ArrivalWarehouseGroup[]) => groups.map((w) => w.key);
+
+const projectKeysOf = (groups: ArrivalWarehouseGroup[]) =>
+  groups.flatMap((w) => w.projectGroups.map((g) => `${w.key}::${g.key}`));
+
+// Значение для <Accordion value>: при активном поиске к запомненному вручную
+// состоянию добавляются все ключи результата, вне поиска — только оно само.
+const forcedExpansion = (manual: string[], allKeys: string[], isSearching: boolean) =>
+  isSearching ? Array.from(new Set([...manual, ...allKeys])) : manual;
+
 function buildArrivalWarehouseGroups(items: ArrivalRow[]): ArrivalWarehouseGroup[] {
   const map = new Map<string, ArrivalRow[]>();
 
   items.forEach((a) => {
-    const key = a.warehouseId != null ? `id:${a.warehouseId}` : `name:${a.warehouseName}`;
+    const key = arrivalWarehouseKey(a);
     const bucket = map.get(key);
     if (bucket) bucket.push(a);
     else map.set(key, [a]);
@@ -1328,14 +1395,18 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   // NEW: раскрытие двух сворачиваемых уровней вкладки "Приход" — склада
   // (уровень 1) и проекта внутри склада (уровень 2), независимо друг от
   // друга. Значение — список открытых ключей для Radix Accordion
-  // (type="multiple"), по умолчанию всё свёрнуто. Ключ проекта составной,
+  // (type="multiple"). Ключ проекта составной,
   // `${warehouseKey}::${projectKey}`: один и тот же проект может встретиться
   // под разными складами. Состояние держим здесь, а не внутри аккордеона,
   // чтобы оно переживало и схлопывание склада (Radix размонтирует содержимое),
   // и полные перезагрузки arrivals после действий — handleConfirmSuccess и
   // т.п. его не трогают.
+  // Склады в активном списке раскрываются сами при первой загрузке (см. эффект
+  // ниже), проекты внутри них — нет; в истории по умолчанию свёрнуто всё.
   const [expandedArrivalWarehouses, setExpandedArrivalWarehouses] = useState<string[]>([]);
   const [expandedArrivalGroups, setExpandedArrivalGroups] = useState<string[]>([]);
+  const [expandedArrivalHistoryWarehouses, setExpandedArrivalHistoryWarehouses] = useState<string[]>([]);
+  const [expandedArrivalHistoryGroups, setExpandedArrivalHistoryGroups] = useState<string[]>([]);
 
   const [shipments, setShipments] = useState<ShipmentRow[]>([]);
   const [shipmentsLoading, setShipmentsLoading] = useState(false);
@@ -1676,20 +1747,22 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     }
   };
 
-  const handlePrintArrivals = () => {
-    const rows = arrivals
+  // По умолчанию печатает всё (глобальная кнопка над списком), но принимает и
+  // подмножество — шапка склада передаёт свои позиции и свой заголовок.
+  const handlePrintArrivals = (rowsToPrint: ArrivalRow[] = arrivals, title = "Список приходов") => {
+    const rows = rowsToPrint
       .map(
         (a) => `
           <tr>
-            <td>${a.project}</td>
-            <td>${a.receiptNumber}</td>
-            <td>${a.date}</td>
-            <td>${a.warehouseName}</td>
-            <td>${a.supplier}</td>
-            <td>${a.sku}</td>
-            <td>${a.item}</td>
+            <td>${escapeHtml(a.project)}</td>
+            <td>${escapeHtml(a.receiptNumber)}</td>
+            <td>${escapeHtml(a.date)}</td>
+            <td>${escapeHtml(a.warehouseName)}</td>
+            <td>${escapeHtml(a.supplier)}</td>
+            <td>${escapeHtml(a.sku)}</td>
+            <td>${escapeHtml(a.item)}</td>
             <td style="text-align:center">${a.qty}</td>
-            <td>${a.unit}</td>
+            <td>${escapeHtml(a.unit)}</td>
             <td style="text-align:center">${
               a.status === "cancelled"
                 ? "Отклонено"
@@ -1707,7 +1780,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Список приходов</title>
+          <title>${escapeHtml(title)}</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
             h1 { font-size: 18px; margin-bottom: 4px; }
@@ -1718,7 +1791,7 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
           </style>
         </head>
         <body>
-          <h1>Список приходов</h1>
+          <h1>${escapeHtml(title)}</h1>
           <p class="meta">Сформировано: ${new Date().toLocaleString("ru-RU")}</p>
           <table>
             <thead>
@@ -1865,10 +1938,23 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
     );
   }, [arrivals, arrivalSearch]);
 
-  // Группировка вкладки "Приход": склад → проект → дата отправки заявки.
-  const arrivalWarehouseGroups = useMemo<ArrivalWarehouseGroup[]>(
-    () => buildArrivalWarehouseGroups(filteredArrivals),
+  // Приходы делятся на два дерева одинаковой структуры (склад → проект →
+  // дата): "в работе" и "история". Дата-группа уезжает в историю, когда в ней
+  // не осталось позиций, ждущих кладовщика, поэтому частично принятый проект
+  // попадает в оба дерева — с разными датами в каждом.
+  const { active: activeArrivals, history: historyArrivals } = useMemo(
+    () => splitArrivalsByCompletion(filteredArrivals),
     [filteredArrivals]
+  );
+
+  const arrivalWarehouseGroups = useMemo<ArrivalWarehouseGroup[]>(
+    () => buildArrivalWarehouseGroups(activeArrivals),
+    [activeArrivals]
+  );
+
+  const arrivalWarehouseHistoryGroups = useMemo<ArrivalWarehouseGroup[]>(
+    () => buildArrivalWarehouseGroups(historyArrivals),
+    [historyArrivals]
   );
 
   // При активном поиске все найденные склады и проекты раскрыты принудительно,
@@ -1881,19 +1967,48 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
   // пользователя на «всё найденное, кроме кликнутого».
   const isSearchingArrivals = arrivalSearch.trim().length > 0;
 
-  const warehouseAccordionValue = useMemo(() => {
-    if (!isSearchingArrivals) return expandedArrivalWarehouses;
-    const allWarehouseKeys = arrivalWarehouseGroups.map((w) => w.key);
-    return Array.from(new Set([...expandedArrivalWarehouses, ...allWarehouseKeys]));
-  }, [isSearchingArrivals, expandedArrivalWarehouses, arrivalWarehouseGroups]);
+  const warehouseAccordionValue = useMemo(
+    () => forcedExpansion(expandedArrivalWarehouses, warehouseKeysOf(arrivalWarehouseGroups), isSearchingArrivals),
+    [isSearchingArrivals, expandedArrivalWarehouses, arrivalWarehouseGroups]
+  );
 
-  const projectAccordionValue = useMemo(() => {
-    if (!isSearchingArrivals) return expandedArrivalGroups;
-    const allProjectKeys = arrivalWarehouseGroups.flatMap((w) =>
-      w.projectGroups.map((g) => `${w.key}::${g.key}`)
-    );
-    return Array.from(new Set([...expandedArrivalGroups, ...allProjectKeys]));
-  }, [isSearchingArrivals, expandedArrivalGroups, arrivalWarehouseGroups]);
+  const projectAccordionValue = useMemo(
+    () => forcedExpansion(expandedArrivalGroups, projectKeysOf(arrivalWarehouseGroups), isSearchingArrivals),
+    [isSearchingArrivals, expandedArrivalGroups, arrivalWarehouseGroups]
+  );
+
+  const historyWarehouseAccordionValue = useMemo(
+    () =>
+      forcedExpansion(
+        expandedArrivalHistoryWarehouses,
+        warehouseKeysOf(arrivalWarehouseHistoryGroups),
+        isSearchingArrivals
+      ),
+    [isSearchingArrivals, expandedArrivalHistoryWarehouses, arrivalWarehouseHistoryGroups]
+  );
+
+  const historyProjectAccordionValue = useMemo(
+    () =>
+      forcedExpansion(
+        expandedArrivalHistoryGroups,
+        projectKeysOf(arrivalWarehouseHistoryGroups),
+        isSearchingArrivals
+      ),
+    [isSearchingArrivals, expandedArrivalHistoryGroups, arrivalWarehouseHistoryGroups]
+  );
+
+  // Склады активного списка раскрыты по умолчанию — проставляем один раз, когда
+  // приходы впервые приехали с бэка. Ref-флаг обязателен: без него ручное
+  // сворачивание всех складов выглядело бы как "ещё не инициализировано" и
+  // тут же отменялось повторным автораскрытием. Пока идёт поиск, инициализацию
+  // не делаем — иначе в ручное состояние попали бы только найденные склады.
+  const didExpandArrivalWarehouses = useRef(false);
+  useEffect(() => {
+    if (didExpandArrivalWarehouses.current || isSearchingArrivals) return;
+    if (arrivalWarehouseGroups.length === 0) return;
+    didExpandArrivalWarehouses.current = true;
+    setExpandedArrivalWarehouses(warehouseKeysOf(arrivalWarehouseGroups));
+  }, [arrivalWarehouseGroups, isSearchingArrivals]);
 
   // Поиск на вкладке "Отгрузка" — по названию товара и по проекту, общий для
   // обоих разделов (проекты к отгрузке и история). Если совпал сам проект —
@@ -2017,6 +2132,320 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
         return stockSortDir === "asc" ? diff : -diff;
       });
   }, [stock, selectedWarehouseId, stockFilter, stockSearch, stockSortField, stockSortDir]);
+
+  // Дерево приходов склад → проект → дата. Одна и та же разметка рисует и
+  // активный список, и историю — отличаются только набором групп и
+  // состояниями раскрытия, поэтому это функция, а не отдельный компонент:
+  // обработчики строк (приём, отклонение, удаление) берутся из замыкания,
+  // без прокидывания десятка пропов.
+  const renderArrivalTree = ({
+    groups,
+    warehouseValue,
+    onWarehouseValueChange,
+    projectValue,
+    onProjectValueChange,
+    onPrintWarehouse,
+  }: {
+    groups: ArrivalWarehouseGroup[];
+    warehouseValue: string[];
+    onWarehouseValueChange: (value: string[]) => void;
+    projectValue: string[];
+    onProjectValueChange: (value: string[]) => void;
+    // Не задан — кнопки печати в шапках складов нет (так рисуется история:
+    // печатаем только то, что в работе).
+    onPrintWarehouse?: (group: ArrivalWarehouseGroup) => void;
+  }) => (
+    <Accordion
+      type="multiple"
+      value={warehouseValue}
+      onValueChange={onWarehouseValueChange}
+      className="flex flex-col"
+    >
+      {groups.map((warehouseGroup) => (
+        <AccordionItem key={warehouseGroup.key} value={warehouseGroup.key} className="border-border">
+          {/* Кнопка печати — рядом с триггером, а не внутри: триггер сам является
+              <button>. Фон держит эта строка, ховер остаётся на кликабельной части. */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-muted/40">
+            <div className="min-w-0 flex-1">
+              <AccordionTrigger className="items-center gap-3 rounded-none px-4 py-3.5 transition-colors hover:bg-muted/60 hover:no-underline [&>svg]:order-first [&>svg]:translate-y-0">
+                <span className="flex flex-1 flex-wrap items-center justify-between gap-3">
+                  <span className="flex items-center gap-2.5">
+                    <Warehouse size={16} className="shrink-0 text-blue-600 dark:text-blue-400" />
+                    <span className="flex flex-col">
+                      <span className="text-sm font-bold text-foreground">{warehouseGroup.warehouseName}</span>
+                      <span className="text-xs font-normal text-muted-foreground">
+                        {warehouseGroup.items.length} позиций
+                      </span>
+                    </span>
+                  </span>
+                  <ArrivalStatusBadges counts={warehouseGroup} />
+                </span>
+              </AccordionTrigger>
+            </div>
+
+            {onPrintWarehouse && (
+              <button
+                onClick={() => onPrintWarehouse(warehouseGroup)}
+                disabled={warehouseGroup.items.length === 0}
+                title="Распечатать приходы этого склада"
+                className="mr-4 flex shrink-0 items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-border text-foreground hover:bg-background disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <FileText size={13} />
+                Распечатать
+              </button>
+            )}
+          </div>
+
+          <AccordionContent className="p-0">
+            <Accordion
+              type="multiple"
+              value={projectValue}
+              onValueChange={onProjectValueChange}
+              className="flex flex-col border-t border-border pl-4"
+            >
+              {warehouseGroup.projectGroups.map((group) => {
+                const groupKey = `${warehouseGroup.key}::${group.key}`;
+
+                return (
+                  <AccordionItem key={groupKey} value={groupKey} className="border-border">
+                    <AccordionTrigger className="items-center gap-3 rounded-none bg-background/60 px-4 py-3.5 transition-colors hover:bg-muted/50 hover:no-underline [&>svg]:order-first [&>svg]:translate-y-0">
+                      <span className="flex flex-1 flex-wrap items-center justify-between gap-3">
+                        <span className="flex flex-col">
+                          <span className="text-sm font-bold text-foreground">{group.projectName}</span>
+                          <span className="text-xs font-normal text-muted-foreground">
+                            {group.items.length} позиций
+                          </span>
+                        </span>
+
+                        <span className="flex items-center gap-2 flex-wrap">
+                          <ArrivalStatusBadges counts={group} />
+                          <span className="text-xs font-normal text-muted-foreground whitespace-nowrap">
+                            {group.lastMovementLabel}
+                          </span>
+                        </span>
+                      </span>
+                    </AccordionTrigger>
+
+                    <AccordionContent className="p-0">
+                      {group.dateGroups.map((dateGroup) => (
+                        <div key={dateGroup.key} className="flex flex-col border-t border-border/60">
+                          {/* Уровень 3 — не аккордеон: статичный разделитель над таблицей */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 pb-1.5">
+                            <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                              <Clock size={11} className="shrink-0" />
+                              {dateGroup.dateLabel}
+                            </span>
+                            <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                              {dateGroup.items.length} позиций
+                            </span>
+                          </div>
+
+                          <div className="overflow-x-auto">
+                            <table className="w-full border-collapse">
+                              <thead>
+                                <tr className="border-b border-border bg-background/60">
+                                  <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">№ Прихода</th>
+                                  <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Когда придет товар</th>
+                                  <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Склад</th>
+                                  <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Поставщик</th>
+                                  <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">Артикул</th>
+                                  <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Название товара</th>
+                                  <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Количество</th>
+                                  <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Ед. изм.</th>
+                                  <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Статус приема</th>
+                                  <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Действия</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-border">
+                                {dateGroup.items.map((a) => {
+                                  const isCancelled = a.status === "cancelled";
+                                  const isDenied = a.status === "denied";
+                                  const isArrived = a.status === "arrived";
+
+                                  return (
+                                    <tr key={a.id} className={`hover:bg-background/50 transition-colors ${isCancelled || isDenied ? "opacity-50 bg-background" : ""}`}>
+                                      <td className="px-4 py-3.5 text-xs font-mono font-medium text-foreground">
+                                        {a.receiptNumber}
+                                      </td>
+
+                                      <td className="px-4 py-3.5 text-sm text-muted-foreground">
+                                        {a.date}
+                                      </td>
+
+                                      <td className="px-4 py-3.5 text-sm font-medium text-foreground">
+                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted text-foreground text-xs font-semibold">
+                                          <Building2 size={12} className="text-blue-600 dark:text-blue-400" />
+                                          {a.warehouseName}
+                                        </span>
+                                      </td>
+
+                                      <td className="px-4 py-3.5 text-sm font-medium text-foreground">
+                                        {a.supplier}
+                                      </td>
+
+                                      <td className="px-4 py-3.5 text-xs font-mono text-muted-foreground whitespace-nowrap">
+                                        {a.sku}
+                                      </td>
+
+                                      <td className="px-4 py-3.5 text-sm text-foreground font-medium">
+                                        <div className="flex flex-col gap-1">
+                                          <span>{a.item}</span>
+                                          {a.kit_group_key ? (
+                                            <span
+                                              className="inline-flex w-fit max-w-[220px] items-center gap-1 rounded-md bg-blue-100 dark:bg-blue-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+                                              title={`из комплекта «${(a.kit_name || "").trim() || "Комплект"}»${a.quantity_per_kit != null ? ` ×${a.quantity_per_kit}` : ""}`}
+                                            >
+                                              <Package size={10} className="shrink-0" />
+                                              <span className="truncate">
+                                                из комплекта «{(a.kit_name || "").trim() || "Комплект"}»
+                                                {a.quantity_per_kit != null ? ` ×${a.quantity_per_kit}` : ""}
+                                              </span>
+                                            </span>
+                                          ) : null}
+                                          {a.kit_group_key && a.kit_quantity != null ? (
+                                            <span className="text-[11px] text-muted-foreground">
+                                              комплектов в проекте: {a.kit_quantity}
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                      </td>
+
+                                      <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">
+                                        {a.qty.toLocaleString("ru-RU")}
+                                        {a.actualQuantity !== null && a.actualQuantity !== a.qty && (
+                                          <span className="block text-xs font-normal text-amber-600 dark:text-amber-400">факт: {a.actualQuantity}</span>
+                                        )}
+                                      </td>
+
+                                      <td className="px-4 py-3.5 text-xs text-muted-foreground">
+                                        {a.unit}
+                                      </td>
+
+                                      <td className="px-4 py-3.5 text-center">
+                                        {isCancelled ? (
+                                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 whitespace-nowrap" title="Отменено">
+                                            <XCircle size={14} /> Отклонено
+                                          </span>
+                                        ) : isDenied ? (
+                                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 dark:bg-rose-400/20 text-rose-700 dark:text-rose-300 whitespace-nowrap" title="Отклонено ПМ">
+                                            <XCircle size={14} /> Отклонено ПМ
+                                          </span>
+                                        ) : isArrived ? (
+                                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 whitespace-nowrap" title="Принято кладовщиком">
+                                            <CheckCircle2 size={14} /> Принято
+                                          </span>
+                                        ) : (
+                                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-400/20 text-amber-800 dark:text-amber-200 whitespace-nowrap" title="Ожидается доставка">
+                                            <Clock size={14} /> В пути
+                                          </span>
+                                        )}
+                                      </td>
+
+                                      <td className="px-4 py-3.5 text-center">
+                                        {isCancelled ? (
+                                          <div className="flex flex-col items-center gap-1">
+                                            <span className="text-xs text-muted-foreground italic">Приход отменен</span>
+                                            {isWarehouseUser && (
+                                              <button
+                                                onClick={() => handleToggleCancel(a)}
+                                                disabled={cancellingReceiptId === a.id}
+                                                title="Вернуть в работу"
+                                                className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
+                                              >
+                                                {cancellingReceiptId === a.id ? "…" : "Вернуть"}
+                                              </button>
+                                            )}
+                                          </div>
+                                        ) : isDenied ? (
+                                          <span className="text-xs text-muted-foreground italic">Заявка отклонена ПМ</span>
+                                        ) : isArrived ? (
+                                          <button
+                                            onClick={() => setDetailsTarget(a)}
+                                            className="flex flex-col items-center group cursor-pointer"
+                                            title="Посмотреть детали приёма"
+                                          >
+                                            <span className="text-xs font-semibold text-green-700 dark:text-green-300 flex items-center gap-1 group-hover:underline">
+                                              <PackageCheck size={14} /> Зачислено
+                                            </span>
+                                            {a.warehouseComment && (
+                                              <span className="text-[11px] text-muted-foreground italic max-w-[150px] truncate" title={a.warehouseComment}>
+                                                "{a.warehouseComment}"
+                                              </span>
+                                            )}
+                                          </button>
+                                        ) : isWarehouseUser ? (
+                                          <div className="flex items-center justify-center gap-2">
+                                            <button
+                                              onClick={() => setConfirmTarget(a)}
+                                              title="Принять приход"
+                                              className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 hover:bg-green-200 transition-colors"
+                                            >
+                                              <CheckCircle2 size={16} />
+                                            </button>
+                                            <button
+                                              onClick={() => handleToggleCancel(a)}
+                                              disabled={cancellingReceiptId === a.id}
+                                              title="Отклонить приход"
+                                              className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 hover:bg-red-200 transition-colors disabled:opacity-50"
+                                            >
+                                              {cancellingReceiptId === a.id ? (
+                                                <Loader2 size={16} className="animate-spin" />
+                                              ) : (
+                                                <XCircle size={16} />
+                                              )}
+                                            </button>
+                                          </div>
+                                        ) : isPm ? (
+                                          <div className="flex flex-col items-center gap-1">
+                                            <span className="text-xs text-muted-foreground italic">Ожидает кладовщика</span>
+                                            {/* Действие зависит от источника записи: свою заявку ПМ
+                                                удаляет (её ещё никто не согласовывал), а проектный
+                                                приход из Закупок только отклоняет — удалить его нельзя,
+                                                за ним стоит строка проекта. */}
+                                            <div className="flex items-center gap-2">
+                                              {a.source === "pm_request" ? (
+                                                <button
+                                                  onClick={() => openDeleteReceipt(a)}
+                                                  title="Удалить заявку, если отправили по ошибке"
+                                                  className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+                                                >
+                                                  <Trash2 size={12} />
+                                                  Удалить
+                                                </button>
+                                              ) : (
+                                                <button
+                                                  onClick={() => openDenyReceipt(a)}
+                                                  title="Отклонить эту позицию прихода"
+                                                  className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+                                                >
+                                                  <XCircle size={12} />
+                                                  Отклонить
+                                                </button>
+                                              )}
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <span className="text-xs text-muted-foreground italic">Ожидает кладовщика</span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ))}
+                    </AccordionContent>
+                  </AccordionItem>
+                );
+              })}
+            </Accordion>
+          </AccordionContent>
+        </AccordionItem>
+      ))}
+    </Accordion>
+  );
 
   return (
     <PageWrap
@@ -2332,7 +2761,9 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
               />
             </div>
             <button
-              onClick={handlePrintArrivals}
+              // Обязательно через стрелку: передача handlePrintArrivals напрямую
+              // отдала бы в rowsToPrint событие клика вместо arrivals.
+              onClick={() => handlePrintArrivals()}
               disabled={arrivalsLoading || arrivals.length === 0}
               className="flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-lg border border-border text-foreground hover:bg-background disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -2357,282 +2788,46 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
           ) : arrivals.length === 0 ? (
             <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Нет данных о приходах</div>
           ) : arrivalWarehouseGroups.length === 0 ? (
-            <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Ничего не найдено</div>
+            <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground">
+              <Inbox size={22} className="text-muted-foreground/50" />
+              {/* Активный список пуст по двум разным причинам: поиск ничего не
+                  нашёл либо все приходы уже приняты и уехали в историю ниже. */}
+              {isSearchingArrivals ? "Ничего не найдено" : "Нет приходов в работе — завершённые в «Истории» ниже"}
+            </div>
           ) : (
-            <Accordion
-              type="multiple"
-              value={warehouseAccordionValue}
-              onValueChange={isSearchingArrivals ? () => {} : setExpandedArrivalWarehouses}
-              className="flex flex-col"
-            >
-              {arrivalWarehouseGroups.map((warehouseGroup) => (
-                <AccordionItem key={warehouseGroup.key} value={warehouseGroup.key} className="border-border">
-                  <AccordionTrigger className="items-center gap-3 rounded-none bg-muted/40 px-4 py-3.5 transition-colors hover:bg-muted/60 hover:no-underline [&>svg]:order-first [&>svg]:translate-y-0">
-                    <span className="flex flex-1 flex-wrap items-center justify-between gap-3">
-                      <span className="flex items-center gap-2.5">
-                        <Warehouse size={16} className="shrink-0 text-blue-600 dark:text-blue-400" />
-                        <span className="flex flex-col">
-                          <span className="text-sm font-bold text-foreground">{warehouseGroup.warehouseName}</span>
-                          <span className="text-xs font-normal text-muted-foreground">
-                            {warehouseGroup.items.length} позиций
-                          </span>
-                        </span>
-                      </span>
-                      <ArrivalStatusBadges counts={warehouseGroup} />
-                    </span>
-                  </AccordionTrigger>
-
-                  <AccordionContent className="p-0">
-                    <Accordion
-                      type="multiple"
-                      value={projectAccordionValue}
-                      onValueChange={isSearchingArrivals ? () => {} : setExpandedArrivalGroups}
-                      className="flex flex-col border-t border-border pl-4"
-                    >
-                      {warehouseGroup.projectGroups.map((group) => {
-                        const groupKey = `${warehouseGroup.key}::${group.key}`;
-
-                        return (
-                          <AccordionItem key={groupKey} value={groupKey} className="border-border">
-                            <AccordionTrigger className="items-center gap-3 rounded-none bg-background/60 px-4 py-3.5 transition-colors hover:bg-muted/50 hover:no-underline [&>svg]:order-first [&>svg]:translate-y-0">
-                              <span className="flex flex-1 flex-wrap items-center justify-between gap-3">
-                                <span className="flex flex-col">
-                                  <span className="text-sm font-bold text-foreground">{group.projectName}</span>
-                                  <span className="text-xs font-normal text-muted-foreground">
-                                    {group.items.length} позиций
-                                  </span>
-                                </span>
-
-                                <span className="flex items-center gap-2 flex-wrap">
-                                  <ArrivalStatusBadges counts={group} />
-                                  <span className="text-xs font-normal text-muted-foreground whitespace-nowrap">
-                                    {group.lastMovementLabel}
-                                  </span>
-                                </span>
-                              </span>
-                            </AccordionTrigger>
-
-                            <AccordionContent className="p-0">
-                              {group.dateGroups.map((dateGroup) => (
-                                <div key={dateGroup.key} className="flex flex-col border-t border-border/60">
-                                  {/* Уровень 3 — не аккордеон: статичный разделитель над таблицей */}
-                                  <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 pb-1.5">
-                                    <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                      <Clock size={11} className="shrink-0" />
-                                      {dateGroup.dateLabel}
-                                    </span>
-                                    <span className="text-[11px] text-muted-foreground whitespace-nowrap">
-                                      {dateGroup.items.length} позиций
-                                    </span>
-                                  </div>
-
-                                  <div className="overflow-x-auto">
-                                    <table className="w-full border-collapse">
-                                      <thead>
-                                        <tr className="border-b border-border bg-background/60">
-                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">№ Прихода</th>
-                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Когда придет товар</th>
-                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Склад</th>
-                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Поставщик</th>
-                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">Артикул</th>
-                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Название товара</th>
-                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Количество</th>
-                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Ед. изм.</th>
-                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Статус приема</th>
-                                          <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Действия</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody className="divide-y divide-border">
-                                        {dateGroup.items.map((a) => {
-                                          const isCancelled = a.status === "cancelled";
-                                          const isDenied = a.status === "denied";
-                                          const isArrived = a.status === "arrived";
-
-                                          return (
-                                            <tr key={a.id} className={`hover:bg-background/50 transition-colors ${isCancelled || isDenied ? "opacity-50 bg-background" : ""}`}>
-                                              <td className="px-4 py-3.5 text-xs font-mono font-medium text-foreground">
-                                                {a.receiptNumber}
-                                              </td>
-
-                                              <td className="px-4 py-3.5 text-sm text-muted-foreground">
-                                                {a.date}
-                                              </td>
-
-                                              <td className="px-4 py-3.5 text-sm font-medium text-foreground">
-                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted text-foreground text-xs font-semibold">
-                                                  <Building2 size={12} className="text-blue-600 dark:text-blue-400" />
-                                                  {a.warehouseName}
-                                                </span>
-                                              </td>
-
-                                              <td className="px-4 py-3.5 text-sm font-medium text-foreground">
-                                                {a.supplier}
-                                              </td>
-
-                                              <td className="px-4 py-3.5 text-xs font-mono text-muted-foreground whitespace-nowrap">
-                                                {a.sku}
-                                              </td>
-
-                                              <td className="px-4 py-3.5 text-sm text-foreground font-medium">
-                                                <div className="flex flex-col gap-1">
-                                                  <span>{a.item}</span>
-                                                  {a.kit_group_key ? (
-                                                    <span
-                                                      className="inline-flex w-fit max-w-[220px] items-center gap-1 rounded-md bg-blue-100 dark:bg-blue-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
-                                                      title={`из комплекта «${(a.kit_name || "").trim() || "Комплект"}»${a.quantity_per_kit != null ? ` ×${a.quantity_per_kit}` : ""}`}
-                                                    >
-                                                      <Package size={10} className="shrink-0" />
-                                                      <span className="truncate">
-                                                        из комплекта «{(a.kit_name || "").trim() || "Комплект"}»
-                                                        {a.quantity_per_kit != null ? ` ×${a.quantity_per_kit}` : ""}
-                                                      </span>
-                                                    </span>
-                                                  ) : null}
-                                                  {a.kit_group_key && a.kit_quantity != null ? (
-                                                    <span className="text-[11px] text-muted-foreground">
-                                                      комплектов в проекте: {a.kit_quantity}
-                                                    </span>
-                                                  ) : null}
-                                                </div>
-                                              </td>
-
-                                              <td className="px-4 py-3.5 text-sm font-mono font-bold text-foreground text-center">
-                                                {a.qty.toLocaleString("ru-RU")}
-                                                {a.actualQuantity !== null && a.actualQuantity !== a.qty && (
-                                                  <span className="block text-xs font-normal text-amber-600 dark:text-amber-400">факт: {a.actualQuantity}</span>
-                                                )}
-                                              </td>
-
-                                              <td className="px-4 py-3.5 text-xs text-muted-foreground">
-                                                {a.unit}
-                                              </td>
-
-                                              <td className="px-4 py-3.5 text-center">
-                                                {isCancelled ? (
-                                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 whitespace-nowrap" title="Отменено">
-                                                    <XCircle size={14} /> Отклонено
-                                                  </span>
-                                                ) : isDenied ? (
-                                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 dark:bg-rose-400/20 text-rose-700 dark:text-rose-300 whitespace-nowrap" title="Отклонено ПМ">
-                                                    <XCircle size={14} /> Отклонено ПМ
-                                                  </span>
-                                                ) : isArrived ? (
-                                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 whitespace-nowrap" title="Принято кладовщиком">
-                                                    <CheckCircle2 size={14} /> Принято
-                                                  </span>
-                                                ) : (
-                                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-400/20 text-amber-800 dark:text-amber-200 whitespace-nowrap" title="Ожидается доставка">
-                                                    <Clock size={14} /> В пути
-                                                  </span>
-                                                )}
-                                              </td>
-
-                                              <td className="px-4 py-3.5 text-center">
-                                                {isCancelled ? (
-                                                  <div className="flex flex-col items-center gap-1">
-                                                    <span className="text-xs text-muted-foreground italic">Приход отменен</span>
-                                                    {isWarehouseUser && (
-                                                      <button
-                                                        onClick={() => handleToggleCancel(a)}
-                                                        disabled={cancellingReceiptId === a.id}
-                                                        title="Вернуть в работу"
-                                                        className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
-                                                      >
-                                                        {cancellingReceiptId === a.id ? "…" : "Вернуть"}
-                                                      </button>
-                                                    )}
-                                                  </div>
-                                                ) : isDenied ? (
-                                                  <span className="text-xs text-muted-foreground italic">Заявка отклонена ПМ</span>
-                                                ) : isArrived ? (
-                                                  <button
-                                                    onClick={() => setDetailsTarget(a)}
-                                                    className="flex flex-col items-center group cursor-pointer"
-                                                    title="Посмотреть детали приёма"
-                                                  >
-                                                    <span className="text-xs font-semibold text-green-700 dark:text-green-300 flex items-center gap-1 group-hover:underline">
-                                                      <PackageCheck size={14} /> Зачислено
-                                                    </span>
-                                                    {a.warehouseComment && (
-                                                      <span className="text-[11px] text-muted-foreground italic max-w-[150px] truncate" title={a.warehouseComment}>
-                                                        "{a.warehouseComment}"
-                                                      </span>
-                                                    )}
-                                                  </button>
-                                                ) : isWarehouseUser ? (
-                                                  <div className="flex items-center justify-center gap-2">
-                                                    <button
-                                                      onClick={() => setConfirmTarget(a)}
-                                                      title="Принять приход"
-                                                      className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-green-100 dark:bg-green-400/20 text-green-700 dark:text-green-300 hover:bg-green-200 transition-colors"
-                                                    >
-                                                      <CheckCircle2 size={16} />
-                                                    </button>
-                                                    <button
-                                                      onClick={() => handleToggleCancel(a)}
-                                                      disabled={cancellingReceiptId === a.id}
-                                                      title="Отклонить приход"
-                                                      className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 hover:bg-red-200 transition-colors disabled:opacity-50"
-                                                    >
-                                                      {cancellingReceiptId === a.id ? (
-                                                        <Loader2 size={16} className="animate-spin" />
-                                                      ) : (
-                                                        <XCircle size={16} />
-                                                      )}
-                                                    </button>
-                                                  </div>
-                                                ) : isPm ? (
-                                                  <div className="flex flex-col items-center gap-1">
-                                                    <span className="text-xs text-muted-foreground italic">Ожидает кладовщика</span>
-                                                    {/* Действие зависит от источника записи: свою заявку ПМ
-                                                        удаляет (её ещё никто не согласовывал), а проектный
-                                                        приход из Закупок только отклоняет — удалить его нельзя,
-                                                        за ним стоит строка проекта. */}
-                                                    <div className="flex items-center gap-2">
-                                                      {a.source === "pm_request" ? (
-                                                        <button
-                                                          onClick={() => openDeleteReceipt(a)}
-                                                          title="Удалить заявку, если отправили по ошибке"
-                                                          className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
-                                                        >
-                                                          <Trash2 size={12} />
-                                                          Удалить
-                                                        </button>
-                                                      ) : (
-                                                        <button
-                                                          onClick={() => openDenyReceipt(a)}
-                                                          title="Отклонить эту позицию прихода"
-                                                          className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
-                                                        >
-                                                          <XCircle size={12} />
-                                                          Отклонить
-                                                        </button>
-                                                      )}
-                                                    </div>
-                                                  </div>
-                                                ) : (
-                                                  <span className="text-xs text-muted-foreground italic">Ожидает кладовщика</span>
-                                                )}
-                                              </td>
-                                            </tr>
-                                          );
-                                        })}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                </div>
-                              ))}
-                            </AccordionContent>
-                          </AccordionItem>
-                        );
-                      })}
-                    </Accordion>
-                  </AccordionContent>
-                </AccordionItem>
-              ))}
-            </Accordion>
+            renderArrivalTree({
+              groups: arrivalWarehouseGroups,
+              warehouseValue: warehouseAccordionValue,
+              onWarehouseValueChange: isSearchingArrivals ? () => {} : setExpandedArrivalWarehouses,
+              projectValue: projectAccordionValue,
+              onProjectValueChange: isSearchingArrivals ? () => {} : setExpandedArrivalGroups,
+              // Печатаем ровно то, что видно в активном дереве: с учётом поиска,
+              // без истории.
+              onPrintWarehouse: (group) =>
+                handlePrintArrivals(group.items, `Приход — ${group.warehouseName}`),
+            })
           )}
         </div>
+
+        {arrivalWarehouseHistoryGroups.length > 0 && (
+          <>
+            <div className="flex items-center gap-2 mt-8 mb-3">
+              <History size={15} className="text-muted-foreground" />
+              <h3 className="text-sm font-semibold text-foreground">История</h3>
+              <span className="text-xs text-muted-foreground">{historyArrivals.length} позиций</span>
+            </div>
+
+            <div className="bg-card rounded-lg border border-border overflow-hidden">
+              {renderArrivalTree({
+                groups: arrivalWarehouseHistoryGroups,
+                warehouseValue: historyWarehouseAccordionValue,
+                onWarehouseValueChange: isSearchingArrivals ? () => {} : setExpandedArrivalHistoryWarehouses,
+                projectValue: historyProjectAccordionValue,
+                onProjectValueChange: isSearchingArrivals ? () => {} : setExpandedArrivalHistoryGroups,
+              })}
+            </div>
+          </>
+        )}
         </>
       )}
 
