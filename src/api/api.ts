@@ -152,6 +152,11 @@ export interface KitComponentStatus {
   unit_cost?: number | string | null;
 }
 
+// Откуда позиция физически попадает к клиенту: обычная закупка со своего
+// склада, собственный цех или прямая отгрузка со склада поставщика.
+// undefined (старый backend без поля) трактуется как "stock".
+export type SupplySource = "stock" | "workshop" | "supplier_direct";
+
 export interface MlImportItemResponse {
   id: number;
 
@@ -184,6 +189,9 @@ export interface MlImportItemResponse {
 
   user_comment: string | null;
   is_confirmed: boolean;
+
+  // Опционально: старый backend поле не отдаёт, отсутствие = "stock".
+  supply_source?: SupplySource;
 
   created_at: string;
   updated_at: string | null;
@@ -239,6 +247,8 @@ export interface MlImportItemUpdate {
   supplier_name?: string | null;
 
   user_comment?: string | null;
+
+  supply_source?: SupplySource;
 }
 
 export interface MlImportItemCreateProduct {
@@ -1251,6 +1261,10 @@ export interface SupplierInfo {
 
 export interface ProjectItemResponse extends ProjectItemKitFields {
   id: number;
+  supply_source?: SupplySource;
+  // Сколько реально нужно закупить (required минус покрытое складом);
+  // для supplier_direct backend пересчитывает его при смене источника.
+  procurement_quantity?: number | string | null;
   required_quantity: number | null;
   cost_price: number | string;
   sale_price: number | string;
@@ -1375,6 +1389,30 @@ export async function updateProjectItemProduct(
       }
     }
     throw error;
+  }
+}
+
+export interface UpdateProjectItemSourcePayload {
+  supply_source: SupplySource;
+}
+
+// PM помечает позицию как "Закупка" (stock) или "Цех" (workshop). Как и
+// updateProjectItemProduct — точечный PATCH позиции, в ответе актуальный
+// ProjectItemResponse.
+export async function updateProjectItemSource(
+  projectId: number | string,
+  itemId: number,
+  source: SupplySource,
+): Promise<ProjectItemResponse> {
+  try {
+    const payload: UpdateProjectItemSourcePayload = { supply_source: source };
+    const { data } = await api.patch<ProjectItemResponse>(
+      `/project-items/${projectId}/${itemId}/source`,
+      payload,
+    );
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось изменить источник позиции");
   }
 }
 
@@ -1576,6 +1614,9 @@ export interface WarehouseReceiptResponse {
   defect_resolved?: boolean;        // добавить, если нет
   supplier_raw_name?: string | null; // заявка на приход: поставщик ещё не назначен, только сырое название
   source?: string | null;            // например, "income_request" — заявка ПМ, а не обычный приход
+  // Источник связанной позиции проекта. Для workshop/supplier_direct приход
+  // закрыт (denied) не как отказ, а потому что товар придёт мимо нашего склада.
+  supply_source?: SupplySource;
   kit_group_key?: string | null;
   kit_name?: string | null;
   kit_quantity?: number | string | null;
@@ -1630,6 +1671,25 @@ export async function denyIncomeReceipt(
     `/warehouse/receipts/${receiptId}/deny`
   );
   return data;
+}
+
+// ПМ/Комдир помечает ещё не принятый проектный приход как "со склада
+// поставщика": позиция уходит в supply_source = "supplier_direct", а сам
+// приход закрывается (denied) — кладовщик его больше принять не может.
+// Позицию backend резолвит по receipt.id сам, project_item_id не нужен.
+export async function markReceiptSupplierDirect(
+  receiptId: number,
+  comment?: string,
+): Promise<WarehouseReceiptResponse> {
+  try {
+    const { data } = await api.post<WarehouseReceiptResponse>(
+      `/warehouse/receipts/${receiptId}/mark-supplier-direct`,
+      comment ? { comment } : {},
+    );
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось пометить приход как отгрузку со склада поставщика");
+  }
 }
 
 // ==========================================
@@ -1781,6 +1841,9 @@ export interface ShipmentHistoryItem {
   kit_quantity?: number | string | null;
   quantity_per_kit?: number | string | null;
   comment?: string | null;
+  // Отгрузки из цеха / напрямую от поставщика идут мимо нашего склада —
+  // warehouse_id у них null. Отсутствие поля = обычная складская ("stock").
+  supply_source?: SupplySource;
   photos?: ShipmentHistoryPhoto[];
   shipped_by?: string | null;
   shipped_at?: string | null;
@@ -1815,6 +1878,7 @@ export interface ShipmentPendingItem {
   kit_name?: string | null;
   kit_quantity?: number | string | null;
   quantity_per_kit?: number | string | null;
+  supply_source?: SupplySource;
 }
 
 export interface ShipmentPendingProject {
@@ -1842,6 +1906,79 @@ export const shipProjectItemsPerWarehouse = async (
     { items },
   );
   return data;
+};
+
+// 400 от ship-from-workshop / ship-from-supplier: источник поставки позиции не
+// совпадает с тем, что требует эндпоинт. Структурированный вид (detail —
+// объект с error_code = "supply_source_mismatch" и item_name/expected/actual)
+// предпочтителен; пока backend отдаёт только строку "Позиция «X» имеет
+// источник поставки «stock», а не «supplier_direct»", разбираем её по шаблону.
+// Любая другая ошибка пробрасывается как есть (throwWithDetail).
+export class SupplySourceMismatchError extends Error {
+  itemName: string;
+  expected: string;
+  actual: string;
+
+  constructor(itemName: string, expected: string, actual: string, message: string) {
+    super(message);
+    this.name = "SupplySourceMismatchError";
+    this.itemName = itemName;
+    this.expected = expected;
+    this.actual = actual;
+  }
+}
+
+const SUPPLY_SOURCE_MISMATCH_RE = /Позиция\s+«(.+?)»\s+имеет источник поставки\s+«(\w+)»,\s+а не\s+«(\w+)»/;
+
+function throwShipDirectError(error: unknown, fallback: string): never {
+  if (axios.isAxiosError(error)) {
+    const detail = error.response?.data?.detail;
+
+    if (detail && typeof detail === "object" && !Array.isArray(detail) && detail.error_code === "supply_source_mismatch") {
+      throw new SupplySourceMismatchError(
+        String(detail.item_name ?? ""),
+        String(detail.expected ?? ""),
+        String(detail.actual ?? ""),
+        typeof detail.message === "string" ? detail.message : fallback,
+      );
+    }
+
+    if (typeof detail === "string") {
+      const match = SUPPLY_SOURCE_MISMATCH_RE.exec(detail);
+      if (match) {
+        throw new SupplySourceMismatchError(match[1], match[3], match[2], detail);
+      }
+    }
+  }
+
+  throwWithDetail(error, fallback);
+}
+
+// Отгрузка позиций, которые не проходят через наш склад: у них нет
+// warehouse_id и резерва, поэтому в теле item_ids и необязательный comment —
+// если передан, сохраняется в истории отгрузок.
+export const shipFromWorkshop = async (projectId: number, itemIds: number[], comment?: string) => {
+  try {
+    const { data } = await api.post(
+      `/warehouse/projects/${projectId}/ship-from-workshop`,
+      comment ? { item_ids: itemIds, comment } : { item_ids: itemIds },
+    );
+    return data;
+  } catch (error) {
+    throwShipDirectError(error, "Не удалось отметить отгрузку со склада цеха");
+  }
+};
+
+export const shipFromSupplier = async (projectId: number, itemIds: number[], comment?: string) => {
+  try {
+    const { data } = await api.post(
+      `/warehouse/projects/${projectId}/ship-from-supplier`,
+      comment ? { item_ids: itemIds, comment } : { item_ids: itemIds },
+    );
+    return data;
+  } catch (error) {
+    throwShipDirectError(error, "Не удалось отметить отгрузку со склада поставщика");
+  }
 };
 
 export const fetchWarehouseShipments = async (): Promise<ShipmentHistoryResponse[]> => {

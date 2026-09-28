@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { PageWrap } from "../app/components/common/PageWrap";
+import { SupplySourceBadge, SUPPLY_SOURCE_SHIPPED_LABELS, SUPPLY_SOURCE_PENDING_SHIPMENT_LABELS } from "../app/components/common/SupplySourceControl";
 import { ShipmentModal } from "../app/components/modals/ShipmentModal";
 import { IncomeRequestModal, IncomeRequestPrefill } from "../app/components/modals/IncomeRequestModal";
 import { ConfirmDialog } from "../app/components/modals/ConfirmDialog";
@@ -30,6 +31,7 @@ import {
   Trash2,
   Package,
   Truck,
+  Factory,
   User,
   Warehouse,
   History,
@@ -41,11 +43,15 @@ import {
   postWarehouseIncome,
   setReceiptCancelled,
   denyIncomeReceipt,
+  markReceiptSupplierDirect,
   confirmReceipt,
   updateReceiptDetails,
   reserveProjectItems,
   shipProjectItems,
   shipProjectItemsPerWarehouse,
+  shipFromWorkshop,
+  shipFromSupplier,
+  SupplySourceMismatchError,
   fetchWarehouseShipments,
   fetchPendingShipments,
   fetchWarehouseList,
@@ -60,6 +66,7 @@ import {
   WarehouseReceiptResponse,
   WarehouseInfo,
   ShipmentPendingProject,
+  SupplySource,
   ShipmentHistoryResponse,
   ReceiptStatus,
 } from "../api/api";
@@ -92,6 +99,26 @@ type StockRow = {
   available: number;
 };
 
+// Понятный текст вместо сырого «Позиция «X» имеет источник поставки «stock»,
+// а не «supplier_direct»»: что не так и что делать. expected — источник, который
+// требует эндпоинт (то есть какой кнопкой пользователь пытался отгрузить).
+function formatSupplySourceMismatch(error: SupplySourceMismatchError): string {
+  const name = error.itemName ? `«${error.itemName}»` : "Позиция";
+
+  if (error.expected === "workshop") {
+    return `${name} не помечена как позиция из цеха — сначала выберите источник «Цех» на странице проекта, либо снимите отметку с этой позиции.`;
+  }
+  if (error.expected === "supplier_direct") {
+    return `${name} не помечена как позиция от поставщика — сначала отметьте её «Со склада поставщика» (в Закупках перед отправкой на приход или на вкладке «Поступления»), либо снимите отметку с этой позиции.`;
+  }
+  return error.message;
+}
+
+// Компактная кнопка действия в колонке действий прихода — единый вид для
+// "Отклонить", "Удалить" и "От поставщика" (цвет рамки/текста задаёт вызывающий).
+const ARRIVAL_ACTION_BTN =
+  "inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2 py-1 text-xs font-medium transition-colors disabled:opacity-50";
+
 type ArrivalRow = {
   id: number;
   receiptNumber: string;
@@ -117,6 +144,9 @@ type ArrivalRow = {
   defectResolved: boolean;
   // источник прихода: "pm_request" — создан через «Заявку на приход»
   source: string | null;
+  // Источник связанной позиции; у denied-прихода workshop/supplier_direct
+  // меняет подпись статуса (см. arrivalDirectShipLabel).
+  supplySource: SupplySource;
   kit_group_key: string | null;
   kit_name: string | null;
   kit_quantity: number | string | null;
@@ -149,7 +179,15 @@ type ArrivalStatusCounts = {
   // Отдельно от cancelledCount: "denied" — это ПМ отклонил заявку, а не
   // кладовщик отменил приход (ReceiptStatus.DENIED на бэкенде).
   deniedCount: number;
+  // denied-приходы, закрытые из-за отгрузки мимо склада (цех / поставщик) —
+  // это не отказ ПМ, считаем отдельно от deniedCount.
+  directShipCount: number;
 };
+
+// Подпись статуса для denied-прихода с workshop/supplier_direct; undefined —
+// обычный denied, подпись "Отклонено ПМ" остаётся.
+const arrivalDirectShipLabel = (a: ArrivalRow): string | undefined =>
+  a.status === "denied" ? SUPPLY_SOURCE_PENDING_SHIPMENT_LABELS[a.supplySource] : undefined;
 
 // Уровень 2 — проект внутри склада.
 type ArrivalGroup = ArrivalStatusCounts & {
@@ -246,11 +284,13 @@ function countArrivalStatuses(items: ArrivalRow[]): ArrivalStatusCounts {
     arrivedCount: 0,
     cancelledCount: 0,
     deniedCount: 0,
+    directShipCount: 0,
   };
 
   items.forEach((a) => {
     if (isPendingArrivalStatus(a.status)) counts.pendingCount += 1;
     else if (a.status === "cancelled") counts.cancelledCount += 1;
+    else if (arrivalDirectShipLabel(a)) counts.directShipCount += 1;
     else if (a.status === "denied") counts.deniedCount += 1;
     else counts.arrivedCount += 1;
   });
@@ -378,6 +418,9 @@ type ShipmentHistoryItemRow = {
   // плейсхолдер в маппере нельзя — тогда точка рендера не отличит его от
   // настоящего названия склада.
   warehouseName: string | null;
+  // "workshop" / "supplier_direct" — отгрузка мимо нашего склада, warehouse_id
+  // у неё NULL by design (это не "не зафиксирован").
+  supplySource: SupplySource;
   kitGroupKey: string | null;
   kitName: string | null;
   kitQuantity: number | string | null;
@@ -426,6 +469,7 @@ type PendingShipmentItemRow = {
   kitName: string | null;
   kitQuantity: number | string | null;
   quantityPerKit: number | string | null;
+  supplySource: SupplySource;
 };
 
 type PendingShipmentProjectRow = {
@@ -563,6 +607,7 @@ function mapReceipt(item: WarehouseReceiptResponse): ArrivalRow {
     defectiveQuantity: item.defective_quantity ?? 0,
     defectResolved: item.defect_resolved ?? false,
     source: (item as any).source ?? null,
+    supplySource: item.supply_source ?? "stock",
     kit_group_key: item.kit_group_key ?? null,
     kit_name: item.kit_name ?? null,
     kit_quantity: item.kit_quantity ?? null,
@@ -584,6 +629,7 @@ function mapShipment(item: ShipmentHistoryResponse): ShipmentRow {
       quantity: it.quantity ?? 0,
       unit: it.unit || "шт",
       warehouseName: it.warehouse_name || (it.warehouse_id != null ? `Склад №${it.warehouse_id}` : null),
+      supplySource: it.supply_source ?? "stock",
       kitGroupKey: it.kit_group_key ?? null,
       kitName: it.kit_name ?? null,
       kitQuantity: it.kit_quantity ?? null,
@@ -620,6 +666,11 @@ function ArrivalStatusBadges({ counts }: { counts: ArrivalStatusCounts }) {
       {counts.cancelledCount > 0 && (
         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 whitespace-nowrap">
           <XCircle size={12} /> отклонено {counts.cancelledCount}
+        </span>
+      )}
+      {counts.directShipCount > 0 && (
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-sky-100 dark:bg-sky-400/20 text-sky-700 dark:text-sky-300 whitespace-nowrap">
+          <Truck size={12} /> будет отправлено {counts.directShipCount}
         </span>
       )}
       {counts.deniedCount > 0 && (
@@ -1221,10 +1272,14 @@ function ShipmentDetailsModal({
 
   const shippedBy = shipment.items.find((it) => it.shippedBy)?.shippedBy || null;
   const photosCount = shipment.items.filter((it) => it.photoUrl).length;
+  // Дата в строках нужна, только если позиции отгружались в разное время;
+  // когда у всех одна (до минуты) — она уже есть в шапке "Дата отгрузки".
+  const showItemDates =
+    new Set(shipment.items.map((it) => (it.shippedAt ? it.shippedAt.slice(0, 16) : ""))).size > 1;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 animate-in fade-in duration-200">
-      <div className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-xl bg-card p-6 shadow-xl animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
+      <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-xl bg-card p-6 shadow-xl animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
         <div className="flex items-start justify-between mb-4">
           <div>
             <h3 className="text-base font-semibold text-foreground">
@@ -1270,78 +1325,102 @@ function ShipmentDetailsModal({
             В накладной нет позиций
           </div>
         ) : (
-          <div className="flex flex-col gap-3">
-            {shipment.items.map((it) => {
-              const photoUrl = it.photoUrl;
-
-              return (
-                <div key={it.id} className="flex items-start gap-3 rounded-lg border border-border p-3">
-                  {photoUrl ? (
-                    <button
-                      type="button"
-                      onClick={() => setPreviewPhoto(photoUrl)}
-                      title="Открыть фото"
-                      className="shrink-0 overflow-hidden rounded-md border border-border hover:border-primary transition-colors"
-                    >
-                      <img
-                        src={photoUrl}
-                        alt={`Фото ${it.productName}`}
-                        className="h-32 w-32 object-cover bg-background"
-                      />
-                    </button>
-                  ) : (
-                    <div className="flex h-32 w-32 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border text-muted-foreground/60">
-                      <Camera size={14} />
-                      <span className="text-[10px]">нет фото</span>
-                    </div>
+          <div className="max-h-[45vh] overflow-auto rounded-lg border border-border">
+            <table className="w-full border-collapse">
+              <thead className="sticky top-0 z-10 bg-background">
+                <tr className="border-b border-border">
+                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Товар</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide">Кол-во</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Ед.</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Источник / склад</th>
+                  {showItemDates && (
+                    <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Дата</th>
                   )}
+                  <th className="px-3 py-2 text-center text-xs font-medium text-muted-foreground uppercase tracking-wide">Фото</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {shipment.items.map((it) => {
+                  const photoUrl = it.photoUrl;
+                  const sourceLabel = SUPPLY_SOURCE_SHIPPED_LABELS[it.supplySource];
 
-                  <div className="flex min-w-0 flex-1 flex-col gap-1">
-                    <span className="text-sm font-medium text-foreground">{it.productName}</span>
+                  return (
+                    <tr key={it.id} className="align-middle">
+                      <td className="px-3 py-2 text-sm text-foreground">
+                        <span className="font-medium">{it.productName}</span>
 
-                    {it.kitGroupKey ? (
-                      <span
-                        className="inline-flex w-fit max-w-[220px] items-center gap-1 rounded-md bg-blue-100 dark:bg-blue-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
-                        title={`из комплекта «${(it.kitName || "").trim() || "Комплект"}»${it.quantityPerKit != null ? ` ×${it.quantityPerKit}` : ""}`}
-                      >
-                        <Package size={10} className="shrink-0" />
-                        <span className="truncate">
-                          из комплекта «{(it.kitName || "").trim() || "Комплект"}»
-                          {it.quantityPerKit != null ? ` ×${it.quantityPerKit}` : ""}
-                        </span>
-                      </span>
-                    ) : null}
+                        {it.kitGroupKey ? (
+                          <span
+                            className="mt-0.5 flex w-fit max-w-[220px] items-center gap-1 text-[10px] font-semibold text-primary"
+                            title={`из комплекта «${(it.kitName || "").trim() || "Комплект"}»${it.quantityPerKit != null ? ` ×${it.quantityPerKit}` : ""}`}
+                          >
+                            <Package size={10} className="shrink-0" />
+                            <span className="truncate">
+                              из комплекта «{(it.kitName || "").trim() || "Комплект"}»
+                              {it.quantityPerKit != null ? ` ×${it.quantityPerKit}` : ""}
+                            </span>
+                          </span>
+                        ) : null}
 
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className="font-mono font-semibold text-foreground">
-                        {it.quantity.toLocaleString("ru-RU")} {it.unit}
-                      </span>
-                      {it.warehouseName ? (
-                        <span className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2 py-0.5 font-medium text-foreground">
-                          <Building2 size={11} className="text-blue-600 dark:text-blue-400" />
-                          {it.warehouseName}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground italic">склад не зафиксирован</span>
+                        {/* null (комментария не было) и непустая строка — разные
+                            случаи: у бэкфилл-строк здесь лежит пояснение с
+                            бэкенда, и оно должно рендериться. Пустую строку и
+                            пробелы отсекаем отдельно, чтобы не показывать «""». */}
+                        {it.comment != null && it.comment.trim() !== "" && (
+                          <p
+                            className="mt-0.5 max-w-[280px] truncate text-xs text-muted-foreground italic"
+                            title={it.comment.trim()}
+                          >
+                            "{it.comment.trim()}"
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-sm font-semibold text-foreground whitespace-nowrap">
+                        {it.quantity.toLocaleString("ru-RU")}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{it.unit}</td>
+                      <td className="px-3 py-2 text-xs">
+                        {sourceLabel ? (
+                          <span className="font-medium text-foreground">{sourceLabel}</span>
+                        ) : it.warehouseName ? (
+                          <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                            <Building2 size={11} className="text-blue-600 dark:text-blue-400" />
+                            {it.warehouseName}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground italic">склад не зафиксирован</span>
+                        )}
+                      </td>
+                      {showItemDates && (
+                        <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                          {it.shippedAt ? new Date(it.shippedAt).toLocaleString("ru-RU") : "—"}
+                        </td>
                       )}
-                      {it.shippedAt && (
-                        <span className="text-muted-foreground">
-                          {new Date(it.shippedAt).toLocaleString("ru-RU")}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* null (комментария не было) и непустая строка — разные
-                        случаи: у бэкфилл-строк здесь лежит пояснение с
-                        бэкенда, и оно должно рендериться. Пустую строку и
-                        пробелы отсекаем отдельно, чтобы не показывать «""». */}
-                    {it.comment != null && it.comment.trim() !== "" && (
-                      <p className="text-xs text-muted-foreground italic">"{it.comment.trim()}"</p>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                      <td className="px-3 py-2 text-center">
+                        {photoUrl ? (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewPhoto(photoUrl)}
+                            title="Открыть фото"
+                            className="inline-block overflow-hidden rounded border border-border hover:border-primary transition-colors"
+                          >
+                            <img
+                              src={photoUrl}
+                              alt={`Фото ${it.productName}`}
+                              className="h-8 w-8 object-cover bg-background"
+                            />
+                          </button>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/60">
+                            <Camera size={12} /> нет
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -1367,6 +1446,9 @@ export function WarehousePage({
   const isPm = role === "pm" || role === "admin";
   // "director" — легаси-алиас commercial_director, см. ProjectPage.tsx:4071.
   const isCommercialDirector = role === "commercial_director" || (role as string) === "director";
+  // Отметки "отправлено со склада цеха / поставщика" — решение PM и Комдира,
+  // а не кладовщика (у таких позиций нет резерва на нашем складе).
+  const canShipDirect = isPm || isCommercialDirector;
 
   const [tab, setTab] = useState<"stock" | "arrivals" | "shipments">("stock");
 
@@ -1417,6 +1499,11 @@ export function WarehousePage({
   // предзаполненными товаром/количеством/складом — см. handleDenySuccess.
   const [denyTarget, setDenyTarget] = useState<ArrivalRow | null>(null);
   const [denyingReceiptId, setDenyingReceiptId] = useState<number | null>(null);
+  const [markingSupplierDirectId, setMarkingSupplierDirectId] = useState<number | null>(null);
+  // Подтверждение перед "От поставщика": действие закрывает приход (denied)
+  // без возможности вернуть, поэтому клик только открывает диалог.
+  const [supplierDirectTarget, setSupplierDirectTarget] = useState<ArrivalRow | null>(null);
+  const [supplierDirectError, setSupplierDirectError] = useState<string | null>(null);
   const [denyError, setDenyError] = useState<string | null>(null);
 
   // Заявка на приход, открытая из деньга — держим вместе с id исходного
@@ -1681,6 +1768,7 @@ export function WarehousePage({
               kitName: it.kit_name ?? null,
               kitQuantity: it.kit_quantity ?? null,
               quantityPerKit: it.quantity_per_kit ?? null,
+              supplySource: it.supply_source ?? "stock",
             };
           }),
         }))
@@ -1866,6 +1954,65 @@ export function WarehousePage({
     }
   };
 
+  // Отгрузка позиций мимо нашего склада (цех / прямая от поставщика).
+  // Не требует warehouseId и не трогает фото/резервы — отдельный путь от
+  // handleSendToShipment. Локально убираем отгруженные позиции сразу, а
+  // loadPendingShipments() остаётся источником истины.
+  const handleShipDirect = async (projectId: number, kind: "workshop" | "supplier") => {
+    const proj = pendingShipments.find((p) => p.projectId === projectId);
+    if (!proj) return;
+
+    const targets = proj.items.filter(
+      (it) => it.checked && (kind === "supplier" || it.supplySource === "workshop")
+    );
+    if (targets.length === 0) return;
+
+    const shippedIds = new Set(targets.map((it) => it.id));
+
+    setPendingShipments((prev) =>
+      prev.map((p) => (p.projectId === projectId ? { ...p, submitting: true, error: null } : p))
+    );
+
+    try {
+      const itemIds = targets.map((it) => it.id);
+      if (kind === "workshop") {
+        await shipFromWorkshop(projectId, itemIds);
+      } else {
+        await shipFromSupplier(projectId, itemIds);
+      }
+
+      setPendingShipments((prev) =>
+        prev
+          .map((p) =>
+            p.projectId !== projectId
+              ? p
+              : {
+                  ...p,
+                  items: p.items.filter((it) => !shippedIds.has(it.id)),
+                  submitting: false,
+                  error: null,
+                }
+          )
+          .filter((p) => p.projectId !== projectId || p.items.length > 0)
+      );
+
+      await loadPendingShipments();
+      loadShipments();
+    } catch (e) {
+      const message =
+        e instanceof SupplySourceMismatchError
+          ? formatSupplySourceMismatch(e)
+          : e instanceof Error && e.message
+            ? e.message
+            : kind === "workshop"
+              ? "Не удалось отметить отгрузку из цеха"
+              : "Не удалось отметить отгрузку со склада поставщика";
+      setPendingShipments((prev) =>
+        prev.map((p) => (p.projectId === projectId ? { ...p, submitting: false, error: message } : p))
+      );
+    }
+  };
+
   const handleConfirmSuccess = async (confirmedReceipt: ArrivalRow | null) => {
     let freshArrivals: ArrivalRow[] = arrivals;
     try {
@@ -1952,7 +2099,7 @@ export function WarehousePage({
               a.status === "cancelled"
                 ? "Отклонено"
                 : a.status === "denied"
-                  ? "Отклонено ПМ"
+                  ? arrivalDirectShipLabel(a) ?? "Отклонено ПМ"
                   : a.status === "arrived"
                     ? "Принято"
                     : "В пути"
@@ -2106,6 +2253,64 @@ export function WarehousePage({
       setDenyingReceiptId(null);
     }
   };
+
+  const openSupplierDirect = (receipt: ArrivalRow) => {
+    setSupplierDirectError(null);
+    setSupplierDirectTarget(receipt);
+  };
+
+  const closeSupplierDirect = () => {
+    if (markingSupplierDirectId !== null) return;
+    setSupplierDirectTarget(null);
+    setSupplierDirectError(null);
+  };
+
+  // ПМ/Комдир: приход не нужен, товар отгружает сам поставщик со своего
+  // склада. Backend переводит позицию в supplier_direct и закрывает приход
+  // (denied) — обновляем строку из ответа, полный перезапрос списка не нужен.
+  const confirmMarkSupplierDirect = async () => {
+    if (!supplierDirectTarget) return;
+    const receipt = supplierDirectTarget;
+
+    setMarkingSupplierDirectId(receipt.id);
+    setSupplierDirectError(null);
+    try {
+      const updated = await markReceiptSupplierDirect(receipt.id);
+      // Источник — из ответа мутации; захардкоженный "supplier_direct" —
+      // только деградация, если backend не вернул supply_source (null/нет поля).
+      setArrivals((prev) =>
+        prev.map((r) =>
+          r.id !== receipt.id
+            ? r
+            : updated && typeof updated.id === "number"
+              ? { ...mapReceipt(updated), supplySource: updated.supply_source ?? "supplier_direct" }
+              : { ...r, status: "denied", supplySource: "supplier_direct" }
+        )
+      );
+      setSupplierDirectTarget(null);
+    } catch (e) {
+      setSupplierDirectError(e instanceof Error ? e.message : "Не удалось пометить приход");
+      // возможно, кладовщик уже принял приход — подтягиваем актуальный список
+      loadArrivals();
+    } finally {
+      setMarkingSupplierDirectId(null);
+    }
+  };
+
+  // Кнопка "От поставщика" — только для проектных приходов, которые ещё
+  // ждут кладовщика; у заявок ПМ без проекта флаг бессмыслен.
+  const renderSupplierDirectLink = (a: ArrivalRow) =>
+    canShipDirect && a.projectId != null ? (
+      <button
+        onClick={() => openSupplierDirect(a)}
+        disabled={markingSupplierDirectId === a.id}
+        title="Со склада поставщика: товар отгружает сам поставщик, приход не нужен"
+        className={`${ARRIVAL_ACTION_BTN} border-blue-200 dark:border-blue-400/30 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-400/15`}
+      >
+        <Truck size={12} />
+        От поставщика
+      </button>
+    ) : null;
 
   // Поиск на вкладке "Приход" — по всем полям строки: товар, артикул,
   // проект, поставщик, склад, номер прихода.
@@ -2511,6 +2716,10 @@ export function WarehousePage({
                                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 dark:bg-red-400/20 text-red-700 dark:text-red-300 whitespace-nowrap" title="Отменено">
                                             <XCircle size={14} /> Отклонено
                                           </span>
+                                        ) : isDenied && arrivalDirectShipLabel(a) ? (
+                                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-sky-100 dark:bg-sky-400/20 text-sky-700 dark:text-sky-300 whitespace-nowrap" title="Приход не нужен: товар придёт мимо нашего склада">
+                                            <Truck size={14} /> {arrivalDirectShipLabel(a)}
+                                          </span>
                                         ) : isDenied ? (
                                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 dark:bg-rose-400/20 text-rose-700 dark:text-rose-300 whitespace-nowrap" title="Отклонено ПМ">
                                             <XCircle size={14} /> Отклонено ПМ
@@ -2542,7 +2751,9 @@ export function WarehousePage({
                                             )}
                                           </div>
                                         ) : isDenied ? (
-                                          <span className="text-xs text-muted-foreground italic">Заявка отклонена ПМ</span>
+                                          <span className="text-xs text-muted-foreground italic">
+                                            {arrivalDirectShipLabel(a) ? "Приход не требуется" : "Заявка отклонена ПМ"}
+                                          </span>
                                         ) : isArrived ? (
                                           <button
                                             onClick={() => setDetailsTarget(a)}
@@ -2587,12 +2798,12 @@ export function WarehousePage({
                                                 удаляет (её ещё никто не согласовывал), а проектный
                                                 приход из Закупок только отклоняет — удалить его нельзя,
                                                 за ним стоит строка проекта. */}
-                                            <div className="flex items-center gap-2">
+                                            <div className="flex flex-wrap items-center justify-center gap-2">
                                               {a.source === "pm_request" ? (
                                                 <button
                                                   onClick={() => openDeleteReceipt(a)}
                                                   title="Удалить заявку, если отправили по ошибке"
-                                                  className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+                                                  className={`${ARRIVAL_ACTION_BTN} border-red-200 dark:border-red-400/30 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-400/15`}
                                                 >
                                                   <Trash2 size={12} />
                                                   Удалить
@@ -2601,16 +2812,20 @@ export function WarehousePage({
                                                 <button
                                                   onClick={() => openDenyReceipt(a)}
                                                   title="Отклонить эту позицию прихода"
-                                                  className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+                                                  className={`${ARRIVAL_ACTION_BTN} border-red-200 dark:border-red-400/30 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-400/15`}
                                                 >
                                                   <XCircle size={12} />
                                                   Отклонить
                                                 </button>
                                               )}
+                                              {renderSupplierDirectLink(a)}
                                             </div>
                                           </div>
                                         ) : (
-                                          <span className="text-xs text-muted-foreground italic">Ожидает кладовщика</span>
+                                          <div className="flex flex-col items-center gap-1">
+                                            <span className="text-xs text-muted-foreground italic">Ожидает кладовщика</span>
+                                            {renderSupplierDirectLink(a)}
+                                          </div>
                                         )}
                                       </td>
                                     </tr>
@@ -2680,6 +2895,24 @@ export function WarehousePage({
             setTab("arrivals");
           }}
         />
+      )}
+
+      {supplierDirectTarget && (
+        <ConfirmDialog
+          title="Отметить «от поставщика»?"
+          description="Приход будет отклонён — товар поступит напрямую от поставщика, без прихода на наш склад. Отменить это действие нельзя."
+          confirmLabel="Подтвердить"
+          loading={markingSupplierDirectId === supplierDirectTarget.id}
+          error={supplierDirectError}
+          onConfirm={confirmMarkSupplierDirect}
+          onCancel={closeSupplierDirect}
+        >
+          <p className="text-xs font-mono text-muted-foreground">{supplierDirectTarget.receiptNumber}</p>
+          <p className="mt-0.5 text-sm font-semibold text-foreground">{supplierDirectTarget.item}</p>
+          <p className="mt-2 text-xs font-mono font-semibold text-foreground">
+            {supplierDirectTarget.qty.toLocaleString("ru-RU")} {supplierDirectTarget.unit}
+          </p>
+        </ConfirmDialog>
       )}
 
       {denyTarget && (
@@ -3289,11 +3522,14 @@ export function WarehousePage({
                             {proj.items.map((it) => (
                               <tr key={it.id} className={`hover:bg-background/40 transition-colors ${it.checked ? "bg-primary/5" : ""}`}>
                                 <td className="px-5 py-3 text-center">
-                                {isWarehouseUser && (
+                                {(isWarehouseUser || canShipDirect) && (
                                 <input
                                   type="checkbox"
                                   checked={it.checked}
-                                  disabled={proj.submitting || !it.warehouseId}
+                                  // Для кладовщика без склада отметить нельзя (как раньше);
+                                  // PM/Комдир отмечают и цеховые/прямые позиции, у которых
+                                  // availableWarehouses пуст.
+                                  disabled={proj.submitting || (isWarehouseUser && !it.warehouseId)}
                                   onChange={() => toggleShipmentItemChecked(proj.projectId, it.id)}
                                   className="w-4 h-4 accent-primary cursor-pointer disabled:cursor-not-allowed"
                                 />
@@ -3302,6 +3538,7 @@ export function WarehousePage({
                                 <td className="px-5 py-3 text-sm font-medium text-foreground">
                                   <div className="flex flex-col gap-1">
                                     <span>{it.productName}</span>
+                                    <SupplySourceBadge source={it.supplySource} />
                                     {it.kitGroupKey ? (
                                       <span
                                         className="inline-flex w-fit max-w-[220px] items-center gap-1 rounded-md bg-blue-100 dark:bg-blue-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
@@ -3325,7 +3562,15 @@ export function WarehousePage({
                                 <td className="px-5 py-3 text-xs text-muted-foreground">{it.unit}</td>
                                 <td className="px-5 py-3">
                                   {it.availableWarehouses.length === 0 ? (
-                                    <span className="text-xs text-destructive italic">Нет резерва ни на одном складе</span>
+                                    // workshop/supplier_direct не резервируются на нашем складе по
+                                    // дизайну — это ожидаемое состояние, а не нехватка товара.
+                                    SUPPLY_SOURCE_PENDING_SHIPMENT_LABELS[it.supplySource] ? (
+                                      <span className="text-xs font-medium text-blue-700 dark:text-blue-300">
+                                        {SUPPLY_SOURCE_PENDING_SHIPMENT_LABELS[it.supplySource]}
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-destructive italic">Нет резерва ни на одном складе</span>
+                                    )
                                   ) : (
                                     <div className="flex items-center gap-1.5">
                                       <Building2 size={13} className="text-muted-foreground" />
@@ -3397,6 +3642,29 @@ export function WarehousePage({
                           </tbody>
                         </table>
                       </div>
+
+                      {canShipDirect && (
+                        <div className="flex flex-wrap items-center justify-end gap-3 px-5 py-3.5 border-t border-border bg-background/40">
+                          <button
+                            type="button"
+                            onClick={() => handleShipDirect(proj.projectId, "workshop")}
+                            disabled={proj.submitting || !checkedItems.some((it) => it.supplySource === "workshop")}
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg border border-border text-foreground hover:bg-background transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {proj.submitting ? <Loader2 size={15} className="animate-spin" /> : <Factory size={15} />}
+                            Отправлено из цеха
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleShipDirect(proj.projectId, "supplier")}
+                            disabled={proj.submitting || checkedItems.length === 0}
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg border border-border text-foreground hover:bg-background transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {proj.submitting ? <Loader2 size={15} className="animate-spin" /> : <Truck size={15} />}
+                            Отправлено со склада поставщика
+                          </button>
+                        </div>
+                      )}
 
                       {isWarehouseUser && (
                         <div className="flex flex-wrap items-center justify-end gap-3 px-5 py-3.5 border-t border-border bg-background/40">

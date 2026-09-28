@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { Chip } from "../app/components/common/Chip";
 import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
+import { SupplySourceBadge, SupplySourceSelect } from "../app/components/common/SupplySourceControl";
 import { InlineSearchToggle, useInlineSearch } from "../app/components/common/InlineSearchToggle";
 import { ProcurementSummaryView } from "./ProcurementSummaryView";
 import { Popover, PopoverContent, PopoverTrigger } from "../app/components/ui/popover";
@@ -20,6 +21,7 @@ import {
   updateProjectItemSupplier,
   updateProjectItemCostPrice,
   fetchLastPurchasePrices,
+  type SupplySource,
   LastPurchaseHint,
   SupplierListItem
 } from "../api/api";
@@ -69,6 +71,9 @@ type ProcurementProjectItem = {
   // Если бэкенд ещё не обновлён (старое поле отсутствует), падаем обратно
   // на required_quantity/quantity, как раньше.
   procurement_quantity?: number | string | null;
+  // Откуда позиция попадёт к клиенту; "supplier_direct" — не создаёт приход
+  // на наш склад. Отсутствие поля = обычная закупка ("stock").
+  supply_source?: SupplySource;
   price?: number | string | null;
   price_cost?: number | string | null;
   cost_price?: number | string | null;
@@ -1714,6 +1719,51 @@ export function ProcurementPage({
               Выберите склад, на который кладовщик будет принимать ожидаемый товар поставщика{" "}
               <span className="font-semibold text-foreground">«{incomeModalSupplier}»</span>:
             </p>
+
+            {/* Позиции счёта, которые отгружает сам поставщик со своего склада,
+                помечаем ДО отправки: такие строки backend не превращает в
+                приход. Смена источника сразу уходит PATCH'ем на позицию. */}
+            {selectedProject && (
+              <div className="mb-4">
+                <p className="text-xs font-medium text-foreground mb-1.5">Позиции счёта</p>
+                <div className="max-h-48 overflow-y-auto divide-y divide-border rounded-lg border border-border">
+                  {(groupedItems[incomeModalSupplier] || []).map(item => (
+                    <div key={item.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-xs text-foreground">{getItemName(item)}</p>
+                        {item.supply_source === "supplier_direct" ? (
+                          <div className="mt-0.5 flex items-center gap-1.5">
+                            <SupplySourceBadge source={item.supply_source} />
+                            <span className="text-[11px] text-muted-foreground">не попадёт в приход</span>
+                          </div>
+                        ) : null}
+                      </div>
+                      <SupplySourceSelect
+                        projectId={selectedProject.id}
+                        itemId={item.id}
+                        value={item.supply_source}
+                        options={["stock", "supplier_direct"]}
+                        onUpdated={(updated) =>
+                          setPurchaseItems(prev =>
+                            prev.map(p =>
+                              p.id === item.id
+                                ? {
+                                    ...p,
+                                    supply_source: updated.supply_source,
+                                    ...(updated.procurement_quantity !== undefined
+                                      ? { procurement_quantity: updated.procurement_quantity }
+                                      : {}),
+                                  }
+                                : p
+                            )
+                          )
+                        }
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {isLoadingWarehousesWithStock && (
               <p className="text-xs text-muted-foreground mb-2">Проверяем, где уже есть эти товары…</p>
