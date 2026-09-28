@@ -98,6 +98,26 @@ export interface ProjectResponse {
   contract_mode?: ContractMode;
   /** Когда выставлен contract_mode (ISO) — для подписи «Отмечено вручную · дата». */
   contract_mode_at?: string | null;
+  /**
+   * Досрочная бронь на складе, выставленная ПМ до отправки Комдиру
+   * (POST /projects/{id}/reserve-stock). Пока true, backend сам пересчитывает
+   * резерв при confirm ML-импорта. status позиций при этом не меняется —
+   * бронь живёт только на уровне проекта.
+   * ПРЕДПОЛОЖЕНИЕ: backend отдаёт pre_reserved (и, опционально, счётчики
+   * ниже) в GET /projects/{id}; старый backend их не присылает, тогда
+   * ProjectPage опирается на ответ reserve-stock/release-stock.
+   */
+  pre_reserved?: boolean;
+  reserved_quantity?: number | null;
+  required_quantity?: number | null;
+  /**
+   * ПРЕДЛОЖЕНИЕ для backend (поля пока нет): где лежит активная бронь.
+   * "project_items" — на позициях проекта (например, черновик после отказа
+   * Комдира: позиции остались от прошлого confirm), "ml_import" — на строках
+   * текущего черновика. По нему ProjectPage выбирает, какой release-stock
+   * вызывать: releaseDraftStock не видит резерв на ProjectItem.
+   */
+  reservation_scope?: "project_items" | "ml_import" | null;
 }
 
 const API_BASE = "/api/v1";
@@ -203,6 +223,12 @@ export interface MlImportItemResponse {
 
   created_at: string;
   updated_at: string | null;
+
+  // ПОДТВЕРЖДЕНО backend'ом: при правке строки (PATCH item / PUT
+  // kit-components) под активной бронью backend снимает её с этой строки и
+  // ставит true. Итогов брони в ответе нет — их берём отдельным
+  // перечитыванием проекта.
+  reservation_released?: boolean;
 
   // Опциональные — старый backend их ещё не отдаёт. Отсутствие трактуется
   // на фронте как is_kit=false / kit_components=[] (см. ProjectPage.tsx),
@@ -637,12 +663,23 @@ export async function createMlImportItem(
   }
 }
 
+// ПОДТВЕРЖДЕНО backend'ом: DELETE отвечает 204 без тела; если строка была
+// под бронью и бронь снята, признак приходит в заголовке
+// X-Reservation-Released: true. Если фронт и API на разных origin, backend
+// должен отдать его в Access-Control-Expose-Headers, иначе заголовок
+// не виден из браузера.
+export interface MlImportItemDeleteResponse {
+  reservation_released: boolean;
+}
+
 export async function deleteMlImportItem(
   importId: number,
   itemId: number,
-): Promise<void> {
+): Promise<MlImportItemDeleteResponse> {
   try {
-    await api.delete(`/ml-imports/${importId}/items/${itemId}`);
+    const response = await api.delete(`/ml-imports/${importId}/items/${itemId}`);
+    const header = response.headers?.["x-reservation-released"];
+    return { reservation_released: String(header).toLowerCase() === "true" };
   } catch (error) {
     throwWithDetail(error, "Не удалось удалить позицию");
   }
@@ -938,6 +975,61 @@ export async function sendProjectToDirector(projectId: number): Promise<Workflow
     `/projects/${projectId}/send-to-director`
   );
   return data;
+}
+
+// Досрочная бронь склада под проект до отправки Комдиру.
+// reserved_quantity — сколько единиц удалось забронировать, required_quantity —
+// сколько нужно проекту суммарно; при release-stock reserved_quantity = 0.
+export interface ProjectStockReservation {
+  reserved_quantity: number;
+  required_quantity: number;
+}
+
+export async function reserveProjectStock(projectId: number): Promise<ProjectStockReservation> {
+  try {
+    const { data } = await api.post<ProjectStockReservation>(
+      `/projects/${projectId}/reserve-stock`,
+    );
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось забронировать товары");
+  }
+}
+
+export async function releaseProjectStock(projectId: number): Promise<ProjectStockReservation> {
+  try {
+    const { data } = await api.post<ProjectStockReservation>(
+      `/projects/${projectId}/release-stock`,
+    );
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось отменить бронь");
+  }
+}
+
+// Бронь черновика: проект ещё не подтвердил ML-импорт, project_items нет,
+// поэтому бронь строится по строкам MlImportItem. Строки-комплекты backend
+// в резерв не включает. Ответ той же формы, что у reserve-stock проекта.
+export async function reserveDraftStock(mlImportId: number): Promise<ProjectStockReservation> {
+  try {
+    const { data } = await api.post<ProjectStockReservation>(
+      `/ml-imports/${mlImportId}/reserve-stock`,
+    );
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось забронировать товары");
+  }
+}
+
+export async function releaseDraftStock(mlImportId: number): Promise<ProjectStockReservation> {
+  try {
+    const { data } = await api.post<ProjectStockReservation>(
+      `/ml-imports/${mlImportId}/release-stock`,
+    );
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось отменить бронь");
+  }
 }
 
 export async function startProjectEditing(projectId: number): Promise<WorkflowResponse> {

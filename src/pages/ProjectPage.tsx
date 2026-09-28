@@ -8,7 +8,7 @@ import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
 import { fmt } from "../lib/format";
 import { INVOICES_INIT } from "../data/invoices";
 import { STOCK_INIT } from "../data/stock";
-import { AlertTriangle, Calculator, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText, ChevronDown, Plus, Pencil, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, Calculator, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText, ChevronDown, Plus, Pencil, Search, Trash2, PackageCheck } from "lucide-react";
 import {
   fetchProjectDetails,
   fetchProjectItems,
@@ -27,6 +27,10 @@ import {
   fetchProductsAvailability,
   startProjectEditing,
   sendProjectToDirector,
+  reserveProjectStock,
+  releaseProjectStock,
+  reserveDraftStock,
+  releaseDraftStock,
   approveProjectDirector,
   rejectProjectDirector,
   approveProjectClient,
@@ -40,6 +44,7 @@ import type {
   ProjectItem,
   ProjectResponse,
   ProjectItemResponse,
+  ProjectStockReservation,
   MlImportDetailResponse,
   MlImportItemResponse,
   MlImportItemCreate,
@@ -306,6 +311,17 @@ export function ProjectPagePM({
   projectId: number;
 })  {
   const [sending, setSending] = useState(false);
+
+  // Досрочная бронь (до отправки Комдиру). Источник истины — поля проекта
+  // (pre_reserved / reserved_quantity / required_quantity); локальные
+  // значения из ответа reserve-stock/release-stock нужны, пока backend не
+  // отдаёт их в GET /projects/{id}. Состояние живёт отдельно от mlImport и
+  // строк таблицы, поэтому бронь не перерисовывает 100+ строк.
+  const [reserving, setReserving] = useState<"reserve" | "release" | null>(null);
+  const [reservation, setReservation] = useState<ProjectStockReservation | null>(null);
+  const [preReservedLocal, setPreReservedLocal] = useState(false);
+  const [releaseDialogOpen, setReleaseDialogOpen] = useState(false);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
 
   const [project, setProject] = useState<ProjectResponse | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
@@ -674,6 +690,33 @@ export function ProjectPagePM({
     return updatedProject;
   };
 
+  // Backend может пересчитать бронь при confirm ML-импорта (если
+  // pre_reserved == true), поэтому после confirm перечитываем проект. Если
+  // проект счётчики не отдаёт, локальные цифры из прошлого reserve-stock
+  // уже устарели — сбрасываем их, бейдж покажет «Забронировано» без X из Y.
+  const refreshReservation = async (): Promise<ProjectResponse> => {
+    const updatedProject = await refreshProject();
+    setReservation(null);
+    return updatedProject;
+  };
+
+  const hasReservationCounts = (p: ProjectResponse) =>
+    p.reserved_quantity != null && p.required_quantity != null;
+
+  // Ответ на правку/удаление строки черновика под бронью: если backend
+  // снял бронь с этой строки (reservation_released в теле PATCH/PUT или
+  // заголовок X-Reservation-Released у DELETE) — сообщаем. Итогов брони в
+  // этих ответах нет, поэтому «Забронировано X из Y» обновляем отдельным
+  // перечитыванием проекта.
+  const applyReservationFeedback = (
+    feedback: { reservation_released?: boolean } | null | undefined,
+    itemName: string,
+  ) => {
+    if (!feedback?.reservation_released) return;
+    toast.warning(`Бронь по строке «${itemName}» снята из-за изменения`);
+    refreshReservation().catch(() => {});
+  };
+
   useEffect(() => {
     if (!mlImport) return;
     let cancelled = false;
@@ -753,6 +796,17 @@ export function ProjectPagePM({
   }, [resolvedProjectId, hasValidProjectId, isApproved, mlImport?.id, currentStatus]);
 
   const sent = isPendingDirector;
+
+  const preReserved = project?.pre_reserved ?? preReservedLocal;
+  // Локальные итоги (ответ reserve/release-stock или правки строки) свежее
+  // последнего снимка проекта; после перечитывания проекта они сбрасываются
+  // (см. hasReservationCounts) и источником становятся поля проекта.
+  const reservedQuantity =
+    reservation?.reserved_quantity ?? project?.reserved_quantity ?? null;
+  const requiredQuantity =
+    reservation?.required_quantity ?? project?.required_quantity ?? null;
+  const isFullyReserved =
+    reservedQuantity != null && requiredQuantity != null && reservedQuantity === requiredQuantity;
   // Генерация КП доступна, пока проект ожидает решения клиента.
   // После «Одобрено клиентом» проект переходит в отдельный статус
   // «Ожидание подписания» (index 4), поэтому кнопка больше не нужна.
@@ -772,6 +826,15 @@ export function ProjectPagePM({
   const isMlImportConfirmed = mlImport
     ? mlImport.status === "confirmed"
     : (project ? currentIndex >= 2 : false);
+
+  // Те же условия, что у «Отправить Комдиру»: бронь имеет смысл только
+  // пока проект ещё не ушёл на согласование.
+  // Бронь доступна и в черновике (по mlImport), и после подтверждения
+  // (по проекту) — isMlImportConfirmed тут не требуется; нужна только цель
+  // запроса: черновик импорта либо подтверждённый проект.
+  const isDraftReservation = mlImport != null && mlImport.status !== "confirmed";
+  const canManageReservation =
+    !isExpress && !sent && !isApproved && (isDraftReservation || isMlImportConfirmed);
 
   const FULL_STAGES = [
     { label: "Новый", done: currentIndex > 0, active: currentIndex === 0 },
@@ -843,6 +906,7 @@ export function ProjectPagePM({
         if (!current) return current;
         return { ...current, items: current.items.map((item) => item.id === updatedItem.id ? updatedItem : item) };
       });
+      applyReservationFeedback(updatedItem, updatedItem.input_product);
       // Строка-комплект: смена КОЛ-ВО меняет required_quantity каждого
       // компонента на backend (kit_components в ответе) — обновляем и
       // локальный kitComponentsByItemId, иначе buildKitSelectionsPayload на
@@ -1105,6 +1169,7 @@ export function ProjectPagePM({
       setKitSaving(true);
       setKitError(null);
       const updatedItem = await saveMlImportKitComponents(mlImport.id, kitPickerItem.id, components);
+      applyReservationFeedback(updatedItem, updatedItem.input_product);
 
       setMlImport((current) => {
         if (!current) return current;
@@ -1155,7 +1220,8 @@ export function ProjectPagePM({
     try {
       setDeletingItemId(item.id);
       setMlImportError(null);
-      await deleteMlImportItem(mlImport.id, item.id);
+      const deleteFeedback = await deleteMlImportItem(mlImport.id, item.id);
+      applyReservationFeedback(deleteFeedback, item.input_product);
       setMlImport((current) => {
         if (!current) return current;
         return { ...current, items: current.items.filter((row) => row.id !== item.id) };
@@ -1356,9 +1422,10 @@ export function ProjectPagePM({
       // Снимаем привязку первым запросом — форма уже заполнена значениями,
       // снятыми до сброса, поэтому данные не потеряются.
       if (unlinkBeforeCreate) {
-        await updateMlImportItem(mlImport.id, productModalItem.id, {
+        const unlinkedItem = await updateMlImportItem(mlImport.id, productModalItem.id, {
           selected_product_id: null,
         });
+        applyReservationFeedback(unlinkedItem, unlinkedItem.input_product);
       }
 
       const updatedItem = await createProductForMlImportItem(
@@ -1366,6 +1433,7 @@ export function ProjectPagePM({
         productModalItem.id,
         payload,
       );
+      applyReservationFeedback(updatedItem, updatedItem.input_product);
 
       setMlImport((current) => {
         if (!current) return current;
@@ -1491,6 +1559,9 @@ export function ProjectPagePM({
         );
       }
 
+      // Бейдж брони: при pre_reserved backend мог пересчитать резерв в confirm.
+      await refreshReservation();
+
       setMlImport(await getMlImport(mlImport.id));
     } catch (error) {
       setMlImportError(error instanceof Error ? error.message : "Не удалось подтвердить ML-импорт");
@@ -1527,7 +1598,7 @@ export function ProjectPagePM({
       );
       await sendProjectToDirector(project.id);
       onKpSent();
-      await refreshProject();
+      await refreshReservation();
       setMlImport(await getMlImport(mlImport.id));
     } catch (error) {
       setMlImportError(
@@ -1546,6 +1617,55 @@ export function ProjectPagePM({
     } finally {
       setConfirmingImport(false);
       setSending(false);
+    }
+  };
+
+  const handleReserveStock = async () => {
+    if (!project || reserving) return;
+    setReserving("reserve");
+    try {
+      // Черновик — бронь по строкам ML-импорта, подтверждённый — по проекту.
+      const result = isDraftReservation && mlImport
+        ? await reserveDraftStock(mlImport.id)
+        : await reserveProjectStock(project.id);
+      setReservation(result);
+      setPreReservedLocal(true);
+      // pre_reserved приходит с проектом, а не с ответом reserve-stock;
+      // сбой этого перечитывания не должен выглядеть как сбой брони.
+      // Если проект отдаёт итоги сам — они авторитетнее локальных.
+      await refreshProject()
+        .then((p) => { if (hasReservationCounts(p)) setReservation(null); })
+        .catch(() => {});
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось забронировать товары");
+    } finally {
+      setReserving(null);
+    }
+  };
+
+  const handleReleaseStock = async () => {
+    if (!project || reserving) return;
+    setReserving("release");
+    setReleaseError(null);
+    try {
+      // releaseDraftStock видит только бронь на строках черновика. Если
+      // бронь лежит на позициях проекта (черновик после отказа Комдира),
+      // снимать её нужно через проект — иначе backend ничего не снимет.
+      const releaseViaProject =
+        !(isDraftReservation && mlImport) || project.reservation_scope === "project_items";
+      const result = releaseViaProject
+        ? await releaseProjectStock(project.id)
+        : await releaseDraftStock(mlImport!.id);
+      setReservation(result);
+      setPreReservedLocal(false);
+      setReleaseDialogOpen(false);
+      await refreshProject()
+        .then((p) => { if (hasReservationCounts(p)) setReservation(null); })
+        .catch(() => {});
+    } catch (error) {
+      setReleaseError(error instanceof Error ? error.message : "Не удалось отменить бронь");
+    } finally {
+      setReserving(null);
     }
   };
 
@@ -1962,6 +2082,21 @@ export function ProjectPagePM({
                     </span>
                   )}
 
+                  {!isExpress && preReserved && (
+                    <span
+                      className={`flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full ring-1 ${
+                        isFullyReserved
+                          ? "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 ring-green-200"
+                          : "bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-amber-200"
+                      }`}
+                    >
+                      <PackageCheck size={12} />
+                      {reservedQuantity != null && requiredQuantity != null
+                        ? `Забронировано ${reservedQuantity.toLocaleString("ru-RU")} из ${requiredQuantity.toLocaleString("ru-RU")}`
+                        : "Забронировано"}
+                    </span>
+                  )}
+
                   {!isPastApprovalWindow && !isExpress && !isWarehouseRequest && (
                     <AppTooltip text={
                       !isMlImportConfirmed
@@ -1985,6 +2120,44 @@ export function ProjectPagePM({
                     </AppTooltip>
                   )}
 
+                  {canManageReservation && (
+                    preReserved ? (
+                      <button
+                        type="button"
+                        onClick={() => { setReleaseError(null); setReleaseDialogOpen(true); }}
+                        disabled={reserving !== null || sending}
+                        className="flex items-center gap-2 px-5 py-2.5 border border-border bg-card text-sm font-semibold text-foreground rounded-lg transition-[color,background-color,border-color,transform] duration-150 ease-out whitespace-nowrap enabled:hover:bg-red-50 enabled:hover:text-red-700 enabled:hover:border-red-200 dark:enabled:hover:bg-red-400/15 dark:enabled:hover:text-red-300 enabled:active:scale-[0.97] disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {reserving === "release" ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />}
+                        {reserving === "release" ? "Отмена брони…" : "Отменить бронь"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleReserveStock}
+                        disabled={reserving !== null || sending}
+                        className="flex items-center gap-2 px-5 py-2.5 border border-border bg-card text-sm font-semibold text-foreground rounded-lg transition-[color,background-color,transform] duration-150 ease-out whitespace-nowrap enabled:hover:bg-background enabled:active:scale-[0.97] disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {reserving === "reserve" ? <Loader2 size={14} className="animate-spin" /> : <PackageCheck size={14} />}
+                        {reserving === "reserve" ? "Бронирование…" : "Забронировать"}
+                      </button>
+                    )
+                  )}
+
+                  {releaseDialogOpen && (
+                    <ConfirmDialog
+                      title="Отменить бронь?"
+                      description="Товары, забронированные на складе под этот проект, вернутся в свободный остаток."
+                      confirmLabel="Отменить бронь"
+                      cancelLabel="Не отменять"
+                      tone="danger"
+                      loading={reserving === "release"}
+                      error={releaseError}
+                      onConfirm={handleReleaseStock}
+                      onCancel={() => { if (reserving === null) setReleaseDialogOpen(false); }}
+                    />
+                  )}
+
                   {!isExpress && (
                   <AppTooltip text={
                     !isMlImportConfirmed ? (isRejected ? "Сначала подтвердите изменённый импорт товаров" : "Сначала подтвердите импорт товаров") :
@@ -1992,7 +2165,7 @@ export function ProjectPagePM({
                   }>
                     <button
                       onClick={handleSendToDirector}
-                      disabled={!isMlImportConfirmed || sending || sent || isApproved}
+                      disabled={!isMlImportConfirmed || sending || reserving !== null || sent || isApproved}
                       className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-lg transition-[color,background-color,border-color,transform] duration-150 ease-out whitespace-nowrap ${
                           sent ? "bg-success text-success-foreground cursor-default" :
                           isApproved ? "bg-success/90 text-success-foreground cursor-default" :
@@ -2330,7 +2503,16 @@ export function ProjectPagePM({
                                 </td>
                                 {!isWarehouseRequest && (
                                   <td className="px-4 py-3">
-                                    <StockStatusBadge status={item.ml_status} />
+                                    {preReserved && kitStatus.isKit ? (
+                                      <span
+                                        title="Строки-комплекты не участвуют в брони — эта позиция не зарезервирована"
+                                        className="inline-flex items-center text-xs font-medium px-2.5 py-1 rounded-full bg-muted text-muted-foreground ring-1 ring-border whitespace-nowrap"
+                                      >
+                                        Комплект — без резерва
+                                      </span>
+                                    ) : (
+                                      <StockStatusBadge status={item.ml_status} />
+                                    )}
                                   </td>
                                 )}
                                 <td className="px-4 py-3">
