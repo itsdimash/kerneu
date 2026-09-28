@@ -1353,7 +1353,16 @@ function ShipmentDetailsModal({
   );
 }
 
-export function WarehousePage({ role, projectState }: { role: Role; projectState: ProjectState }) {
+export function WarehousePage({
+  role,
+  projectState,
+  onOpenProject,
+}: {
+  role: Role;
+  projectState: ProjectState;
+  /** Opens the project page — called after a project is reverted to editing. */
+  onOpenProject?: (projectId: number) => void;
+}) {
   const isWarehouseUser = role === "warehouse";
   const isPm = role === "pm" || role === "admin";
   // "director" — легаси-алиас commercial_director, см. ProjectPage.tsx:4071.
@@ -3248,6 +3257,9 @@ export function WarehousePage({ role, projectState }: { role: Role; projectState
                               prev.filter((p) => p.projectId !== proj.projectId),
                             );
                             await loadPendingShipments();
+                            if (role === "pm" || role === "commercial_director") {
+                              onOpenProject?.(proj.projectId);
+                            }
                           }}
                         />
                       </div>

@@ -324,6 +324,7 @@ export function AppShell({
               role={role}
               projectState={projectState}
               initialProjectId={selectedProjectId}
+              onOpenProject={handleFindProject}
             />
           )}
 
@@ -331,6 +332,7 @@ export function AppShell({
             <WarehousePage
             role={role}
             projectState={projectState}
+            onOpenProject={handleFindProject}
           />
         )}
 
