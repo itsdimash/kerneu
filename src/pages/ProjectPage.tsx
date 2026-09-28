@@ -56,6 +56,8 @@ import { StockStatusBadge } from "../app/components/common/StockStatusBadge";
 import { KitGroupHeaderRow } from "../app/components/common/KitGroupHeaderRow";
 import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
 import { FixProductButton } from "../app/components/common/FixProductButton";
+import { ConfirmDialog } from "../app/components/modals/ConfirmDialog";
+import { SupplySourceBadge, SupplySourceField, SupplySourceSelect } from "../app/components/common/SupplySourceControl";
 import { ML_STATUS_STYLES, NEW_PRODUCT_ML_STATUS, UNKNOWN_ML_STATUS_STYLE, normalizeMlStatus } from "../lib/stockStatus";
 import { groupEntriesByKit } from "../lib/kitGroups";
 
@@ -328,6 +330,8 @@ export function ProjectPagePM({
   const [expandedLiveKitGroups, setExpandedLiveKitGroups] = useState<Record<string, boolean>>({});
   const [updatingItemId, setUpdatingItemId] = useState<number | null>(null);
   const [deletingItemId, setDeletingItemId] = useState<number | null>(null);
+  // Строка черновика, ждущая подтверждения удаления (ConfirmDialog).
+  const [deleteMlItemTarget, setDeleteMlItemTarget] = useState<MlImportItemResponse | null>(null);
   // Ручное добавление позиции в черновик: форма живёт последней строкой
   // таблицы, дальше строка дозаполняется теми же инлайн-полями, что и
   // распарсенные — отдельная модалка дублировала бы их без пользы.
@@ -1129,13 +1133,24 @@ export function ProjectPagePM({
 
   // Удаление строки черновика. ProjectItem при этом не затрагиваются:
   // позиции проекта создаются только при подтверждении импорта.
-  const handleMlItemDelete = async (item: MlImportItemResponse) => {
+  // Клик по корзине только открывает подтверждение — само удаление в
+  // confirmMlItemDelete.
+  const handleMlItemDelete = (item: MlImportItemResponse) => {
     if (!mlImport || mlImport.status !== "draft" || item.is_confirmed) return;
+    setDeleteMlItemTarget(item);
+  };
 
-    const confirmed = window.confirm(
-      `Удалить строку «${item.input_product}»? Действие нельзя отменить.`,
-    );
-    if (!confirmed) return;
+  const closeMlItemDeleteDialog = () => {
+    if (deletingItemId !== null) return;
+    setDeleteMlItemTarget(null);
+  };
+
+  const confirmMlItemDelete = async () => {
+    const item = deleteMlItemTarget;
+    if (!item || !mlImport || mlImport.status !== "draft" || item.is_confirmed) {
+      setDeleteMlItemTarget(null);
+      return;
+    }
 
     try {
       setDeletingItemId(item.id);
@@ -1156,6 +1171,8 @@ export function ProjectPagePM({
       setMlImportError(error instanceof Error ? error.message : "Не удалось удалить строку");
     } finally {
       setDeletingItemId(null);
+      // Ошибка (если была) показывается баннером mlImportError над таблицей.
+      setDeleteMlItemTarget(null);
     }
   };
 
@@ -2050,6 +2067,7 @@ export function ProjectPagePM({
                           <td className={`px-4 py-3 text-sm text-foreground ${isKitComponent ? "pl-8 border-l-2 border-border/60" : ""}`}>
                             <div className="flex items-center gap-1.5">
                               <span>{item.product?.name ?? "—"}</span>
+                              <SupplySourceBadge source={item.supply_source} />
                               {!isKitComponent && (
                                 <FixProductButton
                                   projectId={resolvedProjectId}
@@ -2086,6 +2104,18 @@ export function ProjectPagePM({
                                 <span title="Изменено Комдиром">
                                   <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
                                 </span>
+                              )}
+                              {!isKitComponent && (
+                                <SupplySourceSelect
+                                  projectId={resolvedProjectId}
+                                  itemId={item.id}
+                                  value={item.supply_source}
+                                  onUpdated={(updated) => {
+                                    setLiveItems((current) =>
+                                      current.map((existing) => existing.id === updated.id ? updated : existing),
+                                    );
+                                  }}
+                                />
                               )}
                             </div>
                           </td>
@@ -2203,8 +2233,8 @@ export function ProjectPagePM({
                     <thead>
                       <tr className="border-b border-border bg-background/60">
                         {(isWarehouseRequest
-                          ? ["№", "Наименование", "Кол-во", "Совпавший товар", "Ед.", "Доступно", "Комментарий", "Статус", ""]
-                          : ["№", "Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Цена", "Сумма", "Доступно", "Комментарий", "Статус", ""]
+                          ? ["№", "Наименование", "Кол-во", "Совпавший товар", "Ед.", "Доступно", "Комментарий", "Источник", "Статус", ""]
+                          : ["№", "Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Цена", "Сумма", "Доступно", "Комментарий", "Источник", "Статус", ""]
                         ).map((heading, headingIndex) => (
                           <th key={heading || `actions-${headingIndex}`} className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{heading}</th>
                         ))}
@@ -2212,10 +2242,10 @@ export function ProjectPagePM({
                     </thead>
                     <tbody className="divide-y divide-border">
                       {mlImport.items.length === 0 && !isAddingRow && (
-                        <tr><td colSpan={isWarehouseRequest ? 9 : 11} className="px-4 py-10 text-center text-sm text-muted-foreground">В ML-импорте нет товаров</td></tr>
+                        <tr><td colSpan={isWarehouseRequest ? 10 : 12} className="px-4 py-10 text-center text-sm text-muted-foreground">В ML-импорте нет товаров</td></tr>
                       )}
                       {mlImport.items.length > 0 && visibleMlImportItems.length === 0 && (
-                        <tr><td colSpan={isWarehouseRequest ? 9 : 11} className="px-4 py-10 text-center text-sm text-muted-foreground">Совпадений не найдено</td></tr>
+                        <tr><td colSpan={isWarehouseRequest ? 10 : 12} className="px-4 py-10 text-center text-sm text-muted-foreground">Совпадений не найдено</td></tr>
                       )}
                       {visibleMlImportItems.map(({ item, index }) => {
                           const isUpdating = updatingItemId === item.id;
@@ -2272,8 +2302,12 @@ export function ProjectPagePM({
                           return (
                               <tr key={item.id} className={`transition-colors ${statusStyle.row} ${isDeleting ? "opacity-50" : ""}`}>
                                 <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
-                                <td className="px-4 py-3"><p
-                                    className="text-sm font-medium text-foreground">{item.input_product}</p></td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-1.5">
+                                    <p className="text-sm font-medium text-foreground">{item.input_product}</p>
+                                    <SupplySourceBadge source={item.supply_source} />
+                                  </div>
+                                </td>
                                 <td className="px-4 py-3">
                                   <input
                                       key={`${item.id}-quantity-${item.final_quantity ?? item.input_quantity}`}
@@ -2631,6 +2665,18 @@ export function ProjectPagePM({
                                   />
                                 </td>
                                 <td className="px-4 py-3">
+                                  {item.is_kit ? (
+                                    <span className="text-xs text-muted-foreground">—</span>
+                                  ) : (
+                                    <SupplySourceField
+                                      value={item.supply_source}
+                                      disabled={mlImport.status !== "draft" || item.is_confirmed}
+                                      saving={isUpdating}
+                                      onChange={(next) => handleMlItemUpdate(item.id, { supply_source: next })}
+                                    />
+                                  )}
+                                </td>
+                                <td className="px-4 py-3">
                                   {isUpdating ? (
                                       <Loader2
                                           size={16}
@@ -2759,7 +2805,7 @@ export function ProjectPagePM({
                                 className="w-24 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
                             />
                           </td>
-                          <td colSpan={isWarehouseRequest ? 5 : 7} className="px-4 py-3 text-xs text-muted-foreground">
+                          <td colSpan={isWarehouseRequest ? 6 : 8} className="px-4 py-3 text-xs text-muted-foreground">
                             Товар из каталога и цену продажи укажите в самой строке
                             после её создания.
                           </td>
@@ -2907,6 +2953,17 @@ export function ProjectPagePM({
                 </>
             )}
         </div>
+
+        {deleteMlItemTarget && (
+          <ConfirmDialog
+            title="Удалить строку?"
+            description={`Удалить строку «${deleteMlItemTarget.input_product}»? Действие нельзя отменить.`}
+            confirmLabel="Удалить"
+            loading={deletingItemId === deleteMlItemTarget.id}
+            onConfirm={confirmMlItemDelete}
+            onCancel={closeMlItemDeleteDialog}
+          />
+        )}
 
         {productModalItem && (
           <div
@@ -3747,6 +3804,7 @@ const [itemSaveError, setItemSaveError] =
                     <td className={`px-4 py-3 text-sm text-foreground ${isKitComponent ? "pl-8 border-l-2 border-border/60" : ""}`}>
                       <div className="flex items-center gap-1.5">
                         <span>{item.product?.name ?? "—"}</span>
+                        <SupplySourceBadge source={item.supply_source} />
                         {!isKitComponent && (
                           <FixProductButton
                             projectId={resolvedProjectId}
