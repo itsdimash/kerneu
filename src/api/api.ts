@@ -66,6 +66,11 @@ export const fetchDashboardStats = async (): Promise<DashboardStats> => {
   return await response.json();
 };
 
+// Как оформлен договор по проекту: null — ещё никак, "uploaded" — загружен
+// файл, "no_contract" — PM/бухгалтер/директор отметил, что договора не будет
+// (файла-заглушки в архиве документов при этом нет).
+export type ContractMode = "uploaded" | "no_contract" | null;
+
 export interface ProjectResponse {
   id: number;
   name?: string;
@@ -90,6 +95,9 @@ export interface ProjectResponse {
    * и укорачивают степпер (клиент и подписание договора не нужны).
    */
   is_warehouse_request?: boolean;
+  contract_mode?: ContractMode;
+  /** Когда выставлен contract_mode (ISO) — для подписи «Отмечено вручную · дата». */
+  contract_mode_at?: string | null;
 }
 
 const API_BASE = "/api/v1";
@@ -2192,6 +2200,14 @@ export const markContractUploaded = async (
   projectId: string | number,
 ): Promise<void> => {
   await api.post(`/projects/${projectId}/contract-uploaded`);
+};
+
+// «Без договора»: договора по сделке не будет. Тело пустое, файл не нужен —
+// бэкенд сам выставляет contract_mode = "no_contract" и двигает статус проекта.
+export const markNoContract = async (
+  projectId: string | number,
+): Promise<void> => {
+  await api.post(`/projects/${projectId}/no-contract`);
 };
 
 export async function resolveDefectReplacement(

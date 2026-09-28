@@ -7,15 +7,18 @@ import {
   CheckCircle2,
   ChevronDown,
   FileText,
+  FileX,
   Loader2,
   ShoppingCart,
   X,
 } from "lucide-react";
 import { documentsStore } from "../store/documentsStore";
+import { DocStatusPill } from "../app/components/common/DocStatusPill";
 import {
   fetchProjectDocuments,
   generateContract,
   type ContractGenerateRequest,
+  type ContractMode,
 } from "../api/api";
 
 /* ------------------------------------------------------------------ */
@@ -49,6 +52,10 @@ interface ContractApiProject {
   name: string | null;
   client: { client_name: string } | null;
   items: ApiProjectItem[];
+  // Есть в ProjectResponse; если эндпоинт /projects/contracts их не отдаёт,
+  // загрузка ниже добирает их точечным запросом проекта.
+  contract_mode?: ContractMode;
+  contract_mode_at?: string | null;
 }
 
 interface SpecItem {
@@ -64,6 +71,11 @@ interface ContractProject {
   name: string;
   client: string;
   contractUploaded: boolean;
+  // «Без договора» (project.contract_mode === "no_contract"): файла в архиве
+  // нет, этап договора считается закрытым. Источник — поле проекта, а не
+  // наличие файла.
+  contractSkipped: boolean;
+  skippedDate?: string;
   fileName?: string;
   uploadDate?: string;
   items: SpecItem[];
@@ -79,6 +91,10 @@ function mapApiProject(p: ContractApiProject): ContractProject {
     name: p.name ?? `Проект #${p.id}`,
     client: p.client?.client_name ?? "—",
     contractUploaded: false,
+    contractSkipped: p.contract_mode === "no_contract",
+    skippedDate: p.contract_mode_at
+      ? new Date(p.contract_mode_at).toLocaleDateString("ru-RU")
+      : undefined,
     items: p.items.map((item, index) => ({
       no: index + 1,
       name: item.product?.name ?? "—",
@@ -513,6 +529,27 @@ export function ContractPage({
           data.map(async (apiProject) => {
             const project = mapApiProject(apiProject);
 
+            // Список /projects/contracts мог не отдать contract_mode вовсе
+            // (undefined, а не null) — тогда уточняем по самому проекту,
+            // иначе «Без договора» выглядело бы как «Договор не загружен».
+            if (apiProject.contract_mode === undefined) {
+              try {
+                const detailsRes = await fetch(`${API_BASE}/projects/${project.id}`, { credentials: "include" });
+                if (detailsRes.ok) {
+                  const details = (await detailsRes.json()) as {
+                    contract_mode?: ContractMode;
+                    contract_mode_at?: string | null;
+                  };
+                  project.contractSkipped = details.contract_mode === "no_contract";
+                  project.skippedDate = details.contract_mode_at
+                    ? new Date(details.contract_mode_at).toLocaleDateString("ru-RU")
+                    : undefined;
+                }
+              } catch (err) {
+                console.error(`Не удалось получить contract_mode проекта ${project.id}`, err);
+              }
+            }
+
             try {
               // Fetch real documents from the server to check if a contract exists
               const docs = await fetchProjectDocuments(project.id);
@@ -592,8 +629,8 @@ export function ContractPage({
                 className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left hover:bg-background/60 transition-colors"
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${project.contractUploaded ? "bg-green-50 dark:bg-green-400/15" : "bg-blue-50 dark:bg-blue-400/15"}`}>
-                    <Building2 size={16} className={project.contractUploaded ? "text-green-600 dark:text-green-400" : "text-primary"} />
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${project.contractSkipped ? "bg-muted" : project.contractUploaded ? "bg-green-50 dark:bg-green-400/15" : "bg-blue-50 dark:bg-blue-400/15"}`}>
+                    <Building2 size={16} className={project.contractSkipped ? "text-muted-foreground" : project.contractUploaded ? "text-green-600 dark:text-green-400" : "text-primary"} />
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">{project.name}</p>
@@ -602,7 +639,9 @@ export function ContractPage({
                 </div>
 
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  {project.contractUploaded ? (
+                  {project.contractSkipped ? (
+                    <DocStatusPill status="no_contract" />
+                  ) : project.contractUploaded ? (
                     <span className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 dark:bg-green-400/20 rounded-full">
                       <CheckCircle2 size={13} className="text-green-600 dark:text-green-400" />
                       <span className="text-xs font-medium text-green-700 dark:text-green-300">Договор загружен</span>
@@ -624,7 +663,7 @@ export function ContractPage({
                     </span>
                   )}
 
-                  {project.contractUploaded && (
+                  {(project.contractUploaded || project.contractSkipped) && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -641,8 +680,21 @@ export function ContractPage({
                 </div>
               </button>
 
+              {/* «Без договора»: файла нет, показываем нейтральную полосу с датой отметки */}
+              {project.contractSkipped && (
+                <div className="flex items-center px-5 py-2 bg-muted border-t border-border">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileX size={13} className="text-muted-foreground flex-shrink-0" />
+                    <span className="text-xs text-muted-foreground truncate">Договор не требуется — отмечено вручную</span>
+                    {project.skippedDate && (
+                      <span className="text-xs text-muted-foreground flex-shrink-0">· {project.skippedDate}</span>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Uploaded-file strip */}
-              {project.contractUploaded && (
+              {project.contractUploaded && !project.contractSkipped && (
                 <div className="flex items-center justify-between px-5 py-2 bg-success-muted border-t border-success/20">
                   <div className="flex items-center gap-2 min-w-0">
                     <FileText size={13} className="text-success flex-shrink-0" />
