@@ -834,7 +834,7 @@ export function ProjectPagePM({
   // запроса: черновик импорта либо подтверждённый проект.
   const isDraftReservation = mlImport != null && mlImport.status !== "confirmed";
   const canManageReservation =
-    !isExpress && !sent && !isApproved && (isDraftReservation || isMlImportConfirmed);
+    !sent && !isApproved && (isDraftReservation || isMlImportConfirmed);
 
   const FULL_STAGES = [
     { label: "Новый", done: currentIndex > 0, active: currentIndex === 0 },
@@ -2082,7 +2082,7 @@ export function ProjectPagePM({
                     </span>
                   )}
 
-                  {!isExpress && preReserved && (
+                  {preReserved && (
                     <span
                       className={`flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full ring-1 ${
                         isFullyReserved
