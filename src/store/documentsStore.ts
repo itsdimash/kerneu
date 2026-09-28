@@ -1,4 +1,4 @@
-import type { ProjectDocumentResponse, DocumentReviewResponse } from "../api/api";
+import type { ProjectDocumentResponse, DocumentReviewResponse, ContractMode } from "../api/api";
 import {
   fetchDocumentsReviewStatus,
   submitDocumentsForReview,
@@ -14,7 +14,10 @@ export type DocCategory =
   | "invoice"
   | "waybill"
   | "payment_invoice"; // счёт на оплату клиенту (не путать с "invoice" — закупочным счётом от поставщика)
-export type DocStatus = "pending" | "uploaded" | "generated" | "approved" | "rejected";
+// "no_contract" — не статус документа из API (документа в этом случае нет),
+// а производное состояние строки «Договор» при project.contract_mode ===
+// "no_contract". Из бэкенда не приходит, собирается на странице «Документы».
+export type DocStatus = "pending" | "uploaded" | "generated" | "approved" | "rejected" | "no_contract";
 
 export interface ProjectDocument {
   id: string;
@@ -33,6 +36,8 @@ export interface ProjectSummary {
   name: string;
   contractSigned: boolean;
   statusName: string;
+  contractMode?: ContractMode;
+  contractModeAt?: string | null;
 }
 
 // ИЗМЕНЕНО: шаг бухгалтера убран из цепочки согласования документов —

@@ -21,6 +21,17 @@ interface OnecDocumentSearchModalProps {
   onLinked: (doc: ProjectDocumentResponse) => void;
 }
 
+// БИН/ИИН в Казахстане — ровно 12 цифр.
+const BIN_IIN_LENGTH = 12;
+
+// Всё, что не цифра, отбрасываем сразу при вводе/вставке — буквы, пробелы и
+// дефисы (например, из «123 456 789 012», скопированного из документа) в
+// поле просто не попадают. Не обрезаем по длине: вставка 13+ цифр должна
+// показать ошибку «слишком много», а не молча потерять хвост.
+function digitsOnly(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
 function isoDaysAgo(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() - days);
@@ -54,7 +65,11 @@ export function OnecDocumentSearchModal({
   defaultBinIin,
   onLinked,
 }: OnecDocumentSearchModalProps) {
-  const [binIin, setBinIin] = useState(defaultBinIin);
+  const [binIin, setBinIin] = useState(() => digitsOnly(defaultBinIin));
+  // Ошибку «слишком мало» показываем только после ухода из поля — пока
+  // человек ещё печатает, красная рамка на 3-й цифре из 12 — это шум.
+  // «Слишком много» показывается сразу, т.к. это уже точно ошибка.
+  const [binIinTouched, setBinIinTouched] = useState(false);
   const [dateFrom, setDateFrom] = useState(() => isoDaysAgo(90));
   const [dateTo, setDateTo] = useState(() => todayIso());
   const [loading, setLoading] = useState(false);
@@ -68,7 +83,8 @@ export function OnecDocumentSearchModal({
   // между "Из 1С" на разных карточках — накладная/доверенность/счёт).
   useEffect(() => {
     if (!open) return;
-    setBinIin(defaultBinIin);
+    setBinIin(digitsOnly(defaultBinIin));
+    setBinIinTouched(false);
     setDateFrom(isoDaysAgo(90));
     setDateTo(todayIso());
     setSearched(false);
@@ -79,16 +95,25 @@ export function OnecDocumentSearchModal({
 
   if (!open) return null;
 
+  const binIinLength = binIin.length;
+  const binIinValid = binIinLength === BIN_IIN_LENGTH;
+  const binIinTooLong = binIinLength > BIN_IIN_LENGTH;
+  const showBinIinError = !binIinValid && (binIinTooLong || (binIinTouched && binIinLength > 0));
+  // Пустое поле после ухода из него — тоже ошибка, но с прежним текстом
+  // из handleSearch («Укажите…»), а не счётчиком «0 из 12».
+  const showBinIinEmptyError = binIinTouched && binIinLength === 0;
+  const binIinInvalidVisible = showBinIinError || showBinIinEmptyError;
+
   const handleSearch = async () => {
-    if (!binIin.trim()) {
-      setError("Укажите БИН или ИИН контрагента");
+    if (!binIinValid) {
+      setBinIinTouched(true);
       return;
     }
     setLoading(true);
     setError(null);
     setLinkError(null);
     try {
-      const results = await searchOnecDocuments(docType, binIin.trim(), dateFrom, dateTo);
+      const results = await searchOnecDocuments(docType, binIin, dateFrom, dateTo);
       setCandidates(results);
     } catch (err) {
       setCandidates([]);
@@ -142,15 +167,48 @@ export function OnecDocumentSearchModal({
 
         <div className="mt-4 space-y-3">
           <div>
-            <label className="text-xs font-medium text-muted-foreground">БИН/ИИН контрагента</label>
+            <label htmlFor="onec-bin-iin" className="text-xs font-medium text-muted-foreground">БИН/ИИН контрагента</label>
             <input
+              id="onec-bin-iin"
               type="text"
               value={binIin}
-              onChange={(e) => setBinIin(e.target.value)}
+              onChange={(e) => setBinIin(digitsOnly(e.target.value))}
+              onBlur={() => setBinIinTouched(true)}
               placeholder="12 цифр"
               inputMode="numeric"
-              className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+              autoComplete="off"
+              aria-invalid={binIinInvalidVisible}
+              aria-describedby="onec-bin-iin-hint"
+              className={`mt-1 w-full rounded-lg border bg-background px-3 py-2 text-sm tabular-nums outline-none transition-[border-color,box-shadow] duration-150 ease-out-strong focus:ring-2 ${
+                binIinInvalidVisible
+                  ? "border-destructive focus:ring-destructive/20"
+                  : "border-border focus:border-primary/50 focus:ring-ring/20"
+              }`}
             />
+            {/* Строка подсказки занимает место всегда (min-h), а текст ошибки
+                только гасится по opacity — иначе появление/исчезновение
+                ошибки сдвигало бы поля дат и кнопку на каждом изменении. */}
+            <div id="onec-bin-iin-hint" className="mt-1 flex min-h-4 items-center justify-between gap-2 text-xs">
+              <span
+                aria-hidden={!binIinInvalidVisible}
+                className={`text-destructive transition-opacity duration-150 ease-out-strong ${
+                  binIinInvalidVisible ? "opacity-100" : "opacity-0"
+                }`}
+              >
+                {showBinIinEmptyError
+                  ? "Укажите БИН или ИИН контрагента"
+                  : binIinTooLong
+                  ? "БИН/ИИН должен содержать 12 цифр — уберите лишние"
+                  : "БИН/ИИН должен содержать 12 цифр"}
+              </span>
+              <span
+                className={`flex-shrink-0 tabular-nums transition-colors duration-150 ease-out-strong ${
+                  binIinInvalidVisible ? "text-destructive" : binIinValid ? "text-success" : "text-muted-foreground"
+                }`}
+              >
+                {binIinLength} из {BIN_IIN_LENGTH}
+              </span>
+            </div>
           </div>
           <div className="flex gap-3">
             <div className="flex-1">
@@ -176,8 +234,8 @@ export function OnecDocumentSearchModal({
           <button
             type="button"
             onClick={handleSearch}
-            disabled={loading}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+            disabled={loading || !binIinValid}
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-[background-color,opacity,transform] duration-150 ease-out-strong hover:bg-primary/90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60 disabled:active:scale-100"
           >
             {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
             {loading ? "Ищем в 1С…" : "Искать"}

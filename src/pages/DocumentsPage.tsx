@@ -1,6 +1,10 @@
 import { useEffect, useState, useRef, useSyncExternalStore } from "react";
+import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
+import { DocumentDropzone } from "../app/components/common/DocumentDropzone";
+import { DocStatusPill, docStatusLabel } from "../app/components/common/DocStatusPill";
+import { OnecImportButton } from "../app/components/common/OnecImportButton";
 import type { Page, ProjectState, Role } from "../types";
 import {
   CheckCircle2, Clock, Download, Loader2, Upload, Check, FileCheck,
@@ -18,12 +22,17 @@ import {
   uploadProjectDocument,
   deleteProjectDocument,
   markContractUploaded,
+  markNoContract,
+  type ContractMode,
   type ProjectDocumentResponse,
 } from "../api/api";
 import { type OnecDocType } from "../api/onec";
 import { OnecDocumentSearchModal } from "./OnecDocumentSearchModal";
 
 const API_BASE = "/api/v1";
+
+// Тот же изгиб, что и --ease-out-strong в theme.css (как в BackgroundJobsToast).
+const EASE_OUT_STRONG = [0.23, 1, 0.32, 1] as const;
 
 type ProjectApiItem = {
   id: number;
@@ -32,11 +41,47 @@ type ProjectApiItem = {
   status_name?: string;
   status?: string | { status_name?: string };
   is_express?: boolean;
+  contract_mode?: ContractMode;
+  contract_mode_at?: string | null;
 };
 
 // ИЗМЕНЕНО: шаг бухгалтера убран из цепочки согласования документов —
 // теперь единственный согласующий это директор.
 const REVIEWER_ROLES: Role[] = ["commercial_director"];
+
+type StageTone = "info" | "success" | "warning" | "neutral";
+
+// Шесть баннеров состояния на странице были собраны вручную и разъехались:
+// разные отступы (items-center/items-start), разные оттенки рамки
+// (blue-100 против amber-200), сырые цвета вместо токенов темы. Теперь один
+// компонент на токенах — как InfoBanner в common/, но с заголовком и
+// подписью, которые здесь нужны.
+const STAGE_TONE: Record<StageTone, { box: string; title: string; hint: string; icon: string }> = {
+  info:    { box: "bg-info-muted border-info/25",         title: "text-info",    hint: "text-muted-foreground", icon: "text-info" },
+  success: { box: "bg-success-muted border-success/25",   title: "text-success", hint: "text-success",         icon: "text-success" },
+  warning: { box: "bg-warning-muted border-warning/25",   title: "text-warning", hint: "text-warning",         icon: "text-warning" },
+  neutral: { box: "bg-muted border-border",               title: "text-foreground", hint: "text-muted-foreground", icon: "text-muted-foreground" },
+};
+
+function StageBanner({
+  tone, icon: Icon, title, hint,
+}: {
+  tone: StageTone;
+  icon: typeof Clock;
+  title: string;
+  hint?: string;
+}) {
+  const t = STAGE_TONE[tone];
+  return (
+    <div className={`flex items-start gap-2.5 px-4 py-3 mb-4 rounded-lg border animate-in fade-in slide-in-from-top-1 duration-300 ease-out-strong ${t.box}`}>
+      <Icon size={16} className={`flex-shrink-0 mt-0.5 ${t.icon}`} />
+      <div className="min-w-0">
+        <p className={`text-sm font-medium ${t.title}`}>{title}</p>
+        {hint && <p className={`text-xs mt-0.5 leading-relaxed ${t.hint}`}>{hint}</p>}
+      </div>
+    </div>
+  );
+}
 
 const ROLE_LABEL: Record<Rejector, string> = {
   accountant: "бухгалтер",
@@ -56,6 +101,31 @@ const SIGNED_STATUSES = [
   "Ожидание клиента",
   "Завершен",
 ];
+
+function normalizeProject(item: ProjectApiItem): ProjectSummary {
+  const statusName =
+    typeof item.status === "string"
+      ? item.status
+      : item.status?.status_name ?? item.status_name ?? "";
+
+  return {
+    id: String(item.id),
+    name: item.name,
+    statusName,
+    // ИЗМЕНЕНО: было
+    //   contractSigned:
+    //     item.contract_signed === true ||
+    //     statusName === "Активный закуп" ||
+    //     statusName === "Завершен",
+    // Стало — проверяем вхождение в список всех статусов "после подписания":
+    contractSigned:
+      item.contract_signed === true ||
+      SIGNED_STATUSES.includes(statusName),
+    isExpress: item.is_express === true,
+    contractMode: item.contract_mode ?? null,
+    contractModeAt: item.contract_mode_at ?? null,
+  };
+}
 
 export function DocumentsPage({
   onNavigate,
@@ -142,28 +212,7 @@ export function DocumentsPage({
         }
 
         const data = (await response.json()) as ProjectApiItem[];
-        const normalizedProjects = data.map((item) => {
-          const statusName =
-            typeof item.status === "string"
-              ? item.status
-              : item.status?.status_name ?? item.status_name ?? "";
-
-          return {
-            id: String(item.id),
-            name: item.name,
-            statusName,
-            // ИЗМЕНЕНО: было
-            //   contractSigned:
-            //     item.contract_signed === true ||
-            //     statusName === "Активный закуп" ||
-            //     statusName === "Завершен",
-            // Стало — проверяем вхождение в список всех статусов "после подписания":
-            contractSigned:
-              item.contract_signed === true ||
-              SIGNED_STATUSES.includes(statusName),
-            isExpress: item.is_express === true,
-          };
-        });
+        const normalizedProjects = data.map(normalizeProject);
 
         if (cancelled) return;
 
@@ -367,6 +416,20 @@ export function DocumentsPage({
     role === "commercial_director";
 
   const contractDoc = allDocs.find(d => d.category === "contract");
+
+  // contract_mode приходит с проекта, а не из списка документов: при «Без
+  // договора» бэкенд больше не создаёт Document-заглушку, так что по одному
+  // архиву документов этот случай не отличить от «договора ещё нет».
+  const contractMode = selectedProject?.contractMode ?? null;
+  const contractSkipped = contractMode === "no_contract";
+  const contractHasFile = contractDoc?.status === "uploaded";
+  // Для прогресса, разблокировки доверенностей/накладных и кнопки «Без
+  // договора» этап договора закрыт в обоих случаях. Для ВИДА карточки
+  // разница есть — там смотрим на contractSkipped / contractHasFile отдельно.
+  const contractUploaded = contractHasFile || contractSkipped;
+  const contractSkippedDate = selectedProject?.contractModeAt
+    ? new Date(selectedProject.contractModeAt).toLocaleDateString("ru-RU")
+    : "";
   const poaDocs     = allDocs.filter(d => d.category === "power_of_attorney");
   const waybillDocs = allDocs.filter(d => d.category === "waybill");
   const invoiceDocs = allDocs.filter(d => d.category === "invoice");
@@ -389,7 +452,7 @@ export function DocumentsPage({
   // накладные оставались заблокированы навсегда. Теперь достаточно факта
   // загрузки файла; backend-статус остаётся как запасной сигнал.
   const contractSigned =
-    contractDoc?.status === "uploaded" ||
+    contractUploaded ||
     (selectedProject?.contractSigned ?? projectState.contractSigned);
   const uploadsLocked = !contractSigned;
 
@@ -451,7 +514,14 @@ export function DocumentsPage({
     required: false,
   };
 
-  const displayDocs = [...allDocs];
+  // Строка договора при «Без договора»: файла в архиве нет, поэтому в списке
+  // остаётся только сеяная запись стора (status "pending") — показываем её как
+  // «Без договора» с датой отметки, а не как вечное «Ожидается».
+  const displayDocs = allDocs.map(doc =>
+    doc.category === "contract" && contractSkipped
+      ? { ...doc, status: "no_contract" as DocStatus, date: contractSkippedDate }
+      : doc
+  );
   if (poaDocs.length === 0) displayDocs.push(poaPlaceholder);
   // ИСПРАВЛЕНО: не показываем "Счета на оплату" как ожидающий документ,
   // если закупка для проекта вообще не нужна (весь товар со склада) —
@@ -465,7 +535,6 @@ export function DocumentsPage({
   // проекта (см. requiredDocCount/doneDocCount ниже).
   if (paymentInvoiceDocs.length === 0) displayDocs.push(paymentInvoicePlaceholder);
 
-  const contractUploaded = contractDoc?.status === "uploaded";
   const poaUploaded      = poaDocs.some(d => d.status === "uploaded");
   const hasWaybill       = waybillDocs.some(d => d.status === "uploaded");
   const hasInvoice       = invoiceDocs.some(d => d.status === "uploaded");
@@ -486,6 +555,11 @@ export function DocumentsPage({
     hasWaybill,
   ].filter(Boolean).length;
   const allUploaded = doneDocCount === requiredDocCount;
+  const remainingDocCount = Math.max(requiredDocCount - doneDocCount, 0);
+  // Доверенность/накладную нельзя ни загрузить, ни заменить, пока документы
+  // на проверке, после согласования и после завершения проекта — зоны
+  // загрузки в этих состояниях просто не показываем (как и раньше).
+  const showManualUploadZones = !reviewInFlight && reviewStage !== "approved" && !completed;
   const canComplete = allUploaded && reviewStage === "approved" && !completed;
 
   // РЕСТРИКЦИЯ ПО СТАТУСУ ВОЗВРАЩЕНА (2026-09-26, по итогам разговора с
@@ -502,15 +576,23 @@ export function DocumentsPage({
     ? "Отправка доступна только на этапе «Ожидание документов»"
     : "";
 
+  // Чек-лист справа: те же три шага, что были инлайном в разметке, но
+  // вынесены, чтобы рядом с ними считался прогресс (doneStepCount) для
+  // счётчика и success-подсветки карточки.
+  const reviewSteps = [
+    { label: "Документы загружены", done: allUploaded },
+    { label: "Директор подтвердил", done: reviewStage === "approved" },
+    { label: "Проект завершён",     done: completed },
+  ];
+  const doneStepCount = reviewSteps.filter(step => step.done).length;
+  const allStepsDone = doneStepCount === reviewSteps.length;
+
   const [submittingReview, setSubmittingReview] = useState(false);
   const [decidingReview,   setDecidingReview]   = useState(false);
   const [completing,       setCompleting]       = useState(false);
   const [rejectDraft,      setRejectDraft]      = useState("");
   const [showRejectBox,    setShowRejectBox]    = useState(false);
 
-  const poaFileRef = useRef<HTMLInputElement>(null);
-  const waybillFileRef = useRef<HTMLInputElement>(null);
-  const paymentInvoiceFileRef = useRef<HTMLInputElement>(null);
   const contractFileRef = useRef<HTMLInputElement>(null);
 
   const today = () => new Date().toLocaleDateString("ru-RU");
@@ -607,71 +689,82 @@ export function DocumentsPage({
     }
   };
 
-  const handlePoaDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
+  // DocumentDropzone сам разбирает drop/клик/клавиатуру и отдаёт готовый
+  // файл — здесь остаётся только та же проверка блокировки, что была в
+  // handlePoaDrop/handlePoaInput, и вызов загрузки.
+  const handlePoaFile = (file: File) => {
     if (docsLocked || uploadingPoa) return;
-    const file = e.dataTransfer.files?.[0];
-    if (file) await handleDocUpload(file, "power_of_attorney", "Доверенность", poaDocs.length, setUploadingPoa);
-  };
-  const handlePoaInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (docsLocked || uploadingPoa) return;
-    const file = e.target.files?.[0];
-    if (file) await handleDocUpload(file, "power_of_attorney", "Доверенность", poaDocs.length, setUploadingPoa);
-    if (poaFileRef.current) poaFileRef.current.value = "";
+    void handleDocUpload(file, "power_of_attorney", "Доверенность", poaDocs.length, setUploadingPoa);
   };
 
-  const handleWaybillDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
+  const handleWaybillFile = (file: File) => {
     if (docsLocked || uploadingWaybill) return;
-    const file = e.dataTransfer.files?.[0];
-    if (file) await handleDocUpload(file, "waybill", "Накладная", waybillDocs.length, setUploadingWaybill);
-  };
-  const handleWaybillInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (docsLocked || uploadingWaybill) return;
-    const file = e.target.files?.[0];
-    if (file) await handleDocUpload(file, "waybill", "Накладная", waybillDocs.length, setUploadingWaybill);
-    if (waybillFileRef.current) waybillFileRef.current.value = "";
+    void handleDocUpload(file, "waybill", "Накладная", waybillDocs.length, setUploadingWaybill);
   };
 
-  const handlePaymentInvoiceDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
+  const handlePaymentInvoiceFile = (file: File) => {
     if (paymentInvoiceLocked || uploadingPaymentInvoice) return;
-    const file = e.dataTransfer.files?.[0];
-    if (file) await handleDocUpload(file, "payment_invoice", "Счет на оплату", paymentInvoiceDocs.length, setUploadingPaymentInvoice);
+    void handleDocUpload(file, "payment_invoice", "Счет на оплату", paymentInvoiceDocs.length, setUploadingPaymentInvoice);
   };
-  const handlePaymentInvoiceInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (paymentInvoiceLocked || uploadingPaymentInvoice) return;
-    const file = e.target.files?.[0];
-    if (file) await handleDocUpload(file, "payment_invoice", "Счет на оплату", paymentInvoiceDocs.length, setUploadingPaymentInvoice);
-    if (paymentInvoiceFileRef.current) paymentInvoiceFileRef.current.value = "";
+
+  // Точечно обновляет один проект в списке — без перезагрузки всего списка и
+  // без сброса выбранного проекта. Берём только те поля, которые могут
+  // поменяться после действий с договором (статус проекта и contract_mode);
+  // остальное (имя, isExpress) остаётся как было. Ошибка не фатальна: до
+  // ответа уже применён оптимистичный патч, а на следующий заход на страницу
+  // список перезагрузится целиком.
+  const patchProject = (id: string, patch: Partial<ProjectSummary>) => {
+    setProjects(list => list.map(p => (p.id === id ? { ...p, ...patch } : p)));
+  };
+
+  const refreshProject = async (id: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/projects/${id}`, { credentials: "include" });
+      if (!response.ok) throw new Error("Не удалось обновить проект");
+      const fresh = normalizeProject((await response.json()) as ProjectApiItem);
+      patchProject(id, {
+        statusName: fresh.statusName,
+        contractSigned: fresh.contractSigned,
+        contractMode: fresh.contractMode,
+        contractModeAt: fresh.contractModeAt,
+      });
+    } catch (error) {
+      console.error(error);
+    }
   };
 
   // Финальный (проверенный/отредактированный) файл договора загружается
   // сюда после того, как черновик сгенерирован на странице "Договор".
   // Повторный вызов с новым файлом работает как "заменить" — бэкенд просто
-  // перезаписывает документ категории "contract". После успешной загрузки
-  // переводим проект из "Ожидание подписания" в "Активный закуп" через
-  // markContractUploaded (мягко: если это не удастся, сам факт загрузки
-  // файла всё равно достаточен для contractSigned выше, а можно попробовать
-  // снова).
+  // перезаписывает документ категории "contract" и сам переводит
+  // contract_mode из "no_contract" обратно в "uploaded". После успешной
+  // загрузки переводим проект из "Ожидание подписания" в "Активный закуп"
+  // через markContractUploaded (мягко: если это не удастся, сам факт
+  // загрузки файла всё равно достаточен для contractSigned выше, а можно
+  // попробовать снова).
   const handleContractUpload = async (file: File | undefined) => {
     if (!file || !selectedProjectId) return;
+    const projectIdAtStart = selectedProjectId;
     setUploadingContract(true);
     try {
-      const uploadedDoc = await uploadProjectDocument(selectedProjectId, "contract", file, "Договор");
+      const uploadedDoc = await uploadProjectDocument(projectIdAtStart, "contract", file, "Договор");
 
-      documentsStore.updateDocument(selectedProjectId, `${selectedProjectId}-contract`, {
+      documentsStore.updateDocument(projectIdAtStart, `${projectIdAtStart}-contract`, {
         status: "uploaded",
         date: today(),
         fileName: file.name,
         backendDocument: uploadedDoc,
       });
+      // Сразу снимаем «Без договора» локально, не дожидаясь перезапроса, —
+      // иначе на долю секунды карточка показывала бы оба состояния.
+      patchProject(projectIdAtStart, { contractMode: "uploaded", contractModeAt: new Date().toISOString() });
 
       try {
-        await markContractUploaded(selectedProjectId);
+        await markContractUploaded(projectIdAtStart);
       } catch (statusError) {
         console.error("Не удалось обновить статус проекта после загрузки договора:", statusError);
       }
+      void refreshProject(projectIdAtStart);
     } catch (error) {
       console.error(error);
       alert("Не удалось загрузить договор. Попробуйте еще раз.");
@@ -680,37 +773,20 @@ export function DocumentsPage({
     }
   };
 
-  // «Без договора» — для сделок, где договора физически не будет (или он не
-  // нужен), но процесс не должен вечно стоять на месте из-за
-  // uploadsLocked/doneDocCount, которые смотрят на contractDoc.status ===
-  // "uploaded". Вместо отдельной ветки на бэкенде (нового статуса документа,
-  // нового флага у проекта и т.д.) переиспользуем ровно тот же путь, что и
-  // handleContractUpload — с синтетическим текстовым файлом вместо
-  // выбранного пользователем. Для всей остальной системы (архив документов,
-  // прогресс, разблокировка загрузок) это неотличимо от настоящей загрузки.
+  // «Без договора» — для сделок, где договора физически не будет. Файл и
+  // запись в архиве документов не создаются: бэкенд просто выставляет
+  // project.contract_mode = "no_contract" (и сам двигает статус проекта),
+  // а страница считает этап договора закрытым по этому полю (см.
+  // contractUploaded выше). Если договор всё-таки понадобится — «Загрузить
+  // договор» работает как обычно и возвращает contract_mode в "uploaded".
   const handleSkipContract = async () => {
     if (!selectedProjectId) return;
+    const projectIdAtStart = selectedProjectId;
     setUploadingContract(true);
     try {
-      const placeholderFile = new File(
-        ["Договор не требуется — отмечено вручную, без загрузки файла."],
-        "bez-dogovora.txt",
-        { type: "text/plain" },
-      );
-      const uploadedDoc = await uploadProjectDocument(selectedProjectId, "contract", placeholderFile, "Без договора");
-
-      documentsStore.updateDocument(selectedProjectId, `${selectedProjectId}-contract`, {
-        status: "uploaded",
-        date: today(),
-        fileName: uploadedDoc.file_name ?? placeholderFile.name,
-        backendDocument: uploadedDoc,
-      });
-
-      try {
-        await markContractUploaded(selectedProjectId);
-      } catch (statusError) {
-        console.error("Не удалось обновить статус проекта после отметки «без договора»:", statusError);
-      }
+      await markNoContract(projectIdAtStart);
+      patchProject(projectIdAtStart, { contractMode: "no_contract", contractModeAt: new Date().toISOString() });
+      void refreshProject(projectIdAtStart);
     } catch (error) {
       console.error(error);
       alert("Не удалось отметить проект как «без договора». Попробуйте еще раз.");
@@ -781,7 +857,7 @@ export function DocumentsPage({
         return;
       }
     }
-    const content = `Документ: ${doc.name}\nПроект: ${selectedProjectName}\nСтатус: ${statusLabel(doc.status)}\nДата: ${doc.date || "—"}`;
+    const content = `Документ: ${doc.name}\nПроект: ${selectedProjectName}\nСтатус: ${docStatusLabel(doc.status)}\nДата: ${doc.date || "—"}`;
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
@@ -793,29 +869,6 @@ export function DocumentsPage({
     a.remove();
     URL.revokeObjectURL(url);
   };
-
-  function statusLabel(status: DocStatus) {
-    if (status === "approved")  return "Одобрено клиентом";
-    if (status === "rejected")  return "Отклонено клиентом";
-    if (status === "generated") return "Сгенерирован";
-    if (status === "uploaded")  return "Загружен";
-    return "Ожидается";
-  }
-
-  function statusBadge(status: DocStatus) {
-    const styles: Record<DocStatus, string> = {
-      generated: "bg-blue-50 dark:bg-blue-400/15 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-400/25",
-      approved:  "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 border-green-200 dark:border-green-400/25",
-      uploaded:  "bg-green-50 dark:bg-green-400/15 text-green-700 dark:text-green-300 border-green-200 dark:border-green-400/25",
-      pending:   "bg-orange-50 dark:bg-orange-400/15 text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-400/25",
-      rejected:  "bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-300 border-red-200 dark:border-red-400/25",
-    };
-    return (
-      <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${styles[status]}`}>
-        {statusLabel(status)}
-      </span>
-    );
-  }
 
   const categoryIcon = (category: ProjectDocument["category"]) => {
     if (category === "kp")                return <FileText   size={14} className="text-blue-500 dark:text-blue-400"   />;
@@ -837,13 +890,13 @@ export function DocumentsPage({
     <div className="relative mb-4 max-w-sm">
       <button
         onClick={() => setSelectorOpen(o => !o)}
-        className="w-full flex items-center justify-between gap-2 px-4 py-2.5 bg-card border border-border rounded-lg text-sm text-foreground hover:border-primary/40 transition-colors"
+        className="w-full flex items-center justify-between gap-2 px-4 py-2.5 bg-card border border-border rounded-lg text-sm text-foreground shadow-card transition-[border-color,box-shadow] duration-150 ease-out-strong hover:border-primary/40 hover:shadow-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
       >
         <span className="font-medium truncate">{selectedProjectName}</span>
-        <ChevronDown size={15} className={`text-muted-foreground flex-shrink-0 transition-transform ${selectorOpen ? "rotate-180" : ""}`} />
+        <ChevronDown size={15} className={`text-muted-foreground flex-shrink-0 transition-transform duration-200 ease-out-strong ${selectorOpen ? "rotate-180" : ""}`} />
       </button>
       {selectorOpen && (
-        <div className="absolute z-10 mt-1 w-full bg-card border border-border rounded-lg shadow-lg overflow-hidden origin-top animate-in fade-in zoom-in-95 slide-in-from-top-1 duration-150 ease-out-strong">
+        <div className="absolute z-10 mt-1 w-full bg-card border border-border rounded-lg shadow-elevated overflow-hidden origin-top animate-in fade-in zoom-in-95 slide-in-from-top-1 duration-150 ease-out-strong">
           <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
             <Search size={13} className="text-muted-foreground" />
             <input
@@ -873,7 +926,7 @@ export function DocumentsPage({
               <button
                 key={p.id}
                 onClick={() => { setSelectedProjectId(p.id); setSelectorOpen(false); setProjectQuery(""); }}
-                className={`w-full text-left px-4 py-2.5 text-sm hover:bg-accent/60 transition-colors ${p.id === selectedProjectId ? "bg-blue-50 dark:bg-blue-400/15 text-primary font-medium" : "text-foreground"}`}
+                className={`w-full text-left px-4 py-2.5 text-sm transition-colors duration-150 hover:bg-accent/60 ${p.id === selectedProjectId ? "bg-accent text-accent-foreground font-medium" : "text-foreground"}`}
               >
                 {p.name}
               </button>
@@ -888,35 +941,50 @@ export function DocumentsPage({
   );
 
   const renderSharedDocumentList = () => (
-    <div className="bg-card rounded-lg border border-border overflow-hidden">
-      <div className="px-5 py-4 border-b border-border">
-        <h2 className="text-sm font-semibold text-foreground">Все документы проекта</h2>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          КП, договор, доверенность, счета и накладные — в одном месте, доступны для скачивания на любом этапе
-        </p>
+    <div className="bg-card rounded-lg border border-border shadow-card overflow-hidden">
+      <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-border">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-foreground">Все документы проекта</h2>
+          <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+            КП, договор, доверенность, счета и накладные — в одном месте, доступны для скачивания на любом этапе
+          </p>
+        </div>
+        <span className="flex-shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
+          {displayDocs.length}
+        </span>
       </div>
       {displayDocs.length === 0 ? (
         <p className="px-5 py-6 text-sm text-muted-foreground text-center">Документов пока нет</p>
       ) : (
         <div className="divide-y divide-border">
-          {displayDocs.map(doc => (
-            <div key={doc.id} className="flex items-center justify-between px-5 py-3">
+          {displayDocs.map((doc, index) => (
+            <div
+              key={doc.id}
+              // Stagger появления строк при открытии страницы/смене проекта:
+              // ключи — id документов, поэтому пятисекундный опрос бэкенда
+              // не перезапускает анимацию, а потолок в 8 шагов держит
+              // задержку последней строки в пределах ~280ms.
+              style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
+              className="group flex items-center justify-between gap-3 px-5 py-3 transition-colors duration-150 hover:bg-muted/40 animate-in fade-in slide-in-from-bottom-1 animation-duration-300 fill-mode-both"
+            >
               <div className="flex items-center gap-3 min-w-0">
-                {categoryIcon(doc.category)}
+                <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md bg-muted transition-colors duration-150 group-hover:bg-card">
+                  {categoryIcon(doc.category)}
+                </span>
                 <div className="min-w-0">
-                  <p className="text-sm text-foreground truncate">{doc.name}</p>
-                  <p className="text-xs text-muted-foreground">{doc.date || "—"}</p>
+                  <p className="text-sm font-medium text-foreground truncate">{doc.name}</p>
+                  <p className="text-xs text-muted-foreground tabular-nums">{doc.date || "—"}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-3 flex-shrink-0">
-                {statusBadge(doc.status)}
-                {doc.status !== "pending" && (
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <DocStatusPill status={doc.status} />
+                {doc.status !== "pending" && doc.status !== "no_contract" && (
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => handleDownload(doc)}
-                      className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary px-2 py-1 rounded hover:bg-accent transition-colors"
+                      className="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-muted-foreground transition-[color,background-color] duration-150 hover:bg-accent hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                     >
-                      <Download size={12} />Скачать
+                      <Download size={13} />Скачать
                     </button>
                     {(doc.category === "payment_invoice" ? !paymentInvoiceLocked : !docsLocked) &&
                       !doc.id.includes("placeholder") &&
@@ -924,9 +992,10 @@ export function DocumentsPage({
                       <AppTooltip text="Удалить документ">
                         <button
                           onClick={() => handleDeleteDoc(doc)}
-                          className="flex items-center justify-center text-muted-foreground hover:text-destructive p-1.5 rounded hover:bg-red-50 dark:bg-red-400/15 transition-colors"
+                          aria-label="Удалить документ"
+                          className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color] duration-150 hover:bg-destructive-muted hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                         >
-                          <Trash2 size={12} />
+                          <Trash2 size={13} />
                         </button>
                       </AppTooltip>
                     )}
@@ -949,14 +1018,16 @@ export function DocumentsPage({
     if (!canUploadContract) return null;
 
     return (
-      <div className="bg-card rounded-lg border border-border p-5 mb-4">
+      <div className="bg-card rounded-lg border border-border shadow-card p-5 mb-4">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2 min-w-0">
             <Handshake size={16} className="text-emerald-500 dark:text-emerald-400 flex-shrink-0" />
             <div className="min-w-0">
               <p className="text-sm font-semibold text-foreground">Договор</p>
               <p className="text-xs text-muted-foreground">
-                {contractUploaded
+                {contractSkipped
+                  ? `Отмечено вручную · ${contractSkippedDate || "—"}`
+                  : contractHasFile
                   ? `Загружен · ${contractDoc?.date || "—"}`
                   : "Сгенерируйте на странице «Договор», проверьте и загрузите готовый файл сюда — либо отметьте «Без договора», если файла не будет."}
               </p>
@@ -964,21 +1035,25 @@ export function DocumentsPage({
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
-            {contractUploaded && (
-              <span className="flex items-center gap-1.5 px-3 py-1.5 bg-green-100 dark:bg-green-400/20 rounded-full">
-                <CheckCircle2 size={13} className="text-green-600 dark:text-green-400" />
-                <span className="text-xs font-medium text-green-700 dark:text-green-300">Загружен</span>
+            {contractSkipped ? (
+              <span className="animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
+                <DocStatusPill status="no_contract" />
+              </span>
+            ) : contractHasFile && (
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-success-muted ring-1 ring-success/25 animate-in fade-in zoom-in-95 duration-200 ease-out-strong">
+                <CheckCircle2 size={13} className="text-success" />
+                <span className="text-xs font-medium text-success">Загружен</span>
               </span>
             )}
 
-            {/* «Без договора» — только пока договора ещё нет и его вообще
-                можно пропустить. После загрузки (настоящей или через эту же
-                кнопку) остаётся один путь — «Заменить файл». */}
+            {/* «Без договора» — только пока этап договора ещё не закрыт (ни
+                файл, ни отметка). После отметки остаётся один путь —
+                «Загрузить договор», если договор всё-таки понадобился. */}
             {!completed && !contractUploaded && (
               <button
                 onClick={() => !uploadingContract && handleSkipContract()}
                 disabled={uploadingContract}
-                className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-all flex-shrink-0 bg-card text-foreground border border-border hover:bg-background cursor-pointer ${
+                className={`flex h-9 items-center gap-1.5 px-3 text-xs font-medium rounded-lg border border-border bg-card text-foreground shadow-card transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-out-strong flex-shrink-0 cursor-pointer hover:border-primary/40 hover:bg-accent hover:shadow-elevated active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
                   uploadingContract ? "opacity-60 cursor-wait" : ""
                 }`}
               >
@@ -991,22 +1066,22 @@ export function DocumentsPage({
               <button
                 onClick={() => !uploadingContract && contractFileRef.current?.click()}
                 disabled={uploadingContract}
-                className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-[color,background-color,border-color,transform] duration-150 ease-out flex-shrink-0 ${
+                className={`flex h-9 items-center gap-1.5 px-3 text-xs font-medium rounded-lg transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-out-strong flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
                   uploadingContract
                     ? "bg-muted text-muted-foreground cursor-wait"
-                    : contractUploaded
-                    ? "bg-card text-foreground border border-border hover:bg-background cursor-pointer"
-                    : "bg-primary hover:bg-primary/90 text-white cursor-pointer active:scale-[0.97]"
+                    : contractHasFile
+                    ? "bg-card text-foreground border border-border shadow-card hover:border-primary/40 hover:bg-accent hover:shadow-elevated active:scale-[0.97] cursor-pointer"
+                    : "bg-primary text-primary-foreground shadow-card hover:bg-primary/90 hover:shadow-elevated active:scale-[0.97] cursor-pointer"
                 }`}
               >
                 {uploadingContract ? (
                   <Loader2 size={13} className="animate-spin" />
-                ) : contractUploaded ? (
+                ) : contractHasFile ? (
                   <RefreshCw size={13} />
                 ) : (
                   <Upload size={13} />
                 )}
-                {uploadingContract ? "Загрузка…" : contractUploaded ? "Заменить файл" : "Загрузить договор"}
+                {uploadingContract ? "Загрузка…" : contractHasFile ? "Заменить файл" : "Загрузить договор"}
               </button>
             )}
           </div>
@@ -1038,7 +1113,7 @@ export function DocumentsPage({
       <PageWrap title="Документы" subtitle={selectedProjectName}>
         {projectSelector}
         {waitingOnMe && (
-          <div className="bg-card rounded-lg border border-primary/30 p-5 mb-4">
+          <div className="bg-card rounded-lg border border-primary/30 shadow-card p-5 mb-4 animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out-strong">
             <div className="flex items-center gap-2 mb-1">
               <Clock size={15} className="text-primary" />
               <h3 className="text-sm font-semibold text-foreground">
@@ -1054,13 +1129,13 @@ export function DocumentsPage({
                   onChange={e => setRejectDraft(e.target.value)}
                   placeholder="Комментарий для менеджера (необязательно)…"
                   rows={2}
-                  className="w-full text-sm border border-border rounded-lg px-3 py-2 outline-none focus:border-primary/50"
+                  className="w-full text-sm bg-input-background border border-border rounded-lg px-3 py-2 outline-none transition-[border-color,box-shadow] duration-150 focus:border-primary/50 focus:ring-2 focus:ring-ring/20"
                 />
                 <div className="flex gap-2">
                   <button
                     onClick={handleReject}
                     disabled={decidingReview}
-                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-60"
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-medium rounded-lg bg-destructive text-destructive-foreground shadow-card transition-[color,background-color,box-shadow,transform] duration-150 ease-out-strong hover:bg-destructive/90 hover:shadow-elevated active:scale-[0.98] disabled:opacity-60 disabled:active:scale-100"
                   >
                     {decidingReview ? <Loader2 size={13} className="animate-spin" /> : <X size={14} />}Отклонить
                   </button>
@@ -1077,14 +1152,14 @@ export function DocumentsPage({
                 <button
                   onClick={handleAccept}
                   disabled={decidingReview}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg bg-success text-success-foreground hover:bg-success/90 transition-colors disabled:opacity-60"
+                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-medium rounded-lg bg-success text-success-foreground shadow-card transition-[color,background-color,box-shadow,transform] duration-150 ease-out-strong hover:bg-success/90 hover:shadow-elevated active:scale-[0.98] disabled:opacity-60 disabled:active:scale-100"
                 >
                   {decidingReview ? <Loader2 size={13} className="animate-spin" /> : <Check size={14} />}Принять
                 </button>
                 <button
                   onClick={() => setShowRejectBox(true)}
                   disabled={decidingReview}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border border-red-200 dark:border-red-400/25 text-destructive hover:bg-red-50 dark:bg-red-400/15 transition-colors disabled:opacity-60"
+                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-medium rounded-lg border border-destructive/25 text-destructive transition-[color,background-color,border-color] duration-150 ease-out-strong hover:bg-destructive-muted hover:border-destructive/40 disabled:opacity-60"
                 >
                   <X size={14} />Отклонить
                 </button>
@@ -1093,26 +1168,27 @@ export function DocumentsPage({
           </div>
         )}
         {reviewStage === "approved" && (
-          <div className="flex items-center gap-2 px-4 py-3 bg-green-50 dark:bg-green-400/15 rounded-lg border border-green-200 dark:border-green-400/25 mb-4">
-            <CheckCircle2 size={16} className="text-green-600 dark:text-green-400 flex-shrink-0" />
-            <p className="text-sm font-medium text-green-700 dark:text-green-300">Файлы подтверждены по всей цепочке согласования.</p>
-          </div>
+          <StageBanner
+            tone="success"
+            icon={CheckCircle2}
+            title="Файлы подтверждены по всей цепочке согласования."
+          />
         )}
         {reviewStage === "rejected" && (
-          <div className="flex items-center gap-2 px-4 py-3 bg-amber-50 dark:bg-amber-400/15 rounded-lg border border-amber-200 dark:border-amber-400/25 mb-4">
-            <AlertTriangle size={16} className="text-amber-600 dark:text-amber-400 flex-shrink-0" />
-            <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
-              {rejectedBy === myRole
-                ? "Вы отклонили проверку. Ожидается повторная загрузка от менеджера."
-                : `Отклонено (${rejectedBy ? ROLE_LABEL[rejectedBy] : "—"}). Ожидается повторная загрузка от менеджера.`}
-            </p>
-          </div>
+          <StageBanner
+            tone="warning"
+            icon={AlertTriangle}
+            title={rejectedBy === myRole
+              ? "Вы отклонили проверку. Ожидается повторная загрузка от менеджера."
+              : `Отклонено (${rejectedBy ? ROLE_LABEL[rejectedBy] : "—"}). Ожидается повторная загрузка от менеджера.`}
+          />
         )}
         {reviewStage === "none" && (
-          <div className="flex items-center gap-2 px-4 py-3 bg-background rounded-lg border border-border mb-4">
-            <Clock size={16} className="text-muted-foreground flex-shrink-0" />
-            <p className="text-sm text-muted-foreground">Менеджер ещё не отправил документы на проверку.</p>
-          </div>
+          <StageBanner
+            tone="neutral"
+            icon={Clock}
+            title="Менеджер ещё не отправил документы на проверку."
+          />
         )}
 
         {/* Загрузка/замена финального договора — доступна PM, бухгалтеру и
@@ -1136,23 +1212,20 @@ export function DocumentsPage({
     >
       {projectSelector}
       {reviewStage === "pending_director" && (
-        <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 dark:bg-blue-400/15 rounded-lg border border-blue-100 dark:border-blue-400/20 mb-4">
-          <Clock size={16} className="text-primary flex-shrink-0" />
-          <p className="text-sm font-medium text-primary">Ожидается решение коммерческого директора</p>
-        </div>
+        <StageBanner
+          tone="info"
+          icon={Clock}
+          title="Ожидается решение коммерческого директора"
+          hint="Пока проверка идёт, документы недоступны для изменения."
+        />
       )}
       {reviewStage === "rejected" && (
-        <div className="flex items-start gap-2 px-4 py-3 bg-amber-50 dark:bg-amber-400/15 rounded-lg border border-amber-200 dark:border-amber-400/25 mb-4">
-          <AlertTriangle size={16} className="text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
-              {rejectedBy ? `Отклонено: ${ROLE_LABEL[rejectedBy]}` : "Проверка отклонена"}
-            </p>
-            <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
-              {rejectReason ? rejectReason : "Обновите документы и отправьте на проверку повторно."}
-            </p>
-          </div>
-        </div>
+        <StageBanner
+          tone="warning"
+          icon={AlertTriangle}
+          title={rejectedBy ? `Отклонено: ${ROLE_LABEL[rejectedBy]}` : "Проверка отклонена"}
+          hint={rejectReason ? rejectReason : "Обновите документы и отправьте на проверку повторно."}
+        />
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-4">
@@ -1161,17 +1234,33 @@ export function DocumentsPage({
 
           {renderContractCard()}
 
-          <div className="bg-card rounded-lg border border-border p-5">
-            <div className="flex items-center justify-between mb-3">
+          <div className="bg-card rounded-lg border border-border shadow-card p-5">
+            <div className="flex items-center justify-between gap-3 mb-3">
               <h2 className="text-sm font-semibold text-foreground">Прогресс загрузки документов</h2>
-              <span className={`text-sm font-semibold ${allUploaded ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}>
+              <span
+                // key по значению: счётчик меняется редко (раз на документ),
+                // поэтому короткий zoom-in уместен и подсказывает, что цифра
+                // изменилась именно сейчас.
+                key={doneDocCount}
+                className={`text-sm font-semibold tabular-nums animate-in fade-in zoom-in-95 duration-200 ease-out-strong ${
+                  allUploaded ? "text-success" : "text-muted-foreground"
+                }`}
+              >
                 {doneDocCount}/{requiredDocCount}
               </span>
             </div>
-            <div className="w-full bg-muted rounded-full h-2 mb-2">
+            {/* Заполнение — через transform: scaleX, а не width: width на
+                каждом кадре пересчитывает layout. 400ms (а не обычные для UI
+                150–250ms) взяты осознанно: шаг прогресса — всего 1/5 полосы,
+                на более коротком отрезке движение просто не успеваешь
+                заметить. Цвет переезжает вместе с заливкой, когда прогресс
+                закрывается полностью. */}
+            <div className="relative h-2 w-full overflow-hidden rounded-full bg-muted mb-2">
               <div
-                className={`h-2 rounded-full transition-all duration-500 ${allUploaded ? "bg-green-500" : "bg-primary"}`}
-                style={{ width: `${(doneDocCount / requiredDocCount) * 100}%` }}
+                style={{ transform: `scaleX(${requiredDocCount > 0 ? doneDocCount / requiredDocCount : 0})` }}
+                className={`h-full w-full origin-left rounded-full transition-[transform,background-color] duration-[400ms] ease-out-strong ${
+                  allUploaded ? "bg-success" : "bg-primary"
+                }`}
               />
             </div>
             <p className="text-xs text-muted-foreground">
@@ -1179,253 +1268,198 @@ export function DocumentsPage({
                 ? "Проект завершён — документы доступны в архиве."
                 : allUploaded
                 ? "Все документы загружены."
-                : `Осталось ${requiredDocCount - doneDocCount} документа`}
+                : `Осталось ${remainingDocCount} ${remainingDocCount === 1 ? "документ" : remainingDocCount < 5 ? "документа" : "документов"}`}
             </p>
           </div>
 
-          {!reviewInFlight && reviewStage !== "approved" && !completed && (
+          {/* Зоны ручной загрузки. Доверенность и накладная требуют
+              подписанного договора (docsLocked), счёт на оплату покупателю —
+              нет, поэтому он остаётся в сетке даже когда две первые зоны
+              скрыты на этапе проверки/после завершения. Раньше из-за этого
+              счёт жил в отдельной сетке под первой и висел одинокой карточкой
+              в треть ширины, разрывая ряд; теперь это одна сетка, а условие
+              осталось тем же. Необязательный документ — в прогресс и
+              блокировку завершения проекта не входит (см.
+              requiredDocCount/doneDocCount выше). */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {/* Доверенность: Dropzone */}
-            <div className="bg-card rounded-lg border border-border p-4">
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2">
-                  <Lock size={14} className="text-destructive" />Доверенности
-                </span>
-                {!docsLocked && (
-                  <button
-                    type="button"
-                    onClick={() => setOnecModal({ docType: "power_of_attorney", docLabel: "Доверенность" })}
-                    className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-                  >
-                    <Download size={12} />Из 1С
-                  </button>
-                )}
-              </h3>
-              <div className="relative w-full group">
-              <div
-                onDragOver={e => { if (!docsLocked) e.preventDefault(); }}
-                onDrop={handlePoaDrop}
-                onClick={() => !docsLocked && poaFileRef.current?.click()}
-                className={`flex flex-col items-center justify-center gap-1.5 min-h-[112px] w-full px-4 rounded-lg border-2 border-dashed text-center transition-all ${
-                  docsLocked || uploadingPoa
-                    ? "border-border bg-background cursor-not-allowed"
-                    : "border-border hover:border-primary/40 hover:bg-accent/40 cursor-pointer"
-                }`}
-              >
-                <input ref={poaFileRef} type="file" className="hidden" onChange={handlePoaInput} />
-                {docsLocked || uploadingPoa
-                  ? (uploadingPoa ? <Loader2 size={18} className="text-blue-500 dark:text-blue-400 animate-spin" /> : <Lock size={18} className="text-muted-foreground" />)
-                  : <Upload size={18} className="text-muted-foreground" />}
-                {docsLocked ? (
-                  <p className="text-xs text-muted-foreground">
-                    <span className="font-medium text-muted-foreground">Недоступно</span>
-                    <br />
-                    {uploadsLocked ? "до подписания договора" : "проверка документов"}
-                  </p>
-                ) : uploadingPoa ? (
-                  <p className="text-xs text-muted-foreground">Загрузка...</p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    <span className="text-primary">Выберите файл</span>
-                    <br />
-                    или перетащите — можно несколько
-                  </p>
-                )}
-              </div>
-              {uploadsLocked && (
-                <div className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 -translate-y-[calc(100%+8px)] whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 z-10">
-                  Доступно только после подписания договора
-                </div>
-              )}
-              </div>
-            </div>
+            {showManualUploadZones && (
+              <>
+                <DocumentDropzone
+                  title="Доверенности"
+                  icon={<Lock size={14} className="text-destructive flex-shrink-0" />}
+                  locked={docsLocked}
+                  uploading={uploadingPoa}
+                  lockedHint={uploadsLocked ? "до подписания договора" : "проверка документов"}
+                  hoverTooltip={uploadsLocked ? "Доступно только после подписания договора" : undefined}
+                  onFile={handlePoaFile}
+                  action={!docsLocked && (
+                    <OnecImportButton
+                      tooltip="Импортировать доверенность из 1С"
+                      onClick={() => setOnecModal({ docType: "power_of_attorney", docLabel: "Доверенность" })}
+                    />
+                  )}
+                />
 
-            {/* Накладные: Dropzone */}
-            <div className="bg-card rounded-lg border border-border p-4">
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2">
-                  <ReceiptIcon size={14} className="text-purple-500 dark:text-purple-400" />Накладные
-                </span>
-                {!docsLocked && (
-                  <button
-                    type="button"
-                    onClick={() => setOnecModal({ docType: "waybill", docLabel: "Накладная" })}
-                    className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-                  >
-                    <Download size={12} />Из 1С
-                  </button>
-                )}
-              </h3>
-              <div className="relative w-full group">
-              <div
-                onDragOver={e => { if (!docsLocked) e.preventDefault(); }}
-                onDrop={handleWaybillDrop}
-                onClick={() => !docsLocked && waybillFileRef.current?.click()}
-                className={`flex flex-col items-center justify-center gap-1.5 min-h-[112px] w-full px-4 rounded-lg border-2 border-dashed text-center transition-all ${
-                  docsLocked || uploadingWaybill
-                    ? "border-border bg-background cursor-not-allowed"
-                    : "border-border hover:border-primary/40 hover:bg-accent/40 cursor-pointer"
-                }`}
-              >
-                <input ref={waybillFileRef} type="file" className="hidden" onChange={handleWaybillInput} />
-                {docsLocked || uploadingWaybill
-                  ? (uploadingWaybill ? <Loader2 size={18} className="text-blue-500 dark:text-blue-400 animate-spin" /> : <Lock size={18} className="text-muted-foreground" />)
-                  : <Upload size={18} className="text-muted-foreground" />}
-                {docsLocked ? (
-                  <p className="text-xs text-muted-foreground">
-                    <span className="font-medium text-muted-foreground">Недоступно</span>
-                    <br />
-                    {uploadsLocked ? "до подписания договора" : "проверка документов"}
-                  </p>
-                ) : uploadingWaybill ? (
-                  <p className="text-xs text-muted-foreground">Загрузка...</p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    <span className="text-primary">Выберите файл</span>
-                    <br />
-                    или перетащите — можно несколько
-                  </p>
-                )}
-              </div>
-              {uploadsLocked && (
-                <div className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 -translate-y-[calc(100%+8px)] whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 z-10">
-                  Доступно только после подписания договора
-                </div>
-              )}
-              </div>
-            </div>
-          </div>
-          )}
+                <DocumentDropzone
+                  title="Накладные"
+                  icon={<ReceiptIcon size={14} className="text-purple-500 dark:text-purple-400 flex-shrink-0" />}
+                  locked={docsLocked}
+                  uploading={uploadingWaybill}
+                  lockedHint={uploadsLocked ? "до подписания договора" : "проверка документов"}
+                  hoverTooltip={uploadsLocked ? "Доступно только после подписания договора" : undefined}
+                  onFile={handleWaybillFile}
+                  enterDelayMs={45}
+                  action={!docsLocked && (
+                    <OnecImportButton
+                      tooltip="Импортировать накладную из 1С"
+                      onClick={() => setOnecModal({ docType: "waybill", docLabel: "Накладная" })}
+                    />
+                  )}
+                />
+              </>
+            )}
 
-          {/* Счет на оплату (покупателю): доступен ДО подписания договора,
-              поэтому вынесен ИЗ-ПОД условия "!reviewInFlight && reviewStage
-              !== 'approved' && !completed" выше, которое прячет
-              доверенность/накладную целиком — иначе карточка тоже
-              схлопывалась бы на этапе проверки, притом что
-              paymentInvoiceLocked как раз для этого этапа и предназначен.
-              Здесь карточка всегда видна, но помечается "недоступно" именно
-              на проверке/после завершения — так же по смыслу, как
-              доверенность/накладная, только без привязки к договору.
-              Необязательный документ, не входит в прогресс/блокировку
-              завершения проекта (см. requiredDocCount/doneDocCount выше). */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div className="bg-card rounded-lg border border-border p-4">
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2">
-                  <FileCheck size={14} className="text-teal-500 dark:text-teal-400" />Счет на оплату покупателю
-                </span>
-                {!paymentInvoiceLocked && (
-                  <button
-                    type="button"
-                    onClick={() => setOnecModal({ docType: "payment_invoice", docLabel: "Счет на оплату покупателю" })}
-                    className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-                  >
-                    <Download size={12} />Из 1С
-                  </button>
-                )}
-              </h3>
-              <div className="relative w-full group">
-              <div
-                onDragOver={e => { if (!paymentInvoiceLocked) e.preventDefault(); }}
-                onDrop={handlePaymentInvoiceDrop}
-                onClick={() => !paymentInvoiceLocked && paymentInvoiceFileRef.current?.click()}
-                className={`flex flex-col items-center justify-center gap-1.5 min-h-[112px] w-full px-4 rounded-lg border-2 border-dashed text-center transition-all ${
-                  paymentInvoiceLocked || uploadingPaymentInvoice
-                    ? "border-border bg-background cursor-not-allowed"
-                    : "border-border hover:border-primary/40 hover:bg-accent/40 cursor-pointer"
-                }`}
-              >
-                <input ref={paymentInvoiceFileRef} type="file" className="hidden" onChange={handlePaymentInvoiceInput} />
-                {paymentInvoiceLocked || uploadingPaymentInvoice
-                  ? (uploadingPaymentInvoice ? <Loader2 size={18} className="text-blue-500 dark:text-blue-400 animate-spin" /> : <Lock size={18} className="text-muted-foreground" />)
-                  : <Upload size={18} className="text-muted-foreground" />}
-                {paymentInvoiceLocked ? (
-                  <p className="text-xs text-muted-foreground">
-                    <span className="font-medium text-muted-foreground">Недоступно</span>
-                    <br />
-                    проверка документов
-                  </p>
-                ) : uploadingPaymentInvoice ? (
-                  <p className="text-xs text-muted-foreground">Загрузка...</p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    <span className="text-primary">Выберите файл</span>
-                    <br />
-                    или перетащите — можно несколько
-                  </p>
-                )}
-              </div>
-              </div>
-            </div>
+            <DocumentDropzone
+              title="Счет на оплату покупателю"
+              icon={<FileCheck size={14} className="text-teal-500 dark:text-teal-400 flex-shrink-0" />}
+              locked={paymentInvoiceLocked}
+              uploading={uploadingPaymentInvoice}
+              lockedHint="проверка документов"
+              onFile={handlePaymentInvoiceFile}
+              enterDelayMs={showManualUploadZones ? 90 : 0}
+              action={!paymentInvoiceLocked && (
+                <OnecImportButton
+                  tooltip="Импортировать счёт на оплату из 1С"
+                  onClick={() => setOnecModal({ docType: "payment_invoice", docLabel: "Счет на оплату покупателю" })}
+                />
+              )}
+            />
           </div>
 
         </div>
 
         {/* Right sidebar */}
         <div className="space-y-4">
-          <div className="bg-card rounded-lg border border-border p-5">
+          {/* reducedMotion="user": при «уменьшить движение» от смены этапа
+              остаётся только фейд — та же политика, что в BackgroundJobsToast. */}
+          <MotionConfig reducedMotion="user">
+          <div className="bg-card rounded-lg border border-border shadow-card p-5">
             <h3 className="text-sm font-semibold text-foreground mb-3">Согласование</h3>
-            {reviewStage === "approved" && (
-              <div className="flex items-center gap-2 px-4 py-3 bg-green-50 dark:bg-green-400/15 rounded-lg border border-green-200 dark:border-green-400/25">
-                <CheckCircle2 size={16} className="text-green-600 dark:text-green-400 flex-shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-green-700 dark:text-green-300">Согласовано ✅</p>
-                  <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">Директор подтвердил файлы</p>
-                </div>
-              </div>
-            )}
-            {reviewStage === "pending_director" && (
-              <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 dark:bg-blue-400/15 rounded-lg border border-blue-100 dark:border-blue-400/20">
-                <Clock size={16} className="text-primary flex-shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-primary">
-                    На проверке у директора
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Ожидаем решение</p>
-                </div>
-              </div>
-            )}
-            {(reviewStage === "none" || reviewStage === "rejected") && (
-              <div className="space-y-2">
-                {reviewStage === "rejected" && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400 mb-1">
-                    Отклонено{rejectedBy ? ` (${ROLE_LABEL[rejectedBy]})` : ""}{rejectReason ? `: ${rejectReason}` : ""}. Обновите файлы и отправьте повторно.
-                  </p>
+            {/* Этап приезжает с опроса бэкенда, то есть меняется без участия
+                пользователя — поэтому не подменяем блок мгновенно, а
+                перекрёстно гасим: так видно, что состояние изменилось, и
+                текст не «телепортируется». */}
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={reviewStage}
+                initial={{ opacity: 0, transform: "translateY(6px)" }}
+                animate={{ opacity: 1, transform: "translateY(0px)" }}
+                exit={{ opacity: 0, transform: "translateY(-6px)" }}
+                transition={{ duration: 0.2, ease: EASE_OUT_STRONG }}
+              >
+                {reviewStage === "approved" && (
+                  <div className="flex items-center gap-2.5 px-4 py-3 bg-success-muted rounded-lg border border-success/25">
+                    <CheckCircle2 size={16} className="text-success flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-success">Согласовано</p>
+                      <p className="text-xs text-success mt-0.5">Директор подтвердил файлы</p>
+                    </div>
+                  </div>
                 )}
+                {reviewStage === "pending_director" && (
+                  <div className="flex items-center gap-2.5 px-4 py-3 bg-info-muted rounded-lg border border-info/25">
+                    <Clock size={16} className="text-info flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-info">На проверке у директора</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Ожидаем решение</p>
+                    </div>
+                  </div>
+                )}
+                {(reviewStage === "none" || reviewStage === "rejected") && (
+                  <div className="space-y-2">
+                    {reviewStage === "rejected" && (
+                      <p className="text-xs text-warning mb-1 leading-relaxed">
+                        Отклонено{rejectedBy ? ` (${ROLE_LABEL[rejectedBy]})` : ""}{rejectReason ? `: ${rejectReason}` : ""}. Обновите файлы и отправьте повторно.
+                      </p>
+                    )}
 
-                {/* ОБНОВЛЕНО: Используем новый тултип и блокируем кнопку */}
-                <AppTooltip text={tooltipReview}>
-                  <button
-                    onClick={() => allUploaded && isDocsReviewStatus && handleSubmitForReview()}
-                    disabled={!allUploaded || !isDocsReviewStatus || submittingReview}
-                    className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-[color,background-color,border-color,transform] duration-150 ease-out ${
-                      allUploaded && isDocsReviewStatus
-                        ? "bg-primary text-white hover:bg-primary/90 active:scale-[0.97]"
-                        : "bg-muted text-muted-foreground cursor-not-allowed"
+                    {/* ОБНОВЛЕНО: Используем новый тултип и блокируем кнопку */}
+                    <AppTooltip text={tooltipReview}>
+                      <button
+                        onClick={() => allUploaded && isDocsReviewStatus && handleSubmitForReview()}
+                        disabled={!allUploaded || !isDocsReviewStatus || submittingReview}
+                        className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-out ${
+                          allUploaded && isDocsReviewStatus
+                            ? "bg-primary text-primary-foreground shadow-card hover:bg-primary/90 hover:shadow-elevated active:scale-[0.97]"
+                            : "bg-muted text-muted-foreground cursor-not-allowed"
+                        }`}
+                      >
+                        {submittingReview
+                          ? <><Loader2 size={13} className="animate-spin" />Отправка…</>
+                          : <><Send size={14} />{reviewStage === "rejected" ? "Отправить повторно" : "Отправить на проверку"}</>}
+                      </button>
+                    </AppTooltip>
+                  </div>
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+          </MotionConfig>
+
+          {/* Чек-лист этапов. Шаги закрываются по одному и не по клику
+              пользователя (последний — вообще с бэкенда), поэтому и точка, и
+              соединительная линия доезжают transition-ом: так заметно, какой
+              шаг только что закрылся. Галочка появляется zoom-in-ом, вся
+              карточка при полном прохождении подсвечивается success-рамкой. */}
+          <div
+            className={`bg-card rounded-lg border shadow-card p-5 transition-[border-color] duration-300 ease-out-strong ${
+              allStepsDone ? "border-success/30" : "border-border"
+            }`}
+          >
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-foreground">Статус</h3>
+              <span
+                className={`text-xs font-medium tabular-nums transition-colors duration-[250ms] ${
+                  allStepsDone ? "text-success" : "text-muted-foreground"
+                }`}
+              >
+                {doneStepCount}/{reviewSteps.length}
+              </span>
+            </div>
+            <div>
+              {reviewSteps.map((item, index) => (
+                <div key={item.label} className="flex gap-2.5">
+                  <div className="flex flex-col items-center">
+                    <span
+                      className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full transition-[background-color,box-shadow] duration-[250ms] ease-out-strong ${
+                        item.done ? "bg-success ring-4 ring-success/15" : "bg-muted"
+                      }`}
+                    >
+                      {item.done && (
+                        <Check
+                          size={11}
+                          strokeWidth={3}
+                          className="text-success-foreground animate-in fade-in zoom-in-90 duration-200 ease-out-strong"
+                        />
+                      )}
+                    </span>
+                    {index < reviewSteps.length - 1 && (
+                      <span className="relative my-1 h-4 w-0.5 overflow-hidden rounded-full bg-muted">
+                        <span
+                          className={`absolute inset-0 origin-top rounded-full bg-success transition-transform duration-300 ease-out-strong ${
+                            item.done ? "scale-y-100" : "scale-y-0"
+                          }`}
+                        />
+                      </span>
+                    )}
+                  </div>
+                  <span
+                    className={`flex min-h-5 items-center text-xs transition-colors duration-[250ms] ${
+                      item.done ? "font-medium text-foreground" : "text-muted-foreground"
                     }`}
                   >
-                    {submittingReview
-                      ? <><Loader2 size={13} className="animate-spin" />Отправка…</>
-                      : <><Send size={14} />{reviewStage === "rejected" ? "Отправить повторно" : "Отправить на проверку"}</>}
-                  </button>
-                </AppTooltip>
-              </div>
-            )}
-          </div>
-
-          <div className="bg-card rounded-lg border border-border p-5">
-            <h3 className="text-sm font-semibold text-foreground mb-3">Статус</h3>
-            <div className="space-y-2">
-              {[
-                { label: "Документы загружены",  done: allUploaded },
-                { label: "Директор подтвердил",  done: reviewStage === "approved" },
-                { label: "Проект завершён",       done: completed },
-              ].map(item => (
-                <div key={item.label} className="flex items-center gap-2">
-                  <div className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 ${item.done ? "bg-green-500" : "bg-slate-200"}`}>
-                    {item.done && <Check size={9} className="text-white" />}
-                  </div>
-                  <span className={`text-xs ${item.done ? "text-foreground" : "text-muted-foreground"}`}>{item.label}</span>
+                    {item.label}
+                  </span>
                 </div>
               ))}
             </div>
@@ -1433,12 +1467,12 @@ export function DocumentsPage({
 
           {completed ? (
             <div className="space-y-2">
-              <div className="w-full py-3 rounded-lg text-sm font-semibold bg-green-50 dark:bg-green-400/15 border border-green-200 dark:border-green-400/25 text-green-700 dark:text-green-300 flex items-center justify-center gap-2">
+              <div className="w-full py-3 rounded-lg text-sm font-semibold bg-success-muted border border-success/25 text-success flex items-center justify-center gap-2 animate-in fade-in zoom-in-95 duration-300 ease-out-strong">
                 <CheckCircle2 size={15} />Проект завершён · архив
               </div>
               <button
                 onClick={() => onNavigate("dashboard")}
-                className="w-full py-2 text-xs text-muted-foreground hover:text-primary transition-colors"
+                className="w-full py-2 text-xs text-muted-foreground hover:text-primary transition-colors duration-150"
               >
                 Вернуться к дашборду
               </button>
@@ -1449,9 +1483,9 @@ export function DocumentsPage({
                 <button
                   onClick={() => canComplete && handleComplete()}
                   disabled={!canComplete || completing}
-                  className={`w-full py-3 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+                  className={`w-full py-3 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-[color,background-color,box-shadow,transform] duration-150 ease-out ${
                     canComplete
-                      ? "bg-success text-success-foreground hover:bg-success/90"
+                      ? "bg-success text-success-foreground shadow-card hover:bg-success/90 hover:shadow-elevated active:scale-[0.98]"
                       : "bg-muted text-muted-foreground cursor-not-allowed"
                   }`}
                 >
@@ -1461,7 +1495,7 @@ export function DocumentsPage({
                 </button>
               </AppTooltip>
               {!canComplete && (
-                <p className="text-xs text-muted-foreground text-center">{tooltipComplete}</p>
+                <p className="text-xs text-muted-foreground text-center leading-relaxed">{tooltipComplete}</p>
               )}
             </>
           )}

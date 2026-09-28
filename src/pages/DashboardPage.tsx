@@ -1069,7 +1069,7 @@ const handleSave = async () => {
           <table className="w-full border-collapse">
               <thead>
               <tr className="border-b border-border bg-background/60">
-                  {["Проект", "Клиент", "Этап", "Бюджет", "Дедлайн", "Ответственный", "Менеджер", ""].map(h => (
+                  {["Проект", "Клиент", "Этап", "Бюджет", "Дедлайн", "Ответственный", ""].map(h => (
                       <th key={h}
                           className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left">{h}</th>
                   ))}
@@ -1153,11 +1153,6 @@ const handleSave = async () => {
                             <span className="text-xs font-medium text-foreground bg-muted px-2 py-0.5 rounded">
                               {p.pm?.name}
                             </span>
-                          </td>
-
-                          {/* Менеджер */}
-                          <td className="px-4 py-3 text-sm text-muted-foreground">
-                              {p.pm?.name}
                           </td>
 
                           <td className="px-4 py-3 relative">
