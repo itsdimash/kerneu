@@ -313,9 +313,12 @@ export function ProcurementPage({
   role,
   projectState,
   initialProjectId,
+  onOpenProject,
 }: {
   role: Role | string;
   projectState: ProjectState;
+  /** Opens the project page — called after a project is reverted to editing. */
+  onOpenProject?: (projectId: number) => void;
   /** When set, auto-selects this project once the dropdown's project list
    *  has loaded — used so an invoice notification's "Открыть закупки" CTA
    *  lands directly on the right project, not an empty selector. */
@@ -457,6 +460,9 @@ export function ProcurementPage({
       setPurchaseItems([]);
     }
     await refetchProjects();
+    if (role === "pm" || role === "commercial_director") {
+      onOpenProject?.(revertedProjectId);
+    }
   };
 
   useEffect(() => {
