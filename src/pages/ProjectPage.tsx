@@ -2278,16 +2278,14 @@ export function ProjectPagePM({
                                   <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
                                 </span>
                               )}
+                              {/* Источник ПМ выбирает только в «В редактировании» (черновик
+                                  ml-импорта, SupplySourceField выше). Здесь проект уже ушёл
+                                  Комдиру/клиенту/в закуп — источник только для чтения. */}
                               {!isKitComponent && (
-                                <SupplySourceSelect
-                                  projectId={resolvedProjectId}
-                                  itemId={item.id}
+                                <SupplySourceField
                                   value={item.supply_source}
-                                  onUpdated={(updated) => {
-                                    setLiveItems((current) =>
-                                      current.map((existing) => existing.id === updated.id ? updated : existing),
-                                    );
-                                  }}
+                                  readOnly
+                                  onChange={() => {}}
                                 />
                               )}
                             </div>
@@ -4052,6 +4050,28 @@ const [itemSaveError, setItemSaveError] =
                             <span title="Изменено Комдиром">
                               <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
                             </span>
+                          )}
+                          {/* Источник может менять только Комдир и только пока проект
+                              ждёт его решения (canEditItems). После решения — read-only. */}
+                          {!isKitComponent && (
+                            canEditItems ? (
+                              <SupplySourceSelect
+                                projectId={resolvedProjectId}
+                                itemId={item.id}
+                                value={item.supply_source}
+                                onUpdated={(updated) => {
+                                  setProjectItems((current) =>
+                                    current.map((existing) => existing.id === updated.id ? updated : existing),
+                                  );
+                                }}
+                              />
+                            ) : (
+                              <SupplySourceField
+                                value={item.supply_source}
+                                readOnly
+                                onChange={() => {}}
+                              />
+                            )
                           )}
                         </div>
                       )}

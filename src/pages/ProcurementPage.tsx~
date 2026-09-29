@@ -1769,7 +1769,8 @@ export function ProcurementPage({
                       ) : (
                         <SupplySourceField
                           value={item.supply_source}
-                          readOnly
+                          options={["stock", "supplier_direct"]}
+                          disabled
                           onChange={() => {}}
                         />
                       )}
