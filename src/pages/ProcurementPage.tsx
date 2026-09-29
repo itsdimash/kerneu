@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { Chip } from "../app/components/common/Chip";
 import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
-import { SupplySourceBadge, SupplySourceSelect } from "../app/components/common/SupplySourceControl";
+import { SupplySourceBadge, SupplySourceField, SupplySourceSelect } from "../app/components/common/SupplySourceControl";
 import { InlineSearchToggle, useInlineSearch } from "../app/components/common/InlineSearchToggle";
 import { ProcurementSummaryView } from "./ProcurementSummaryView";
 import { Popover, PopoverContent, PopoverTrigger } from "../app/components/ui/popover";
@@ -82,14 +82,14 @@ type ProcurementProjectItem = {
   unit?: string | null;
   status_id?: number | null;
   status_name?: string | null;
-  
+
   // Обновленные поля для поставщика согласно новой схеме БД
   supplier_id?: number | null;
   supplier_raw_name?: string | null;
   supplier?: {
     id?: number;
     name?: string | null;
-  } | string | null; 
+  } | string | null;
 
   product?: {
     id?: number;
@@ -1303,7 +1303,7 @@ export function ProcurementPage({
 
         return (
           <div key={supplier} className="bg-card rounded-lg border border-border mb-5 shadow-sm overflow-hidden transition-all duration-200 hover:shadow-md hover:border-primary/20">
-            <div 
+            <div
               className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-4 bg-background cursor-pointer hover:bg-muted/50 border-b border-border"
               onClick={() => toggleSupplier(supplier)}
             >
@@ -1410,22 +1410,22 @@ export function ProcurementPage({
                         <span className="text-sm font-medium text-foreground max-w-[200px] truncate" title={wfState.fileName || wfState.file?.name}>
                           {wfState.fileName || wfState.file?.name}
                         </span>
-                        
+
                         <div className="h-4 w-px bg-blue-200 mx-1"></div>
-                        
+
                         <button onClick={() => downloadFile(wfState)} className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1">
                           <Download size={13}/> Скачать
                         </button>
-                        
+
                         {(isPm || isAccountant) && isAwaitingSend(wfState.status) && (
                           <label className="text-xs font-medium text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1 ml-2">
                             Заменить
-                            <input 
-                              type="file" 
-                              className="hidden" 
+                            <input
+                              type="file"
+                              className="hidden"
                               onChange={(e) => {
                                 if(e.target.files?.[0]) handleFileUpload(supplier, e.target.files[0]);
-                              }} 
+                              }}
                             />
                           </label>
                         )}
@@ -1738,27 +1738,41 @@ export function ProcurementPage({
                           </div>
                         ) : null}
                       </div>
-                      <SupplySourceSelect
-                        projectId={selectedProject.id}
-                        itemId={item.id}
-                        value={item.supply_source}
-                        options={["stock", "supplier_direct"]}
-                        onUpdated={(updated) =>
-                          setPurchaseItems(prev =>
-                            prev.map(p =>
-                              p.id === item.id
-                                ? {
-                                    ...p,
-                                    supply_source: updated.supply_source,
-                                    ...(updated.procurement_quantity !== undefined
-                                      ? { procurement_quantity: updated.procurement_quantity }
-                                      : {}),
-                                  }
-                                : p
+                      {/* Выбор ПМ «Закупка / Цех» после подписания договора/КП
+                          менять нельзя. Здесь разрешено только логистическое
+                          уточнение закупаемой позиции: на наш склад или напрямую
+                          со склада поставщика — и только тем же ролям/статусу,
+                          что и поставщик/себестоимость (canChangeSupplier).
+                          Позиции «Цех» и всё вне гейта — только для чтения. */}
+                      {canChangeSupplier && item.supply_source !== "workshop" ? (
+                        <SupplySourceSelect
+                          projectId={selectedProject.id}
+                          itemId={item.id}
+                          value={item.supply_source}
+                          options={["stock", "supplier_direct"]}
+                          onUpdated={(updated) =>
+                            setPurchaseItems(prev =>
+                              prev.map(p =>
+                                p.id === item.id
+                                  ? {
+                                      ...p,
+                                      supply_source: updated.supply_source,
+                                      ...(updated.procurement_quantity !== undefined
+                                        ? { procurement_quantity: updated.procurement_quantity }
+                                        : {}),
+                                    }
+                                  : p
+                              )
                             )
-                          )
-                        }
-                      />
+                          }
+                        />
+                      ) : (
+                        <SupplySourceField
+                          value={item.supply_source}
+                          readOnly
+                          onChange={() => {}}
+                        />
+                      )}
                     </div>
                   ))}
                 </div>

@@ -72,6 +72,10 @@ interface SupplySourceFieldProps {
   // списке (например supplier_direct на странице проекта), показывается
   // как есть, а не подменяется на "Закупка".
   options?: SupplySource[];
+  // Источник зафиксирован (проект ушёл дальше редактирования / договор
+  // подписан): рисуем статичное значение без <select> и без стрелки —
+  // чтобы не выглядело как поле, которое можно открыть.
+  readOnly?: boolean;
 }
 
 // Чисто визуальный селект источника: сам ничего не сохраняет, вызов API —
@@ -84,8 +88,20 @@ export function SupplySourceField({
   saving,
   error,
   options = DEFAULT_SOURCE_OPTIONS,
+  readOnly,
 }: SupplySourceFieldProps) {
   const selectValue: SupplySource = value ?? "stock";
+  if (readOnly) {
+    return (
+      <span
+        title="Источник зафиксирован и не меняется"
+        aria-label="Источник позиции"
+        className="inline-flex w-fit items-center rounded-md border border-border bg-muted px-1.5 py-1 text-xs text-foreground whitespace-nowrap cursor-default"
+      >
+        {SOURCE_LABELS[selectValue]}
+      </span>
+    );
+  }
   const shown = options.includes(selectValue) ? options : [...options, selectValue];
   return (
     <div className="flex flex-col items-start gap-1">
