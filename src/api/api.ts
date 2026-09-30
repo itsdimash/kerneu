@@ -181,9 +181,9 @@ export interface KitComponentStatus {
 }
 
 // Откуда позиция физически попадает к клиенту: обычная закупка со своего
-// склада, собственный цех или прямая отгрузка со склада поставщика.
+// склада или прямая отгрузка со склада поставщика.
 // undefined (старый backend без поля) трактуется как "stock".
-export type SupplySource = "stock" | "workshop" | "supplier_direct";
+export type SupplySource = "stock" | "supplier_direct";
 
 export interface MlImportItemResponse {
   id: number;
@@ -215,7 +215,6 @@ export interface MlImportItemResponse {
   selected_product_id: number | null;
   final_quantity: number | null;
 
-  user_comment: string | null;
   is_confirmed: boolean;
 
   // Опционально: старый backend поле не отдаёт, отсутствие = "stock".
@@ -279,8 +278,6 @@ export interface MlImportItemUpdate {
   price_cost?: number | null;
   estimated_price?: number | null;
   supplier_name?: string | null;
-
-  user_comment?: string | null;
 
   supply_source?: SupplySource;
 }
@@ -451,7 +448,6 @@ export interface MlImportItemCreate {
   supplier_name?: string | null;
   price_cost?: number | null;
   price?: number | null;
-  user_comment?: string | null;
 }
 
 export async function createMlImport(
@@ -1496,8 +1492,8 @@ export interface UpdateProjectItemSourcePayload {
   supply_source: SupplySource;
 }
 
-// PM помечает позицию как "Закупка" (stock) или "Цех" (workshop). Как и
-// updateProjectItemProduct — точечный PATCH позиции, в ответе актуальный
+// PM помечает позицию как "Закупка" (stock) или "Со склада поставщика"
+// (supplier_direct). Как и updateProjectItemProduct — точечный PATCH позиции, в ответе актуальный
 // ProjectItemResponse.
 export async function updateProjectItemSource(
   projectId: number | string,
@@ -1714,7 +1710,7 @@ export interface WarehouseReceiptResponse {
   defect_resolved?: boolean;        // добавить, если нет
   supplier_raw_name?: string | null; // заявка на приход: поставщик ещё не назначен, только сырое название
   source?: string | null;            // например, "income_request" — заявка ПМ, а не обычный приход
-  // Источник связанной позиции проекта. Для workshop/supplier_direct приход
+  // Источник связанной позиции проекта. Для supplier_direct приход
   // закрыт (denied) не как отказ, а потому что товар придёт мимо нашего склада.
   supply_source?: SupplySource;
   kit_group_key?: string | null;
@@ -1941,7 +1937,7 @@ export interface ShipmentHistoryItem {
   kit_quantity?: number | string | null;
   quantity_per_kit?: number | string | null;
   comment?: string | null;
-  // Отгрузки из цеха / напрямую от поставщика идут мимо нашего склада —
+  // Отгрузки напрямую от поставщика идут мимо нашего склада —
   // warehouse_id у них null. Отсутствие поля = обычная складская ("stock").
   supply_source?: SupplySource;
   photos?: ShipmentHistoryPhoto[];
@@ -2008,7 +2004,7 @@ export const shipProjectItemsPerWarehouse = async (
   return data;
 };
 
-// 400 от ship-from-workshop / ship-from-supplier: источник поставки позиции не
+// 400 от ship-from-supplier: источник поставки позиции не
 // совпадает с тем, что требует эндпоинт. Структурированный вид (detail —
 // объект с error_code = "supply_source_mismatch" и item_name/expected/actual)
 // предпочтителен; пока backend отдаёт только строку "Позиция «X» имеет
@@ -2053,21 +2049,6 @@ function throwShipDirectError(error: unknown, fallback: string): never {
 
   throwWithDetail(error, fallback);
 }
-
-// Отгрузка позиций, которые не проходят через наш склад: у них нет
-// warehouse_id и резерва, поэтому в теле item_ids и необязательный comment —
-// если передан, сохраняется в истории отгрузок.
-export const shipFromWorkshop = async (projectId: number, itemIds: number[], comment?: string) => {
-  try {
-    const { data } = await api.post(
-      `/warehouse/projects/${projectId}/ship-from-workshop`,
-      comment ? { item_ids: itemIds, comment } : { item_ids: itemIds },
-    );
-    return data;
-  } catch (error) {
-    throwShipDirectError(error, "Не удалось отметить отгрузку со склада цеха");
-  }
-};
 
 export const shipFromSupplier = async (projectId: number, itemIds: number[], comment?: string) => {
   try {

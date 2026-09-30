@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Factory, Loader2, Truck } from "lucide-react";
+import { Loader2, Truck } from "lucide-react";
 import {
   updateProjectItemSource,
   type ProjectItemResponse,
@@ -8,12 +8,11 @@ import {
 
 const SOURCE_LABELS: Record<SupplySource, string> = {
   stock: "Закупка",
-  workshop: "Цех",
   supplier_direct: "Со склада поставщика",
 };
 
-// Бейдж получают только источники, отличные от обычной закупки: "Цех" и
-// прямая отгрузка со склада поставщика (такая позиция не попадает в приход).
+// Бейдж получает только источник, отличный от обычной закупки: прямая
+// отгрузка со склада поставщика (такая позиция не попадает в приход).
 export function SupplySourceBadge({
   source,
   className,
@@ -21,17 +20,6 @@ export function SupplySourceBadge({
   source: SupplySource | undefined;
   className?: string;
 }) {
-  if (source === "workshop") {
-    return (
-      <span
-        title="Позиция из собственного цеха"
-        className={`inline-flex w-fit items-center gap-1 rounded-md bg-amber-100 dark:bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300 ${className ?? ""}`}
-      >
-        <Factory size={10} className="shrink-0" />
-        Цех
-      </span>
-    );
-  }
   if (source === "supplier_direct") {
     return (
       <span
@@ -48,7 +36,6 @@ export function SupplySourceBadge({
 
 // Подписи для уже состоявшейся отгрузки не через наш склад (история отгрузок).
 export const SUPPLY_SOURCE_SHIPPED_LABELS: Partial<Record<SupplySource, string>> = {
-  workshop: "Отправлено из цеха",
   supplier_direct: "Отправлено со склада поставщика",
 };
 
@@ -56,11 +43,10 @@ export const SUPPLY_SOURCE_SHIPPED_LABELS: Partial<Record<SupplySource, string>>
 // физически товар ещё не отправлен, приход просто не нужен — поэтому будущее
 // время, а не подписи из SUPPLY_SOURCE_SHIPPED_LABELS (те — про факт отгрузки).
 export const SUPPLY_SOURCE_PENDING_SHIPMENT_LABELS: Partial<Record<SupplySource, string>> = {
-  workshop: "Будет отправлено из цеха",
   supplier_direct: "Будет отправлено со склада поставщика",
 };
 
-const DEFAULT_SOURCE_OPTIONS: SupplySource[] = ["stock", "workshop"];
+const DEFAULT_SOURCE_OPTIONS: SupplySource[] = ["stock"];
 
 interface SupplySourceFieldProps {
   value: SupplySource | undefined;
@@ -135,7 +121,7 @@ interface SupplySourceSelectProps {
   options?: SupplySource[];
 }
 
-// Выбор "Закупка / Цех" для PM у позиции проекта (после одобрения). Как и
+// Выбор источника позиции для PM у позиции проекта (после одобрения). Как и
 // FixProductButton — точечный PATCH позиции; причину отказа backend'а
 // показываем под селектом, потому что заранее её не знаем.
 export function SupplySourceSelect({ projectId, itemId, value, onUpdated, options }: SupplySourceSelectProps) {

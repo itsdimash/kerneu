@@ -31,7 +31,6 @@ import {
   Trash2,
   Package,
   Truck,
-  Factory,
   User,
   Warehouse,
   History,
@@ -49,7 +48,6 @@ import {
   reserveProjectItems,
   shipProjectItems,
   shipProjectItemsPerWarehouse,
-  shipFromWorkshop,
   shipFromSupplier,
   SupplySourceMismatchError,
   fetchWarehouseShipments,
@@ -105,9 +103,6 @@ type StockRow = {
 function formatSupplySourceMismatch(error: SupplySourceMismatchError): string {
   const name = error.itemName ? `«${error.itemName}»` : "Позиция";
 
-  if (error.expected === "workshop") {
-    return `${name} не помечена как позиция из цеха — сначала выберите источник «Цех» на странице проекта, либо снимите отметку с этой позиции.`;
-  }
   if (error.expected === "supplier_direct") {
     return `${name} не помечена как позиция от поставщика — сначала отметьте её «Со склада поставщика» (в Закупках перед отправкой на приход или на вкладке «Поступления»), либо снимите отметку с этой позиции.`;
   }
@@ -144,7 +139,7 @@ type ArrivalRow = {
   defectResolved: boolean;
   // источник прихода: "pm_request" — создан через «Заявку на приход»
   source: string | null;
-  // Источник связанной позиции; у denied-прихода workshop/supplier_direct
+  // Источник связанной позиции; у denied-прихода supplier_direct
   // меняет подпись статуса (см. arrivalDirectShipLabel).
   supplySource: SupplySource;
   kit_group_key: string | null;
@@ -179,12 +174,12 @@ type ArrivalStatusCounts = {
   // Отдельно от cancelledCount: "denied" — это ПМ отклонил заявку, а не
   // кладовщик отменил приход (ReceiptStatus.DENIED на бэкенде).
   deniedCount: number;
-  // denied-приходы, закрытые из-за отгрузки мимо склада (цех / поставщик) —
+  // denied-приходы, закрытые из-за отгрузки мимо склада (поставщик) —
   // это не отказ ПМ, считаем отдельно от deniedCount.
   directShipCount: number;
 };
 
-// Подпись статуса для denied-прихода с workshop/supplier_direct; undefined —
+// Подпись статуса для denied-прихода с supplier_direct; undefined —
 // обычный denied, подпись "Отклонено ПМ" остаётся.
 const arrivalDirectShipLabel = (a: ArrivalRow): string | undefined =>
   a.status === "denied" ? SUPPLY_SOURCE_PENDING_SHIPMENT_LABELS[a.supplySource] : undefined;
@@ -418,7 +413,7 @@ type ShipmentHistoryItemRow = {
   // плейсхолдер в маппере нельзя — тогда точка рендера не отличит его от
   // настоящего названия склада.
   warehouseName: string | null;
-  // "workshop" / "supplier_direct" — отгрузка мимо нашего склада, warehouse_id
+  // "supplier_direct" — отгрузка мимо нашего склада, warehouse_id
   // у неё NULL by design (это не "не зафиксирован").
   supplySource: SupplySource;
   kitGroupKey: string | null;
@@ -1446,7 +1441,7 @@ export function WarehousePage({
   const isPm = role === "pm" || role === "admin";
   // "director" — легаси-алиас commercial_director, см. ProjectPage.tsx:4071.
   const isCommercialDirector = role === "commercial_director" || (role as string) === "director";
-  // Отметки "отправлено со склада цеха / поставщика" — решение PM и Комдира,
+  // Отметка "отправлено со склада поставщика" — решение PM и Комдира,
   // а не кладовщика (у таких позиций нет резерва на нашем складе).
   const canShipDirect = isPm || isCommercialDirector;
 
@@ -1954,17 +1949,15 @@ export function WarehousePage({
     }
   };
 
-  // Отгрузка позиций мимо нашего склада (цех / прямая от поставщика).
+  // Отгрузка позиций мимо нашего склада (прямая от поставщика).
   // Не требует warehouseId и не трогает фото/резервы — отдельный путь от
   // handleSendToShipment. Локально убираем отгруженные позиции сразу, а
   // loadPendingShipments() остаётся источником истины.
-  const handleShipDirect = async (projectId: number, kind: "workshop" | "supplier") => {
+  const handleShipDirect = async (projectId: number) => {
     const proj = pendingShipments.find((p) => p.projectId === projectId);
     if (!proj) return;
 
-    const targets = proj.items.filter(
-      (it) => it.checked && (kind === "supplier" || it.supplySource === "workshop")
-    );
+    const targets = proj.items.filter((it) => it.checked);
     if (targets.length === 0) return;
 
     const shippedIds = new Set(targets.map((it) => it.id));
@@ -1975,11 +1968,7 @@ export function WarehousePage({
 
     try {
       const itemIds = targets.map((it) => it.id);
-      if (kind === "workshop") {
-        await shipFromWorkshop(projectId, itemIds);
-      } else {
-        await shipFromSupplier(projectId, itemIds);
-      }
+      await shipFromSupplier(projectId, itemIds);
 
       setPendingShipments((prev) =>
         prev
@@ -2004,9 +1993,7 @@ export function WarehousePage({
           ? formatSupplySourceMismatch(e)
           : e instanceof Error && e.message
             ? e.message
-            : kind === "workshop"
-              ? "Не удалось отметить отгрузку из цеха"
-              : "Не удалось отметить отгрузку со склада поставщика";
+            : "Не удалось отметить отгрузку со склада поставщика";
       setPendingShipments((prev) =>
         prev.map((p) => (p.projectId === projectId ? { ...p, submitting: false, error: message } : p))
       );
@@ -3527,7 +3514,7 @@ export function WarehousePage({
                                   type="checkbox"
                                   checked={it.checked}
                                   // Для кладовщика без склада отметить нельзя (как раньше);
-                                  // PM/Комдир отмечают и цеховые/прямые позиции, у которых
+                                  // PM/Комдир отмечают и прямые позиции, у которых
                                   // availableWarehouses пуст.
                                   disabled={proj.submitting || (isWarehouseUser && !it.warehouseId)}
                                   onChange={() => toggleShipmentItemChecked(proj.projectId, it.id)}
@@ -3562,7 +3549,7 @@ export function WarehousePage({
                                 <td className="px-5 py-3 text-xs text-muted-foreground">{it.unit}</td>
                                 <td className="px-5 py-3">
                                   {it.availableWarehouses.length === 0 ? (
-                                    // workshop/supplier_direct не резервируются на нашем складе по
+                                    // supplier_direct не резервируется на нашем складе по
                                     // дизайну — это ожидаемое состояние, а не нехватка товара.
                                     SUPPLY_SOURCE_PENDING_SHIPMENT_LABELS[it.supplySource] ? (
                                       <span className="text-xs font-medium text-blue-700 dark:text-blue-300">
@@ -3647,16 +3634,7 @@ export function WarehousePage({
                         <div className="flex flex-wrap items-center justify-end gap-3 px-5 py-3.5 border-t border-border bg-background/40">
                           <button
                             type="button"
-                            onClick={() => handleShipDirect(proj.projectId, "workshop")}
-                            disabled={proj.submitting || !checkedItems.some((it) => it.supplySource === "workshop")}
-                            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg border border-border text-foreground hover:bg-background transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {proj.submitting ? <Loader2 size={15} className="animate-spin" /> : <Factory size={15} />}
-                            Отправлено из цеха
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleShipDirect(proj.projectId, "supplier")}
+                            onClick={() => handleShipDirect(proj.projectId)}
                             disabled={proj.submitting || checkedItems.length === 0}
                             className="flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg border border-border text-foreground hover:bg-background transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           >
