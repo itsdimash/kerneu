@@ -62,7 +62,7 @@ import { KitGroupHeaderRow } from "../app/components/common/KitGroupHeaderRow";
 import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
 import { FixProductButton } from "../app/components/common/FixProductButton";
 import { ConfirmDialog } from "../app/components/modals/ConfirmDialog";
-import { SupplySourceBadge, SupplySourceField, SupplySourceSelect } from "../app/components/common/SupplySourceControl";
+import { SupplySourceBadge } from "../app/components/common/SupplySourceControl";
 import { ML_STATUS_STYLES, NEW_PRODUCT_ML_STATUS, UNKNOWN_ML_STATUS_STYLE, normalizeMlStatus } from "../lib/stockStatus";
 import { groupEntriesByKit } from "../lib/kitGroups";
 
@@ -2278,16 +2278,6 @@ export function ProjectPagePM({
                                   <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
                                 </span>
                               )}
-                              {/* Источник ПМ выбирает только в «В редактировании» (черновик
-                                  ml-импорта, SupplySourceField выше). Здесь проект уже ушёл
-                                  Комдиру/клиенту/в закуп — источник только для чтения. */}
-                              {!isKitComponent && (
-                                <SupplySourceField
-                                  value={item.supply_source}
-                                  readOnly
-                                  onChange={() => {}}
-                                />
-                              )}
                             </div>
                           </td>
                         </tr>
@@ -2404,8 +2394,8 @@ export function ProjectPagePM({
                     <thead>
                       <tr className="border-b border-border bg-background/60">
                         {(isWarehouseRequest
-                          ? ["№", "Наименование", "Кол-во", "Совпавший товар", "Ед.", "Доступно", "Комментарий", "Источник", "Статус", ""]
-                          : ["№", "Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Цена", "Сумма", "Доступно", "Комментарий", "Источник", "Статус", ""]
+                          ? ["№", "Наименование", "Кол-во", "Совпавший товар", "Ед.", "Доступно", "Статус", ""]
+                          : ["№", "Исходный товар", "Кол-во", "Статус ML", "Совпавший товар", "Цена", "Сумма", "Доступно", "Статус", ""]
                         ).map((heading, headingIndex) => (
                           <th key={heading || `actions-${headingIndex}`} className="px-4 py-2.5 text-xs font-medium text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">{heading}</th>
                         ))}
@@ -2413,10 +2403,10 @@ export function ProjectPagePM({
                     </thead>
                     <tbody className="divide-y divide-border">
                       {mlImport.items.length === 0 && !isAddingRow && (
-                        <tr><td colSpan={isWarehouseRequest ? 10 : 12} className="px-4 py-10 text-center text-sm text-muted-foreground">В ML-импорте нет товаров</td></tr>
+                        <tr><td colSpan={isWarehouseRequest ? 8 : 10} className="px-4 py-10 text-center text-sm text-muted-foreground">В ML-импорте нет товаров</td></tr>
                       )}
                       {mlImport.items.length > 0 && visibleMlImportItems.length === 0 && (
-                        <tr><td colSpan={isWarehouseRequest ? 10 : 12} className="px-4 py-10 text-center text-sm text-muted-foreground">Совпадений не найдено</td></tr>
+                        <tr><td colSpan={isWarehouseRequest ? 8 : 10} className="px-4 py-10 text-center text-sm text-muted-foreground">Совпадений не найдено</td></tr>
                       )}
                       {visibleMlImportItems.map(({ item, index }) => {
                           const isUpdating = updatingItemId === item.id;
@@ -2831,32 +2821,6 @@ export function ProjectPagePM({
                                   )}
                                 </td>
                                 <td className="px-4 py-3">
-                                  <input
-                                      key={`${item.id}-comment-${item.user_comment ?? ""}`}
-                                      type="text" maxLength={1000} disabled={mlImport.status !== "draft" || isUpdating || item.is_confirmed}
-                                      defaultValue={item.user_comment ?? ""} placeholder="Комментарий"
-                                      onBlur={(event) => {
-                                        const comment = event.target.value.trim() || null;
-                                        if (comment !== item.user_comment) {
-                                          handleMlItemUpdate(item.id, {user_comment: comment});
-                                        }
-                                      }}
-                                      className="w-44 px-2 py-1.5 text-sm border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
-                                  />
-                                </td>
-                                <td className="px-4 py-3">
-                                  {item.is_kit ? (
-                                    <span className="text-xs text-muted-foreground">—</span>
-                                  ) : (
-                                    <SupplySourceField
-                                      value={item.supply_source}
-                                      disabled={mlImport.status !== "draft" || item.is_confirmed}
-                                      saving={isUpdating}
-                                      onChange={(next) => handleMlItemUpdate(item.id, { supply_source: next })}
-                                    />
-                                  )}
-                                </td>
-                                <td className="px-4 py-3">
                                   {isUpdating ? (
                                       <Loader2
                                           size={16}
@@ -2985,7 +2949,7 @@ export function ProjectPagePM({
                                 className="w-24 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
                             />
                           </td>
-                          <td colSpan={isWarehouseRequest ? 6 : 8} className="px-4 py-3 text-xs text-muted-foreground">
+                          <td colSpan={isWarehouseRequest ? 4 : 6} className="px-4 py-3 text-xs text-muted-foreground">
                             Товар из каталога и цену продажи укажите в самой строке
                             после её создания.
                           </td>
@@ -4050,28 +4014,6 @@ const [itemSaveError, setItemSaveError] =
                             <span title="Изменено Комдиром">
                               <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
                             </span>
-                          )}
-                          {/* Источник может менять только Комдир и только пока проект
-                              ждёт его решения (canEditItems). После решения — read-only. */}
-                          {!isKitComponent && (
-                            canEditItems ? (
-                              <SupplySourceSelect
-                                projectId={resolvedProjectId}
-                                itemId={item.id}
-                                value={item.supply_source}
-                                onUpdated={(updated) => {
-                                  setProjectItems((current) =>
-                                    current.map((existing) => existing.id === updated.id ? updated : existing),
-                                  );
-                                }}
-                              />
-                            ) : (
-                              <SupplySourceField
-                                value={item.supply_source}
-                                readOnly
-                                onChange={() => {}}
-                              />
-                            )
                           )}
                         </div>
                       )}
