@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FolderOpen, FileText, ShoppingCart, Package, CheckSquare, Receipt, LayoutDashboard, X, Search, History, Landmark, Sparkles, PanelLeftClose, PanelLeftOpen, ListChecks, Loader2 } from "lucide-react";
+import { FolderOpen, FileText, ShoppingCart, Package, CheckSquare, Receipt, LayoutDashboard, X, Search, History, Landmark, Sparkles, PanelLeftClose, PanelLeftOpen, ListChecks, Loader2, Users } from "lucide-react";
 import type { Page, Role, ProjectState } from "../../../types";
 import type { NotificationCategory } from "../../../data/systemNotifications";
 import { useNotifications } from "../../notifications/NotificationsContext";
@@ -53,6 +53,7 @@ export const NAV: { id: Page; label: string; icon: React.ElementType; badge?: nu
   { id: "procurement", label: "Закупки",    icon: ShoppingCart,    roles: ["commercial_director", "pm", "accountant"] },
   { id: "warehouse",   label: "Склад",      icon: Package,         roles: ["commercial_director", "pm", "warehouse"] },
   { id: "documents",   label: "Документы",  icon: CheckSquare,     roles: ["commercial_director", "pm", "accountant"] },
+  { id: "clients",     label: "Клиенты",    icon: Users,           roles: ["pm", "commercial_director", "admin"] },
   { id: "suppliers",   label: "Поставщики", icon: History, roles: ["commercial_director", "pm", "warehouse"] },
   // Данные тянутся напрямую из 1С:Бухгалтерия. Список ролей должен совпадать
   // с ALLOWED_ROLES в app/api/v1/routers/onec.py на бэке — иначе пункт меню

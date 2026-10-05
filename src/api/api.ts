@@ -613,7 +613,7 @@ export async function fetchProductsAvailability(
 
 // Backend отдаёт понятную человеку причину в detail (строкой). Без этой
 // распаковки пользователь видел бы "Request failed with status code 409".
-function throwWithDetail(error: unknown, fallback: string): never {
+export function throwWithDetail(error: unknown, fallback: string): never {
   if (axios.isAxiosError(error)) {
     const detail = error.response?.data?.detail;
     if (typeof detail === "string" && detail.trim()) {

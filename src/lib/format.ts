@@ -4,6 +4,13 @@ export function fmt(n: number | null | undefined) {
   return n.toLocaleString("ru-RU") + " ₸";
 }
 
+export function formatDate(value: string | null | undefined) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("ru-RU");
+}
+
 export function daysFromNow(deadline: string): number {
   const [d, m, y] = deadline.split(".");
   const date = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
