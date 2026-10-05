@@ -6,6 +6,8 @@ import { ShipmentModal } from "../app/components/modals/ShipmentModal";
 import { IncomeRequestModal, IncomeRequestPrefill } from "../app/components/modals/IncomeRequestModal";
 import { ConfirmDialog } from "../app/components/modals/ConfirmDialog";
 import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
+import { Chip } from "../app/components/common/Chip";
+import { Popover, PopoverContent, PopoverTrigger } from "../app/components/ui/popover";
 import {
   Accordion,
   AccordionContent,
@@ -34,10 +36,13 @@ import {
   User,
   Warehouse,
   History,
+  ChevronDown,
 } from "lucide-react";
 import type { ProjectState, Role } from "../types";
 import {
   fetchWarehouseStocks,
+  getStockReservations,
+  StockReservationsResponse,
   fetchWarehouseReceipts,
   postWarehouseIncome,
   setReceiptCancelled,
@@ -1424,6 +1429,131 @@ function ShipmentDetailsModal({
         <PhotoLightbox src={previewPhoto} alt="Фото отгрузки" onClose={() => setPreviewPhoto(null)} />
       )}
     </div>
+  );
+}
+
+// Поповер "В резерве": по каким проектам забронирован товар. Грузится лениво
+// при каждом открытии; имя проекта — ссылка только если передан onOpenProject.
+function ReservationsPopover({
+  row,
+  onOpenProject,
+}: {
+  row: StockRow;
+  onOpenProject?: (projectId: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState<StockReservationsResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setData(await getStockReservations(row.productId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось загрузить брони");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (open) {
+      setData(null);
+      void load();
+    }
+  }, [open]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          title="Показать проекты, в которых товар в резерве"
+          className="inline-flex items-center gap-1 font-mono text-violet-600 dark:text-violet-400 hover:underline"
+        >
+          {row.reserved.toLocaleString("ru-RU")}
+          <ChevronDown size={12} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-96 p-0">
+        <div className="px-4 py-3 border-b border-border text-left">
+          <p className="text-sm font-semibold text-foreground">{row.name}</p>
+          <p className="text-xs text-muted-foreground">
+            Всего в резерве: {row.reserved.toLocaleString("ru-RU")} {row.unit}
+          </p>
+        </div>
+        <div className="max-h-72 overflow-y-auto text-left">
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+              <Loader2 size={16} className="animate-spin text-primary" /> Загрузка…
+            </div>
+          ) : error ? (
+            <div className="px-4 py-4 space-y-2">
+              <p className="text-sm text-destructive">{error}</p>
+              <button
+                type="button"
+                onClick={() => void load()}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Повторить
+              </button>
+            </div>
+          ) : data && data.items.length === 0 && data.unattributed_quantity <= 0 ? (
+            <p className="px-4 py-6 text-center text-sm text-muted-foreground">Нет активных броней</p>
+          ) : data ? (
+            <ul className="divide-y divide-border">
+              {data.items.map((it, i) => (
+                <li key={`${it.project_id}-${it.source}-${i}`} className="px-4 py-2.5 flex items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-1">
+                    {onOpenProject ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpen(false);
+                          onOpenProject(it.project_id);
+                        }}
+                        className="text-sm font-medium text-primary hover:underline text-left break-words"
+                      >
+                        {it.project_name}
+                      </button>
+                    ) : (
+                      <span className="text-sm font-medium text-foreground break-words">{it.project_name}</span>
+                    )}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Chip status={it.status.label} />
+                      {it.is_pre_contract && (
+                        <span className="text-[11px] px-1.5 py-0.5 rounded-md bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-300 ring-1 ring-amber-200">
+                          Бронь до договора
+                        </span>
+                      )}
+                      {it.source === "receipt" && (
+                        <span className="text-[11px] text-muted-foreground">по приходу</span>
+                      )}
+                      <span className="text-xs text-muted-foreground">
+                        {it.created_at ? new Date(it.created_at).toLocaleDateString("ru-RU") : "—"}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-sm font-mono text-foreground text-right whitespace-nowrap">
+                    {it.reserved_quantity.toLocaleString("ru-RU")} {row.unit}
+                  </span>
+                </li>
+              ))}
+              {data.unattributed_quantity > 0 && (
+                <li className="px-4 py-2.5 flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                  <span>Не привязано к проекту</span>
+                  <span className="font-mono whitespace-nowrap">
+                    {data.unattributed_quantity.toLocaleString("ru-RU")} {row.unit}
+                  </span>
+                </li>
+              )}
+            </ul>
+          ) : null}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -3209,7 +3339,14 @@ export function WarehousePage({
                           {item.total.toLocaleString("ru-RU")}
                         </td>
                         <td className="px-4 py-3 text-sm font-mono text-violet-600 dark:text-violet-400 text-right whitespace-nowrap">
-                          {item.reserved.toLocaleString("ru-RU")}
+                          {item.reserved > 0 && (isPm || isCommercialDirector || isWarehouseUser) ? (
+                            <ReservationsPopover
+                              row={item}
+                              onOpenProject={isPm || isCommercialDirector ? onOpenProject : undefined}
+                            />
+                          ) : (
+                            item.reserved.toLocaleString("ru-RU")
+                          )}
                         </td>
                         <td className="px-4 py-3 text-sm font-mono text-right whitespace-nowrap">
                           {item.defective > 0 ? (
