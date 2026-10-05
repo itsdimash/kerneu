@@ -24,6 +24,7 @@ import { SupplierHistoryPage } from "../../../pages/SupplierHistoryPage";
 import { ClientsPage } from "../../../pages/ClientsPage";
 import { OneCPage } from "../../../pages/OneCPage";
 import { ApprovalsPage, type ApprovalsTabId } from "../../../pages/ApprovalsPage";
+import { PartnerRequestsPage } from "../../../pages/PartnerRequestsPage";
 import { NotificationsProvider } from "../../notifications/NotificationsContext";
 
 type UserData = {
@@ -75,6 +76,8 @@ const ROLE_SWITCHER_OPTIONS: { value: Role; label: string }[] = [
   { value: "warehouse", label: "Кладовщик" },
 ];
 
+const PARTNER_REQUESTS_ROLES: Role[] = ["commercial_director", "admin"];
+
 export function AppShell({
   role,
   realRole,
@@ -105,6 +108,29 @@ export function AppShell({
       setApprovalsTab(approvalsTabTarget);
     }
     onPage(p);
+  };
+
+  // Заявка партнёра, которую нужно открыть на странице «Заявки партнёров» —
+  // выставляется кликом по уведомлению (колокольчик у склада).
+  const [partnerRequestFocusId, setPartnerRequestFocusId] = useState<number | null>(null);
+
+  // Склад открывает страницу «Склад» на вкладке «Отгрузка» (там блок выдачи
+  // партнёрских заявок). nonce меняет key у WarehousePage, чтобы страница
+  // перемонтировалась с нужной вкладкой, даже если склад уже на ней.
+  const [warehouseIntent, setWarehouseIntent] = useState<{ nonce: number; focusId: number | null } | null>(null);
+
+  useEffect(() => {
+    if (page !== "warehouse") setWarehouseIntent(null);
+  }, [page]);
+
+  const openPartnerRequest = (partnerRequestId: number | null) => {
+    if (role === "warehouse") {
+      setWarehouseIntent({ nonce: Date.now(), focusId: partnerRequestId });
+      onPage("warehouse");
+      return;
+    }
+    setPartnerRequestFocusId(partnerRequestId);
+    onPage("partner_requests");
   };
 
   // Свёрнутое состояние Sidebar (только иконки) — сохраняем между
@@ -243,6 +269,7 @@ export function AppShell({
           onLogout={onLogout}
           onOpenProject={handleFindProject}
           onSelectProject={resolveAndSelectProject}
+          onOpenPartnerRequest={openPartnerRequest}
           onOpenMobileNav={() => setMobileNavOpen(true)}
         />
 
@@ -331,6 +358,9 @@ export function AppShell({
 
         {page === "warehouse" && (
             <WarehousePage
+            key={warehouseIntent?.nonce ?? 0}
+            initialTab={warehouseIntent ? "shipments" : undefined}
+            partnerFocusRequestId={warehouseIntent?.focusId ?? null}
             role={role}
             projectState={projectState}
             onOpenProject={handleFindProject}
@@ -362,6 +392,17 @@ export function AppShell({
               прокси-роут ERP_Bakend (/api/v1/ai/...), а не напрямую в
               ai-platform — см. app/api/v1/routers/ai_chat.py на бэке. */}
           {page === "ai-chat" && <AiChatPage role={role} />}
+
+          {/* Страница доступна только директору, складу и админу — page
+              может прийти из localStorage, поэтому роль проверяем и здесь,
+              а не только фильтром NAV в Sidebar. */}
+          {page === "partner_requests" && PARTNER_REQUESTS_ROLES.includes(role) && (
+            <PartnerRequestsPage
+              role={role}
+              initialRequestId={partnerRequestFocusId}
+              onInitialRequestHandled={() => setPartnerRequestFocusId(null)}
+            />
+          )}
 
           {page === "approvals" && (
             <ApprovalsPage

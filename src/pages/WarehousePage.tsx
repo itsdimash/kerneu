@@ -7,6 +7,11 @@ import { IncomeRequestModal, IncomeRequestPrefill } from "../app/components/moda
 import { ConfirmDialog } from "../app/components/modals/ConfirmDialog";
 import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
 import { Chip } from "../app/components/common/Chip";
+import { PartnerIssueSection } from "./warehouse/PartnerIssueSection";
+import { PartnerShipmentHistoryRows } from "./warehouse/PartnerIssueHistory";
+import { PartnerReservationRows } from "./warehouse/PartnerReservationRows";
+import { StockLoadError } from "./warehouse/StockLoadError";
+import { describeLoadError, type LoadFailure } from "../lib/loadError";
 import { Popover, PopoverContent, PopoverTrigger } from "../app/components/ui/popover";
 import {
   Accordion,
@@ -429,7 +434,10 @@ type ShipmentHistoryItemRow = {
   photoPath: string | null;
   // Готовый URL с бэкенда — рендерить фото только через него.
   photoUrl: string | null;
+  // Имя исполнителя (shipped_by_name); id пользователя отдельно — только чтобы отличить
+  // «исполнитель известен, но имя не пришло» от «не зафиксировано».
   shippedBy: string | null;
+  shippedById: number | null;
   shippedAt: string | null;
 };
 
@@ -641,7 +649,8 @@ function mapShipment(item: ShipmentHistoryResponse): ShipmentRow {
       // элементах photos[]), из-за чего фото никогда не отображалось.
       photoPath: it.photos?.[0]?.photo_path ?? null,
       photoUrl: it.photos?.[0]?.photo_url ?? null,
-      shippedBy: it.shipped_by ?? null,
+      shippedBy: it.shipped_by_name?.trim() ? it.shipped_by_name : null,
+      shippedById: it.shipped_by ?? null,
       shippedAt: it.shipped_at ?? null,
     })),
   };
@@ -1271,6 +1280,7 @@ function ShipmentDetailsModal({
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
 
   const shippedBy = shipment.items.find((it) => it.shippedBy)?.shippedBy || null;
+  const shippedHasId = shipment.items.some((it) => it.shippedById !== null);
   const photosCount = shipment.items.filter((it) => it.photoUrl).length;
   // Дата в строках нужна, только если позиции отгружались в разное время;
   // когда у всех одна (до минуты) — она уже есть в шапке "Дата отгрузки".
@@ -1307,6 +1317,8 @@ function ShipmentDetailsModal({
             <span className="text-muted-foreground">Отгрузил</span>
             {shippedBy ? (
               <span className="font-medium text-foreground">{shippedBy}</span>
+            ) : shippedHasId ? (
+              <span className="text-muted-foreground">—</span>
             ) : (
               <span className="text-muted-foreground italic">не зафиксировано</span>
             )}
@@ -1500,7 +1512,7 @@ function ReservationsPopover({
                 Повторить
               </button>
             </div>
-          ) : data && data.items.length === 0 && data.unattributed_quantity <= 0 ? (
+          ) : data && data.items.length === 0 && (data.partner_reservations ?? []).length === 0 && data.unattributed_quantity <= 0 ? (
             <p className="px-4 py-6 text-center text-sm text-muted-foreground">Нет активных броней</p>
           ) : data ? (
             <ul className="divide-y divide-border">
@@ -1541,6 +1553,7 @@ function ReservationsPopover({
                   </span>
                 </li>
               ))}
+              <PartnerReservationRows items={data.partner_reservations} unit={row.unit} />
               {data.unattributed_quantity > 0 && (
                 <li className="px-4 py-2.5 flex items-center justify-between gap-3 text-sm text-muted-foreground">
                   <span>Не привязано к проекту</span>
@@ -1561,11 +1574,17 @@ export function WarehousePage({
   role,
   projectState,
   onOpenProject,
+  initialTab,
+  partnerFocusRequestId,
 }: {
   role: Role;
   projectState: ProjectState;
   /** Opens the project page — called after a project is reverted to editing. */
   onOpenProject?: (projectId: number) => void;
+  /** Вкладка, открытая при монтировании (клик по уведомлению о партнёрской заявке). */
+  initialTab?: "stock" | "arrivals" | "shipments";
+  /** Партнёрская заявка, которую подсветить в блоке выдачи на вкладке «Отгрузка». */
+  partnerFocusRequestId?: number | null;
 }) {
   const isWarehouseUser = role === "warehouse";
   const isPm = role === "pm" || role === "admin";
@@ -1575,7 +1594,11 @@ export function WarehousePage({
   // а не кладовщика (у таких позиций нет резерва на нашем складе).
   const canShipDirect = isPm || isCommercialDirector;
 
-  const [tab, setTab] = useState<"stock" | "arrivals" | "shipments">("stock");
+  const [tab, setTab] = useState<"stock" | "arrivals" | "shipments">(initialTab ?? "stock");
+  // Сколько партнёрских карточек/строк истории сейчас показано (0 у ролей без доступа) —
+  // пустые сообщения вкладки «Отгрузка» не показываем, пока они есть.
+  const [partnerIssueCount, setPartnerIssueCount] = useState(0);
+  const [partnerHistoryCount, setPartnerHistoryCount] = useState(0);
 
   const [warehouses, setWarehouses] = useState<WarehouseInfo[]>(DEFAULT_WAREHOUSES);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<number | "all">("all");
@@ -1583,6 +1606,7 @@ export function WarehousePage({
   const [stock, setStock] = useState<StockRow[]>([]);
   const [stockLoading, setStockLoading] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
+  const [stockFailure, setStockFailure] = useState<LoadFailure | null>(null);
   const [stockFilter, setStockFilter] = useState<"all" | "low" | "reserved" | "brak">("all");
   const [stockSearch, setStockSearch] = useState("");
   const [stockSortField, setStockSortField] = useState<StockQuantityField | null>("available");
@@ -1705,12 +1729,14 @@ export function WarehousePage({
   const loadStock = async () => {
     setStockLoading(true);
     setStockError(null);
+    setStockFailure(null);
     try {
       const data = await fetchWarehouseStocks();
       setWarehouses((prev) => (prev.length > 0 ? prev : deriveWarehouses(data)));
       setStock(data.map(mapStock));
     } catch (e) {
       setStockError(e instanceof Error ? e.message : "Не удалось загрузить остатки склада");
+      setStockFailure(describeLoadError(e));
     } finally {
       setStockLoading(false);
     }
@@ -3252,6 +3278,8 @@ export function WarehousePage({
                 <Loader2 size={24} className="animate-spin text-primary mb-2" />
                 <p className="text-sm text-muted-foreground">Загрузка остатков…</p>
               </div>
+            ) : stockFailure && stock.length === 0 ? (
+              <StockLoadError failure={stockFailure} onRetry={() => void loadStock()} />
             ) : filteredStock.length === 0 ? (
               <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Нет данных об остатках</div>
             ) : (
@@ -3480,6 +3508,8 @@ export function WarehousePage({
             />
           </div>
 
+          <PartnerIssueSection role={role} focusRequestId={partnerFocusRequestId} search={shipmentSearch} warehouses={warehouses} onIssued={() => void loadStock()} onCountChange={setPartnerIssueCount} />
+
           {pendingError && (
             <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-400/15 border border-red-200 dark:border-red-400/25 rounded-lg mb-4">
               <AlertTriangle size={15} className="text-destructive mt-0.5 shrink-0" />
@@ -3493,13 +3523,17 @@ export function WarehousePage({
               <p className="text-sm text-muted-foreground">Загрузка проектов на отгрузку…</p>
             </div>
           ) : pendingShipments.length === 0 ? (
+            partnerIssueCount === 0 && (
             <div className="py-8 text-center text-sm text-muted-foreground bg-card rounded-lg border border-dashed border-border mb-6">
               Нет проектов, готовых к отгрузке
             </div>
+            )
           ) : filteredPendingShipments.length === 0 ? (
+            partnerIssueCount === 0 && (
             <div className="py-8 text-center text-sm text-muted-foreground bg-card rounded-lg border border-dashed border-border mb-6">
               Ничего не найдено
             </div>
+            )
           ) : (
             <Accordion
               type="multiple"
@@ -3828,9 +3862,9 @@ export function WarehousePage({
               <p className="text-sm text-muted-foreground">Загрузка отгрузок…</p>
             </div>
           ) : shipments.length === 0 ? (
-            <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Нет данных об отгрузках</div>
+            partnerHistoryCount === 0 && <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Нет данных об отгрузках</div>
           ) : shipmentHistoryGroups.length === 0 ? (
-            <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Ничего не найдено</div>
+            partnerHistoryCount === 0 && <div className="py-12 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"><Inbox size={22} className="text-muted-foreground/50" />Ничего не найдено</div>
           ) : (
             <Accordion
               type="multiple"
@@ -3881,6 +3915,7 @@ export function WarehousePage({
                           {group.shipments.map((s, index) => {
                             const photosCount = s.items.filter((it) => it.photoUrl).length;
                             const shippedBy = s.items.find((it) => it.shippedBy)?.shippedBy || null;
+                            const shippedHasId = s.items.some((it) => it.shippedById !== null);
                             const productSummary = s.items.map((it) => it.productName).join(", ");
 
                             return (
@@ -3917,12 +3952,14 @@ export function WarehousePage({
                                       <User size={12} className="text-muted-foreground" />
                                       {shippedBy}
                                     </span>
+                                  ) : shippedHasId ? (
+                                    <span className="text-xs text-muted-foreground/60">—</span>
                                   ) : (
                                     <span
                                       className="text-xs text-muted-foreground/60 italic"
                                       title="Не зафиксировано — отгрузка до внедрения учёта исполнителя"
                                     >
-                                      —
+                                      не зафиксировано
                                     </span>
                                   )}
                                 </td>
@@ -3942,6 +3979,7 @@ export function WarehousePage({
               ))}
             </Accordion>
           )}
+          <PartnerShipmentHistoryRows role={role} search={shipmentSearch} onCountChange={setPartnerHistoryCount} />
           </div>
         </>
       )}

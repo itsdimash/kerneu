@@ -890,7 +890,8 @@ export interface WarehouseStockResponse {
 }
 
 export const fetchWarehouseStocks = async (): Promise<WarehouseStockResponse[]> => {
-  const { data } = await api.get<WarehouseStockResponse[]>("/warehouse/stocks");
+  // Таймаут: без него зависший запрос оставлял страницу Склад на спиннере навсегда.
+  const { data } = await api.get<WarehouseStockResponse[]>("/warehouse/stocks", { timeout: 30_000 });
   return data;
 };
 
@@ -906,12 +907,24 @@ export interface StockReservationItem {
   is_pre_contract: boolean;
 }
 
+// Резерв товара под партнёрскую заявку (одобрена, ещё не выдана).
+export interface StockPartnerReservation {
+  request_id: number;
+  project_name: string | null;
+  client_id: number;
+  client_name: string;
+  quantity: number;
+  decided_at: string | null;
+}
+
 export interface StockReservationsResponse {
   product_id: number;
   reserved_quantity: number;
   attributed_quantity: number;
   unattributed_quantity: number;
   items: StockReservationItem[];
+  // Может отсутствовать у старого бэкенда — трактуем как пустой список.
+  partner_reservations?: StockPartnerReservation[];
 }
 
 export const getStockReservations = async (productId: number): Promise<StockReservationsResponse> => {
@@ -943,6 +956,8 @@ export const postWarehouseIncome = async (payload: WarehouseIncomeInput) => {
 export interface WarehouseIncomeRequestItem {
   product_name: string;
   quantity: number;
+  // Товар из каталога: backend использует его, а не создаёт дубликат по названию.
+  product_id?: number;
   // Заполняются, когда заявка создаётся из отклонённой позиции прихода
   // (см. WarehousePage: deny → IncomeRequestModal с prefill) — связывают
   // новую заявку с проектом/строкой проекта, ради которой её пересоздают.
@@ -962,6 +977,56 @@ export const postWarehouseIncomeRequest = async (
   const { data } = await api.post<WarehouseReceiptResponse[]>("/warehouse/income-request", payload);
   return data;
 };
+
+// Распознавание документа поставщика (PDF / XLSX / DOCX) в позиции заявки на приход.
+// Синхронный вызов, ничего не создаёт — только возвращает строки для проверки ПМ.
+export interface ParsedIncomeItem {
+  name: string;
+  quantity: number | null; // целое > 0; null — не распознано или дробное
+  raw_quantity: number | null;
+  product_id: number | null; // уверенное совпадение с товаром каталога
+  matched_name: string | null;
+  suggested_product_id: number | null; // только подсказка «возможное совпадение»
+  similarity: number | null;
+  status: string;
+  unit: string | null;
+  stock_warehouse_ids: number[]; // склады, где совпавший товар уже лежит
+  warnings: string[];
+}
+
+export interface ParsedIncomeResponse {
+  filename: string;
+  items: ParsedIncomeItem[];
+  warnings: string[];
+}
+
+const PARSE_INCOME_TIMEOUT_MS = 120_000;
+
+export async function parseWarehouseIncomeDocument(file: File): Promise<ParsedIncomeResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    const { data } = await api.post<ParsedIncomeResponse>(
+      "/warehouse/income-request/parse",
+      formData,
+      {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: PARSE_INCOME_TIMEOUT_MS,
+      },
+    );
+    return data;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const detail = error.response?.data?.detail;
+      if (!(typeof detail === "string" && detail.trim())) {
+        if (error.response?.status === 413) throw new Error("Файл слишком большой (максимум 20 МБ)");
+        if (error.code === "ECONNABORTED") throw new Error("Распознавание заняло слишком много времени. Попробуйте ещё раз");
+      }
+    }
+    throwWithDetail(error, "Не удалось распознать документ");
+  }
+}
 
 export const reserveProjectItems = async (projectId: number, warehouseId: number = 1) => {
   const { data } = await api.post(
@@ -1966,7 +2031,9 @@ export interface ShipmentHistoryItem {
   // warehouse_id у них null. Отсутствие поля = обычная складская ("stock").
   supply_source?: SupplySource;
   photos?: ShipmentHistoryPhoto[];
-  shipped_by?: string | null;
+  // id пользователя (число) — голым его показывать нельзя, для вывода есть shipped_by_name.
+  shipped_by?: number | null;
+  shipped_by_name?: string | null;
   shipped_at?: string | null;
 }
 

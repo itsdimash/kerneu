@@ -16,7 +16,27 @@ type NotificationsContextValue = {
    *  "Заявки на согласование" item) watch this to trigger a one-shot
    *  animation only for genuinely new, real-time arrivals. */
   lastArrived: SystemNotification | null;
+  /** Заявка партнёра решена (одобрена/отклонена/отменена) — её копии
+   *  partner_request_new перестают быть «требующими действия». Бэкенд сам
+   *  переводит их в итоговую категорию с is_read=true; здесь то же самое
+   *  применяется локально, не дожидаясь перезагрузки списка. */
+  settlePartnerRequest: (partnerRequestId: number) => void;
 };
+
+// Итоговые категории, в которые бэкенд переводит копии partner_request_new.
+const PARTNER_SETTLED_CATEGORIES = new Set<SystemNotification["category"]>([
+  "partner_request_approved",
+  "partner_request_rejected",
+  "partner_request_cancelled",
+]);
+
+function settleLocally(items: SystemNotification[], partnerRequestId: number): SystemNotification[] {
+  return items.map((n) =>
+    n.category === "partner_request_new" && n.partnerRequestId === partnerRequestId && !n.read
+      ? { ...n, read: true }
+      : n,
+  );
+}
 
 const NotificationsContext = createContext<NotificationsContextValue | null>(null);
 
@@ -42,7 +62,12 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     return connectNotificationsSocket((notification) => {
-      setItems((prev) => [notification, ...prev]);
+      setItems((prev) => {
+        const next = [notification, ...prev];
+        return PARTNER_SETTLED_CATEGORIES.has(notification.category) && notification.partnerRequestId !== undefined
+          ? settleLocally(next, notification.partnerRequestId)
+          : next;
+      });
       if (loadedOnce.current) {
         setLastArrived(notification);
       }
@@ -66,8 +91,12 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     );
   }
 
+  function settlePartnerRequest(partnerRequestId: number) {
+    setItems((prev) => settleLocally(prev, partnerRequestId));
+  }
+
   return (
-    <NotificationsContext.Provider value={{ items, markRead, markAllRead, lastArrived }}>
+    <NotificationsContext.Provider value={{ items, markRead, markAllRead, lastArrived, settlePartnerRequest }}>
       {children}
     </NotificationsContext.Provider>
   );

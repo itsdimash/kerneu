@@ -41,6 +41,9 @@ import { TopBar } from "./components/layout/TopBar";
 import { AppShell } from "./components/layout/AppShell";
 import { LoginPage } from "../pages/LoginPage";
 import { PublicStockPage } from "../pages/PublicStockPage";
+import { PartnerApp } from "../pages/partner/PartnerApp";
+import { clearPartnerHash, clearPartnerNavState } from "../pages/partner/PartnerNav";
+import { installSessionGuard, setKnownUser, setSessionChangedHandler } from "../api/sessionGuard";
 import type { Receipt as ReceiptType } from "../types";
 import { getMe, logout } from "../api/user";
 import { BackgroundJobsProvider } from "./context/BackgroundJobsContext";
@@ -52,6 +55,9 @@ type UserData = {
     email: string;
     role: string;
     created_at: string;
+    // Компания партнёра (/auth/me); у внутренних ролей null.
+    client_id?: number | null;
+    client_name?: string | null;
 };
 
 // Ключ и хелпер для сохранения состояния приложения в localStorage,
@@ -70,6 +76,11 @@ function loadPersistedState() {
 
 const persisted = loadPersistedState();
 
+// Перехватчик ставим при загрузке модуля, а не в эффекте: axios собирает цепочку
+// перехватчиков в момент вызова запроса, и первые запросы страниц (они уходят из эффектов
+// дочерних компонентов раньше эффекта App) иначе проскочили бы мимо него.
+installSessionGuard();
+
 // Роль "guest" — гостевой аккаунт, который видит ТОЛЬКО остатки склада
 // (PublicStockPage), без меню ERP. В union-тип Role её сознательно не
 // добавляем, чтобы не трогать места, где Role перечисляется целиком
@@ -77,6 +88,12 @@ const persisted = loadPersistedState();
 // AppShell никогда не попадает, поэтому сравниваем строкой.
 const GUEST_ROLE = "guest";
 const isGuestRole = (r: string | null | undefined) => r === GUEST_ROLE;
+
+// Роль "partner" — внешняя компания-партнёр: видит только свой кабинет
+// (PartnerApp) с заявками на склад, без меню ERP. По тому же принципу, что и
+// guest, в union Role не входит — сравниваем строкой.
+const PARTNER_ROLE = "partner";
+const isPartnerRole = (r: string | null | undefined) => r === PARTNER_ROLE;
 
 export default function App() {
     const [loggedIn, setLoggedIn] = useState(persisted?.loggedIn ?? false);
@@ -103,6 +120,8 @@ export default function App() {
     const [receipts, setReceipts] = useState<ReceiptType[]>([]);
 
     const [user, setUser] = useState<UserData | null>(null);
+    // Сообщение на странице входа после принудительного выхода (смена пользователя в другой вкладке).
+    const [loginNotice, setLoginNotice] = useState<string | null>(null);
 
     // Сохраняем ключевое состояние при каждом изменении —
     // именно это восстанавливает экран после F5
@@ -122,6 +141,8 @@ export default function App() {
             try {
                 const me = await getMe();
                 setUser(me);
+                // Защита от смены пользователя в соседней вкладке сравнивает /auth/me с этим значением.
+                setKnownUser({ id: me.id, role: me.role });
 
                 // ВАЖНО: role-стейт раньше выставлялся только один раз при
                 // логине (из LoginPage.onLogin) и потом жил своей жизнью в
@@ -168,9 +189,37 @@ export default function App() {
         }
     }, [loggedIn]);
 
+    // Защита от смены пользователя в другой вкладке (общая cookie): при 401/403 и при возврате
+    // на вкладку /auth/me перепроверяется; если пользователь другой или сессии нет — выходим на
+    // страницу входа без вызова /auth/logout (иначе разлогинили бы нового пользователя).
+    useEffect(() => {
+        if (!loggedIn) {
+            setSessionChangedHandler(null);
+            return;
+        }
+        setSessionChangedHandler((message) => {
+            localStorage.removeItem(LS_KEY);
+            clearPartnerNavState();
+            setUser(null);
+            setRealRole(null);
+            setPage("dashboard");
+            setLoggedIn(false);
+            setLoginNotice(message);
+        });
+        return () => setSessionChangedHandler(null);
+    }, [loggedIn]);
+
+    // ERP не использует хэш: партнёрский хэш (#/sklad и др.) у внутренних ролей убираем.
+    useEffect(() => {
+        if (loggedIn && realRole !== null && !isPartnerRole(role) && !isPartnerRole(realRole)) {
+            clearPartnerHash();
+        }
+    }, [loggedIn, role, realRole]);
+
     const handleLogout = async () => {
         try {
             await logout();
+            setKnownUser(null);
 
             setUser(null);
             setLoggedIn(false);
@@ -192,7 +241,9 @@ export default function App() {
     if (!loggedIn) {
         return (
             <LoginPage
+                notice={loginNotice}
                 onLogin={(r) => {
+                    setLoginNotice(null);
                     setRole(r);
                     setLoggedIn(true);
 
@@ -214,6 +265,14 @@ export default function App() {
     // логине), и realRole (то, что вернул /auth/me после F5).
     if (isGuestRole(role) || isGuestRole(realRole)) {
         return <PublicStockPage userName={user?.name} onLogout={handleLogout} />;
+    }
+
+    // Партнёр — отдельный кабинет вместо AppShell. Проверяем и role (сразу
+    // после логина / из localStorage), и realRole с user.role (то, что вернул
+    // /auth/me после F5), чтобы устаревшее состояние в localStorage не
+    // открыло партнёру ERP.
+    if (isPartnerRole(role) || isPartnerRole(realRole) || isPartnerRole(user?.role)) {
+        return <PartnerApp user={user} onLogout={handleLogout} />;
     }
 
     return (

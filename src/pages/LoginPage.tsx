@@ -7,7 +7,7 @@ import type { Role } from "../types";
 import { useCallback, useEffect, useRef } from "react";
 import {api} from "../api/api";
 import axios from "axios";
-export function LoginPage({ onLogin }: { onLogin: (r: Role) => void }) {
+export function LoginPage({ onLogin, notice }: { onLogin: (r: Role) => void; notice?: string | null }) {
   const [role, setRole] = useState<Role>("pm");
   const [email, setEmail] = useState(ROLE_EMAILS["pm"]);
   const [password, setPassword] = useState("");
@@ -152,6 +152,13 @@ const handleSignIn = async (e?: React.FormEvent) => {
           <h1 className="text-2xl font-semibold text-foreground mb-1 tracking-tight">Sign In</h1>
           <p className="text-sm text-muted-foreground mb-7">Access your Kerneu Group workspace</p>
 
+
+          {notice && (
+            <div className="flex items-start gap-2.5 px-3.5 py-3 mb-5 bg-warning-muted border border-warning/25 rounded-lg" role="status">
+              <AlertTriangle size={15} className="text-warning mt-0.5 flex-shrink-0" />
+              <p className="text-sm text-warning font-medium">{notice}</p>
+            </div>
+          )}
 
           {authError && (
             <div className="flex items-start gap-2.5 px-3.5 py-3 mb-5 bg-destructive-muted border border-destructive/20 rounded-lg animate-in fade-in slide-in-from-top-1 duration-300" role="alert">
