@@ -73,6 +73,7 @@ interface RawChatResponse {
   text: string;
   task_type?: string | null;
   model_used?: string | null;
+  image_model_used?: string | null;
   confidence?: number | null;
   tokens_in?: number | null;
   tokens_out?: number | null;
@@ -88,6 +89,7 @@ function normalizeChat(raw: RawChatResponse): ChatResult {
     text: raw.text ?? "",
     taskType: raw.task_type ?? null,
     modelUsed: raw.model_used ?? null,
+    imageModelUsed: raw.image_model_used ?? null,
     confidence: toNumberOrNull(raw.confidence),
     tokensIn: toNumberOrNull(raw.tokens_in),
     tokensOut: toNumberOrNull(raw.tokens_out),
@@ -109,6 +111,7 @@ export interface HistoryMessage {
   role: "user" | "assistant";
   content: string;
   modelUsed: string | null;
+  imageModelUsed: string | null;
   taskType: string | null;
   table: AiTableRow[] | null;
   attachments: AiAttachment[];
@@ -121,6 +124,7 @@ export async function getSessionMessages(sessionId: number): Promise<HistoryMess
       role: string;
       content: string;
       model_used: string | null;
+      image_model_used?: string | null;
       task_type: string | null;
       created_at: string;
       table: AiTableRow[] | null;
@@ -134,6 +138,7 @@ export async function getSessionMessages(sessionId: number): Promise<HistoryMess
     role: m.role === "user" ? "user" : "assistant",
     content: m.content,
     modelUsed: m.model_used,
+    imageModelUsed: m.image_model_used ?? null,
     taskType: m.task_type,
     table: m.table,
     attachments: normalizeAttachments(m.attachments, fetchedAt),
