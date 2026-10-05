@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { Bell, Check } from "lucide-react";
-import type { Role, Page } from "../../../types";
+import type { Page } from "../../../types";
 import { type ApprovalsTabId } from "../../../pages/ApprovalsPage";
-import type { SystemNotification } from "../../../data/systemNotifications";
+import { isPartnerNotification, type SystemNotification } from "../../../data/systemNotifications";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -36,7 +36,9 @@ function dayBucket(iso: string): DayBucket {
 }
 
 type Props = {
-  role: Role;
+  // Строка, а не Role: колокольчик используют и ERP-роли, и кабинет партнёра
+  // ("partner" в union Role не входит).
+  role: string;
   onNavigate: (p: Page, approvalsTab?: ApprovalsTabId) => void;
   /** Resolves + selects a project WITHOUT navigating — CTA then navigates
    *  to the notification's own target page (n.page: "project" | "procurement" |
@@ -44,9 +46,15 @@ type Props = {
    *  on Закупки/Документы with the right project preloaded, instead of
    *  always being forced onto the Project page. */
   onSelectProject?: (idOrName: number | string) => Promise<void> | void;
+  /** Клик по уведомлению о заявке партнёра. Экран выбирает получатель:
+   *  кабинет партнёра открывает «Мои заявки», ERP — «Заявки партнёров». */
+  onOpenPartnerRequest?: (partnerRequestId: number | null) => void;
+  /** Положение выпадающего списка; по умолчанию как раньше (вниз, по правому краю). */
+  menuSide?: "top" | "bottom";
+  menuAlign?: "start" | "end";
 };
 
-export function NotificationBell({ role, onNavigate, onSelectProject }: Props) {
+export function NotificationBell({ role, onNavigate, onSelectProject, onOpenPartnerRequest, menuSide = "bottom", menuAlign = "end" }: Props) {
   // Загрузка + WS-подписка теперь живут на уровне AppShell (NotificationsProvider),
   // не здесь — это нужно, чтобы данные продолжали приходить в реальном
   // времени и для ролей, для которых сам колокольчик не рендерится
@@ -73,6 +81,11 @@ export function NotificationBell({ role, onNavigate, onSelectProject }: Props) {
   async function handleCta(n: SystemNotification) {
     markRead(n.id);
     setOpen(false);
+
+    if (isPartnerNotification(n) || n.page === "partner_request") {
+      onOpenPartnerRequest?.(n.partnerRequestId ?? null);
+      return;
+    }
 
     if (n.projectId && onSelectProject) {
       // Сначала подгружаем нужный проект в общий стейт (без переключения
@@ -109,9 +122,10 @@ export function NotificationBell({ role, onNavigate, onSelectProject }: Props) {
       </DropdownMenuTrigger>
 
       <DropdownMenuContent
-        side="bottom"
-        align="end"
+        side={menuSide}
+        align={menuAlign}
         sideOffset={8}
+        collisionPadding={16}
         className="w-[calc(100vw-2rem)] sm:w-[400px] p-0 overflow-hidden"
       >
         {/* Header */}

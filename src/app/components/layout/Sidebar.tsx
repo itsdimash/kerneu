@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FolderOpen, FileText, ShoppingCart, Package, CheckSquare, Receipt, LayoutDashboard, X, Search, History, Landmark, Sparkles, PanelLeftClose, PanelLeftOpen, ListChecks, Loader2, Users } from "lucide-react";
+import { FolderOpen, FileText, ShoppingCart, Package, CheckSquare, Receipt, LayoutDashboard, X, Search, History, Landmark, Sparkles, PanelLeftClose, PanelLeftOpen, ListChecks, Loader2, Users, Building2 } from "lucide-react";
 import type { Page, Role, ProjectState } from "../../../types";
-import type { NotificationCategory } from "../../../data/systemNotifications";
+import { type NotificationCategory } from "../../../data/systemNotifications";
 import { useNotifications } from "../../notifications/NotificationsContext";
 import { KerneuLogo } from "../common/KerneuLogo";
 import ProductsCatalog from "../common/ProductsCatalog";
@@ -48,6 +48,8 @@ function highlightMatch(text: string, query: string) {
 export const NAV: { id: Page; label: string; icon: React.ElementType; badge?: number; roles: Role[] }[] = [
   { id: "dashboard",   label: "Дашборд",    icon: LayoutDashboard, roles: ["commercial_director", "pm"] },
   { id: "approvals",   label: "Заявки на согласование", icon: ListChecks, roles: ["commercial_director", "admin"] },
+  // Заявки внешних партнёров: одобряет и отклоняет директор (и admin). Склад выдаёт их на странице «Склад».
+  { id: "partner_requests", label: "Заявки партнёров", icon: Building2, roles: ["commercial_director", "admin"] },
   { id: "project",     label: "Проекты",    icon: FolderOpen,      roles: ["commercial_director", "pm"] },
   { id: "contract",    label: "Договор",    icon: FileText,        roles: ["commercial_director", "pm", "accountant"] },
   { id: "procurement", label: "Закупки",    icon: ShoppingCart,    roles: ["commercial_director", "pm", "accountant"] },
@@ -87,6 +89,17 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject, mobil
   const { items: notificationItems, lastArrived } = useNotifications();
   const approvalsUnreadCount = notificationItems.filter(
     (n) => !n.read && APPROVALS_PENDING_CATEGORIES.has(n.category),
+  ).length;
+
+  // Бейдж «Заявки партнёров» (директор, admin): непрочитанные новые заявки.
+  // Копии partner_request_new после решения бэкенд помечает прочитанными и
+  // переводит в итоговую категорию, поэтому здесь не считаются.
+  const partnerPendingCount = notificationItems.filter(
+    (n) => !n.read && n.category === "partner_request_new",
+  ).length;
+  // Бейдж на «Склад» у кладовщика: заявки партнёров, ожидающие выдачи.
+  const partnerToIssueCount = notificationItems.filter(
+    (n) => !n.read && n.category === "partner_request_to_issue",
   ).length;
 
   const [approvalsPulse, setApprovalsPulse] = useState(false);
@@ -257,7 +270,7 @@ export function Sidebar({ page, onPage, role, projectState, onFindProject, mobil
           {NAV.filter(item => !item.roles || item.roles.includes(role)).map(({ id, label, icon: Icon, badge }, i) => {
             const active = page === id;
             const isApprovals = id === "approvals";
-            const effectiveBadge = isApprovals ? approvalsUnreadCount : badge;
+            const effectiveBadge = isApprovals ? approvalsUnreadCount : id === "partner_requests" ? partnerPendingCount : id === "warehouse" && role === "warehouse" ? partnerToIssueCount : badge;
             const pulsing = isApprovals && approvalsPulse;
             return (
               <button key={id} onClick={() => handleNavClick(id)}

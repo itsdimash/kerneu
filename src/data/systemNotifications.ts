@@ -32,7 +32,35 @@ export type NotificationCategory =
   | "upload_processed"
   | "deadline"
   | "parse_job_done"
-  | "parse_job_failed";
+  | "parse_job_failed"
+  | "partner_request_new"
+  | "partner_request_approved"
+  | "partner_request_rejected"
+  | "partner_request_issued"
+  | "partner_request_to_issue"
+  | "partner_request_partly_issued"
+  // Двусмысленная категория: у директора — партнёр отменил заявку, у партнёра —
+  // директор снял резерв. Поэтому заголовок/текст всегда берём из пейлоада.
+  | "partner_request_cancelled";
+
+/** Страница, куда ведёт уведомление. "partner_request" — заявка партнёра:
+ *  получатель сам определяет экран (партнёр → «Мои заявки», директор/склад →
+ *  «Заявки партнёров»), см. NotificationBell. */
+export type NotificationPage = Page | "partner_request";
+
+export const PARTNER_NOTIFICATION_CATEGORIES: ReadonlySet<NotificationCategory> = new Set<NotificationCategory>([
+  "partner_request_new",
+  "partner_request_approved",
+  "partner_request_rejected",
+  "partner_request_issued",
+  "partner_request_to_issue",
+  "partner_request_partly_issued",
+  "partner_request_cancelled",
+]);
+
+export function isPartnerNotification(n: Pick<SystemNotification, "category" | "page">): boolean {
+  return n.page === "partner_request" || PARTNER_NOTIFICATION_CATEGORIES.has(n.category);
+}
 
 export type SystemNotification = {
   id: string;
@@ -46,10 +74,12 @@ export type SystemNotification = {
   actorRole?: string;   // display label only, e.g. "Комдир", "Бухгалтер" — not tied to Role
   title: string;
   detail?: string;      // secondary line — e.g. "Маржа 18% ниже порога 25%"
+  message?: string;     // текст из пейлоада партнёрских уведомлений (если нет detail)
+  partnerRequestId?: number; // заявка партнёра, на которую ссылается уведомление
   comment?: string;     // a direct quoted note from the actor, rendered distinctly
   createdAt: string;    // ISO 8601
   read: boolean;
-  page: Page;           // where the CTA should navigate
+  page: NotificationPage; // where the CTA should navigate
   ctaLabel: string;
 };
 

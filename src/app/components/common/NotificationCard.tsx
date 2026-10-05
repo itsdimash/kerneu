@@ -19,6 +19,8 @@ import {
   Handshake,
   Trash2,
   RotateCcw,
+  CircleMinus,
+  PackageOpen,
 } from "lucide-react";
 import {
   type SystemNotification,
@@ -60,6 +62,20 @@ export const CATEGORY_META: Record<
   project_reverted: { icon: RotateCcw, ...WARNING, label: "Откат в редактирование" },
   parse_job_done: { icon: FileCheck2, ...SUCCESS, label: "Файл обработан" },
   parse_job_failed: { icon: FileX2, ...DESTRUCTIVE, label: "Ошибка обработки" },
+  partner_request_new: { icon: Inbox, ...WARNING, label: "Заявка партнёра" },
+  partner_request_approved: { icon: ThumbsUp, ...SUCCESS, label: "Заявка одобрена" },
+  partner_request_rejected: { icon: FileX2, ...DESTRUCTIVE, label: "Заявка отклонена" },
+  partner_request_issued: { icon: PackageCheck, ...SUCCESS, label: "Заявка выдана" },
+  partner_request_to_issue: { icon: PackageOpen, ...INFO, label: "К выдаче" },
+  partner_request_partly_issued: { icon: PackageCheck, ...INFO, label: "Частично выдана" },
+  // Нейтральная подпись и иконка: смысл (отмена партнёром / снятие резерва
+  // директором) различает только текст из пейлоада.
+  partner_request_cancelled: {
+    icon: CircleMinus,
+    fg: "var(--muted-foreground)",
+    bg: "var(--muted)",
+    label: "Заявка партнёра",
+  },
 };
 
 export const FALLBACK_META = {
@@ -138,10 +154,10 @@ export function NotificationCard({ notification: n, onCta, onMarkRead, density =
             n.read ? "font-medium text-foreground/80" : "font-semibold text-foreground"
           }`}
         >
-          {n.title}
+          {n.title || meta.label}
         </p>
-        {n.detail && (
-          <p className={`mt-1 leading-snug text-muted-foreground ${compact ? "text-[12px]" : "text-[13px]"}`}>{n.detail}</p>
+        {(n.detail ?? n.message) && (
+          <p className={`mt-1 leading-snug text-muted-foreground ${compact ? "text-[12px]" : "text-[13px]"}`}>{n.detail ?? n.message}</p>
         )}
 
         {n.comment && (
@@ -165,7 +181,7 @@ export function NotificationCard({ notification: n, onCta, onMarkRead, density =
               compact ? "text-[12px]" : "text-[13px]"
             }`}
           >
-            {n.ctaLabel}
+            {n.ctaLabel || "Открыть"}
             <ChevronRight size={12} />
           </button>
 

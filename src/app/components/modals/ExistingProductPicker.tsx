@@ -58,6 +58,8 @@ type Props = {
   lockWarehouse?: boolean;
 };
 
+const PAGE_SIZE = 50;
+
 /**
  * Выбор УЖЕ существующего на складе товара.
  * Показывает, на каких складах он лежит (с количеством), и не даёт выбрать другой склад.
@@ -82,12 +84,30 @@ export function ExistingProductPicker({ stock, warehouses, value, onChange, disa
   // Склады, где товар уже числится
   const livingWarehouses = livingWarehouseIds;
 
+  // Полный список по названию — порядок стабильный, а не произвольный срез.
+  const sortedStock = useMemo(
+    () => [...stock].sort((a, b) => a.name.localeCompare(b.name, "ru", { sensitivity: "base" })),
+    [stock],
+  );
+
+  // Все совпадения без лимита. Запрос режется на слова (лишние пробелы не мешают);
+  // каждое слово должно встретиться в названии или артикуле (P-95), без учёта регистра и ё/е.
   const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return stock
-      .filter((item) => (q === "" ? true : item.name.toLowerCase().includes(q) || item.sku.toLowerCase().includes(q)))
-      .slice(0, 8);
-  }, [stock, query]);
+    const norm = (s: string) => s.toLowerCase().replace(/ё/g, "е");
+    const tokens = norm(query).split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return sortedStock;
+    return sortedStock.filter((item) => {
+      const haystack = `${norm(item.name)} ${norm(item.sku)}`;
+      return tokens.every((t) => haystack.includes(t));
+    });
+  }, [sortedStock, query]);
+
+  // Список может быть в тысячи позиций — рисуем порциями и подгружаем при прокрутке.
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [query, open]);
+  const visibleResults = results.length > visibleCount ? results.slice(0, visibleCount) : results;
 
   const selectedItem = value ? stock.find((s) => s.productId === value.productId) : null;
   const selectedLiving = selectedItem ? livingWarehouses(selectedItem) : [];
@@ -110,7 +130,7 @@ export function ExistingProductPicker({ stock, warehouses, value, onChange, disa
       <div className="rounded-lg border border-primary/40 bg-primary/5 p-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-sm font-medium text-foreground truncate">{selectedItem.name}</p>
+            <p className="text-sm font-medium text-foreground break-words">{selectedItem.name}</p>
             <p className="text-xs text-muted-foreground font-mono">{selectedItem.sku}</p>
           </div>
           {!disabled && (
@@ -196,11 +216,19 @@ export function ExistingProductPicker({ stock, warehouses, value, onChange, disa
 
       {open && (
         // Список раскрывается в потоке (не absolute), иначе его обрежет прокручиваемый блок позиций
-        <div className="mt-1 w-full max-h-56 overflow-y-auto rounded-lg border border-border bg-card shadow-sm">
+        <div
+          className="mt-1 w-full max-h-[60vh] overflow-y-auto rounded-lg border border-border bg-card shadow-sm"
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            if (visibleCount < results.length && el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
+              setVisibleCount((n) => n + PAGE_SIZE);
+            }
+          }}
+        >
           {results.length === 0 ? (
             <p className="px-3 py-3 text-sm text-muted-foreground">Ничего не найдено</p>
           ) : (
-            results.map((item) => {
+            visibleResults.map((item) => {
               const living = livingWarehouses(item);
               return (
                 <button
@@ -210,7 +238,7 @@ export function ExistingProductPicker({ stock, warehouses, value, onChange, disa
                   className="w-full text-left px-3 py-2.5 hover:bg-background transition-colors border-b border-border last:border-b-0"
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm font-medium text-foreground truncate">{item.name}</span>
+                    <span className="text-sm font-medium text-foreground break-words min-w-0">{item.name}</span>
                     <span className="text-[11px] font-mono text-muted-foreground shrink-0">{item.sku}</span>
                   </div>
                   <div className="mt-1 flex flex-wrap gap-1.5">
@@ -231,6 +259,15 @@ export function ExistingProductPicker({ stock, warehouses, value, onChange, disa
                 </button>
               );
             })
+          )}
+          {results.length > visibleResults.length && (
+            <button
+              type="button"
+              onClick={() => setVisibleCount((n) => n + PAGE_SIZE)}
+              className="w-full px-3 py-2 text-xs text-muted-foreground hover:bg-background transition-colors"
+            >
+              Показано {visibleResults.length} из {results.length} — прокрутите или нажмите, чтобы показать ещё
+            </button>
           )}
         </div>
       )}

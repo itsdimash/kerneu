@@ -162,6 +162,10 @@ export function ApprovalsPage({ onNavigate, onSelectProject, initialTab }: Props
       console.error("Не удалось отметить уведомление прочитанным:", err),
     );
 
+    // Заявки партнёров на этой странице не показываются (см. TAB_CATEGORIES),
+    // для них отдельная страница «Заявки партнёров».
+    if (n.page === "partner_request") return;
+
     if (n.projectId && onSelectProject) {
       await onSelectProject(n.projectId);
     }

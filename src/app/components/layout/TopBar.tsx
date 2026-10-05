@@ -18,7 +18,7 @@ type UserData = {
     created_at: string;
 };
 
-export function TopBar({ role, user, onNavigate, onLogout, onOpenProject, onSelectProject, onOpenMobileNav }: {
+export function TopBar({ role, user, onNavigate, onLogout, onOpenProject, onSelectProject, onOpenPartnerRequest, onOpenMobileNav }: {
   role: Role;
   onNavigate: (p: Page, approvalsTab?: ApprovalsTabId) => void;
   onLogout: () => void;
@@ -33,6 +33,8 @@ export function TopBar({ role, user, onNavigate, onLogout, onOpenProject, onSele
    *  right project and then land on its own page (procurement/documents),
    *  instead of always being forced onto the Project page like onOpenProject. */
   onSelectProject?: (idOrName: number | string) => Promise<void> | void;
+  /** Клик по уведомлению о заявке партнёра — AppShell открывает «Заявки партнёров». */
+  onOpenPartnerRequest?: (partnerRequestId: number | null) => void;
   /** Opens the off-canvas Sidebar drawer — only relevant below the lg:
    *  breakpoint, where the sidebar isn't always visible. */
   onOpenMobileNav?: () => void;
@@ -67,6 +69,7 @@ export function TopBar({ role, user, onNavigate, onLogout, onOpenProject, onSele
               role={role}
               onNavigate={onNavigate}
               onSelectProject={onSelectProject}
+              onOpenPartnerRequest={onOpenPartnerRequest}
             />
 
             <div className="h-5 w-px bg-border" />

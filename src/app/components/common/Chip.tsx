@@ -28,6 +28,13 @@ export function Chip({ status }: { status: string }) {
     'Одобрено Комдиром': { label: 'Одобрено Комдиром', cls: 'bg-success-muted text-success ring-1 ring-success/25' },
     'Отклонено Комдиром': { label: 'Отклонено Комдиром', cls: 'bg-rose-50 text-rose-700 ring-1 ring-rose-200 dark:bg-rose-400/15 dark:text-rose-300 dark:ring-rose-400/25' },
 
+    // Партнёрские заявки на склад (подписи PARTNER_STATUS_LABEL в api/partner.ts).
+    'Отправлена': { label: 'Отправлена', cls: 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200 dark:bg-indigo-400/15 dark:text-indigo-300 dark:ring-indigo-400/25' },
+    'Одобрена': { label: 'Одобрена', cls: 'bg-success-muted text-success ring-1 ring-success/25' },
+    'Выдана': { label: 'Выдана', cls: 'bg-teal-50 text-teal-700 ring-1 ring-teal-200 dark:bg-teal-400/15 dark:text-teal-300 dark:ring-teal-400/25' },
+    'Отклонена': { label: 'Отклонена', cls: 'bg-rose-50 text-rose-700 ring-1 ring-rose-200 dark:bg-rose-400/15 dark:text-rose-300 dark:ring-rose-400/25' },
+    'Отменена': { label: 'Отменена', cls: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200 dark:bg-slate-400/15 dark:text-slate-300 dark:ring-slate-400/25' },
+
     // Старые/системные статусы
     'draft': { label: 'Черновик', cls: 'bg-slate-100 text-slate-600 ring-1 ring-slate-200 dark:bg-slate-400/15 dark:text-slate-300 dark:ring-slate-400/25' },
     'confirmed': { label: 'Подтверждено', cls: 'bg-success-muted text-success ring-1 ring-success/25' },
