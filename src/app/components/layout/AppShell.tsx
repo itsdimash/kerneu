@@ -21,6 +21,7 @@ import { ProcurementPage } from "../../../pages/ProcurementPage";
 import { WarehousePage } from "../../../pages/WarehousePage";
 import { DocumentsPage } from "../../../pages/DocumentsPage";
 import { SupplierHistoryPage } from "../../../pages/SupplierHistoryPage";
+import { ClientsPage } from "../../../pages/ClientsPage";
 import { OneCPage } from "../../../pages/OneCPage";
 import { ApprovalsPage, type ApprovalsTabId } from "../../../pages/ApprovalsPage";
 import { NotificationsProvider } from "../../notifications/NotificationsContext";
@@ -346,6 +347,10 @@ export function AppShell({
           )}
 
           {page === "suppliers" && <SupplierHistoryPage />}
+
+          {page === "clients" && (
+            <ClientsPage role={role} onOpenProject={handleFindProject} />
+          )}
 
           {/* Данные 1С — бэкенд отдаёт их только бухгалтеру, комдиру и
               админу (ALLOWED_ROLES в routers/onec.py). Страницу же прячем

@@ -8,6 +8,7 @@ import { InfoBanner } from "../app/components/common/InfoBanner";
 import { Chip } from "../app/components/common/Chip";
 import { ReceiptStatusBadge } from "../app/components/common/ReceiptStatusBadge";
 import { fmt, daysFromNow, deadlineBadge } from "../lib/format";
+import { formatPhoneNumber } from "../lib/phone";
 import { getStageMeta } from "../lib/projectStage";
 import { PROJECTS } from "../data/projects";
 import { STOCK_INIT } from "../data/stock";
@@ -39,29 +40,6 @@ type ClientDTO = {
   client_name: string;
   [key: string]: unknown; // бэкенд может присылать и другие поля — они нам не нужны
 };
-
-// Форматирует номер телефона как +<код страны> (XXX) XXX-XX-XX.
-function formatPhoneNumber(value: string): string {
-  let digits = value.replace(/\D/g, "");
-
-  if (digits.length === 0) return "";
-
-  // 1 цифра кода страны + до 10 цифр национального номера
-  digits = digits.slice(0, 11);
-
-  const code = digits.slice(0, 1);
-  const rest = digits.slice(1);
-
-  if (rest.length === 0) return "+" + code;
-
-  let result = "+" + code + " (" + rest.slice(0, 3);
-  if (rest.length >= 3) result += ")";
-  if (rest.length > 3) result += " " + rest.slice(3, 6);
-  if (rest.length > 6) result += "-" + rest.slice(6, 8);
-  if (rest.length > 8) result += "-" + rest.slice(8, 10);
-
-  return result;
-}
 
 // Статусы, при которых бэкенд запрещает удаление и вместо этого нужна
 // архивация. Должно совпадать с ARCHIVABLE_STATUSES в
