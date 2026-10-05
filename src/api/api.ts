@@ -894,6 +894,31 @@ export const fetchWarehouseStocks = async (): Promise<WarehouseStockResponse[]> 
   return data;
 };
 
+// Разбивка резерва товара по проектам (GET /warehouse/stock/{product_id}/reservations).
+// unattributed_quantity — часть резерва, не привязанная ни к одному проекту.
+export interface StockReservationItem {
+  project_id: number;
+  project_name: string;
+  status: { id: number; label: string };
+  created_at: string | null;
+  reserved_quantity: number;
+  source: "project_items" | "ml_import" | "receipt";
+  is_pre_contract: boolean;
+}
+
+export interface StockReservationsResponse {
+  product_id: number;
+  reserved_quantity: number;
+  attributed_quantity: number;
+  unattributed_quantity: number;
+  items: StockReservationItem[];
+}
+
+export const getStockReservations = async (productId: number): Promise<StockReservationsResponse> => {
+  const { data } = await api.get<StockReservationsResponse>(`/warehouse/stock/${productId}/reservations`);
+  return data;
+};
+
 export interface WarehouseIncomeItem {
   product_id: number;
   quantity: number;
