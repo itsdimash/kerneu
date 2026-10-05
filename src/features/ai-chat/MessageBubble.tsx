@@ -91,7 +91,11 @@ function AssistantBubble({ message, role }: { message: AiMessage; role: Role }) 
         <div className="mb-2 flex items-center justify-between gap-3">
           <div className="flex items-center gap-1.5">
             <Bot size={14} className="text-primary" />
-            <span className="text-[12.5px] font-semibold text-primary">{message.modelUsed ?? "AI"}</span>
+            <span className="text-[12.5px] font-semibold text-primary">
+              {message.imageModelUsed
+                ? `Текст: ${message.modelUsed ?? "AI"} · Картинка: ${message.imageModelUsed}`
+                : (message.modelUsed ?? "AI")}
+            </span>
           </div>
           {message.confidence != null && (
             <div

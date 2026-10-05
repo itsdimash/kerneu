@@ -126,7 +126,11 @@ export function uploadErrorText(info: ApiErrorInfo, filename: string): string {
   }
 }
 
+/** Коды ошибок генерации: показываем message от backend как есть. */
+const GENERATION_ERROR_CODES = ["model_refusal", "output_truncated", "generation_failed"];
+
 export function chatErrorText(info: ApiErrorInfo): string {
+  if (info.code && GENERATION_ERROR_CODES.includes(info.code) && info.message) return info.message;
   switch (info.kind) {
     case "too_large":
       return "Слишком большой объём вложений. Уберите часть файлов и повторите.";

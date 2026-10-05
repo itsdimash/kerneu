@@ -29,6 +29,8 @@ export interface AiMessage {
   status: MessageStatus;
   error?: string | null;
   modelUsed?: string | null;
+  /** Модель, сгенерировавшая картинку (если в ответе есть изображение). */
+  imageModelUsed?: string | null;
   taskType?: string | null;
   confidence?: number | null;
   tokensIn?: number | null;
@@ -52,6 +54,7 @@ export interface ChatResult {
   text: string;
   taskType: string | null;
   modelUsed: string | null;
+  imageModelUsed: string | null;
   confidence: number | null;
   tokensIn: number | null;
   tokensOut: number | null;
