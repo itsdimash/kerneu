@@ -20,7 +20,7 @@ import {
   Plus, FolderOpen, Send, TrendingUp, AlertTriangle, Inbox, BarChart2, 
   Clock, Check, X, CheckCircle2, XCircle, ChevronRight, MoreHorizontal,
   Archive, Package, Truck, DollarSign, UploadCloud, FileText, Trash2, Loader2, Search,
-  ArrowUpDown, FileSignature, FilePlus
+  Filter, FileSignature, FilePlus
 } from "lucide-react";
 import {
   fetchDashboardStats,
@@ -90,11 +90,10 @@ function projectStatusOrderIndex(statusName?: string | null): number {
   return idx === -1 ? PROJECT_STATUS_DISPLAY_ORDER.length : idx;
 }
 
-// Отдельный список для меню "Сортировать" — не трогаем
-// PROJECT_STATUS_DISPLAY_ORDER напрямую, т.к. он используется и для
-// сортировки таблицы по умолчанию (projectStatusOrderIndex). Убираем
-// "Новый"/"Новый проект" только из выпадающего меню сортировки по этапу.
-const SORT_MENU_STAGES = PROJECT_STATUS_DISPLAY_ORDER.filter(
+// Варианты для меню "Фильтр" по этапу — не трогаем
+// PROJECT_STATUS_DISPLAY_ORDER напрямую, т.к. по нему сортируется таблица
+// (projectStatusOrderIndex). "Новый"/"Новый проект" убираем только из меню.
+const STAGE_FILTER_OPTIONS = PROJECT_STATUS_DISPLAY_ORDER.filter(
   (stage) => stage !== "Новый" && stage !== "Новый проект"
 );
 
@@ -103,7 +102,7 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
   const [isKpModalOpen, setIsKpModalOpen] = useState(false);
   const [showAllProjects, setShowAllProjects] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
-  const [sortStage, setSortStage] = useState<string | null>(null);
+  const [stageFilter, setStageFilter] = useState<string | null>(null);
   const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [isNewClient, setIsNewClient] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState("");
@@ -597,6 +596,29 @@ const handleSave = async () => {
     }
   };
 
+  // Таблица "Проекты": скрытые по умолчанию статусы, фильтр по этапу и
+  // поиск работают через И; сортировка — всегда по этапу жизненного цикла.
+  // Выбранный этап снимает скрытие "Завершен"/"Договор расторгнут".
+  const searchQuery = projectSearch.trim().toLowerCase();
+  const visibleProjects = projects
+    .filter((p: any) => showAllProjects || !!stageFilter || !HIDDEN_BY_DEFAULT_STATUSES.has(p.status?.status_name))
+    .filter((p: any) => !stageFilter || p.status?.status_name === stageFilter)
+    .filter((p: any) => {
+      if (!searchQuery) return true;
+      return (
+        (p.name ?? "").toLowerCase().includes(searchQuery) ||
+        (p.client?.client_name ?? "").toLowerCase().includes(searchQuery)
+      );
+    })
+    .slice()
+    .sort((a: any, b: any) =>
+      projectStatusOrderIndex(a.status?.status_name) - projectStatusOrderIndex(b.status?.status_name)
+    );
+  // Пусто из-за самого этапа (а не из-за поиска) — тогда показываем
+  // "Нет проектов с этапом", иначе общее "Ничего не найдено".
+  const stageHasNoProjects =
+    !!stageFilter && !projects.some((p: any) => p.status?.status_name === stageFilter);
+
   return (
     <PageWrap
       title={role === "commercial_director" ? "Дашборд Директора" : "Дашборд PM"}
@@ -995,16 +1017,16 @@ const handleSave = async () => {
             <button
               onClick={() => setIsSortMenuOpen((v) => !v)}
               className={`text-xs flex items-center gap-1.5 whitespace-nowrap px-2.5 py-1.5 rounded-lg border transition-all duration-150 active:scale-95 ${
-                sortStage
+                stageFilter
                   ? "border-primary text-primary bg-primary/5"
                   : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
               }`}
             >
-              <ArrowUpDown
+              <Filter
                 size={12}
-                className={`transition-transform duration-200 ${isSortMenuOpen ? "rotate-180" : ""}`}
+                className={`transition-transform duration-200 ${isSortMenuOpen ? "scale-110" : ""}`}
               />
-              {sortStage ? `Этап: ${sortStage}` : "Сортировать"}
+              {stageFilter ? `Этап: ${stageFilter}` : "Фильтр"}
             </button>
 
             {isSortMenuOpen && (
@@ -1014,27 +1036,27 @@ const handleSave = async () => {
                 <div className="absolute right-0 top-full mt-2 w-56 overflow-hidden rounded-xl border border-border bg-card shadow-xl z-20 py-1 max-h-80 overflow-y-auto animate-in fade-in zoom-in-95 slide-in-from-top-1 duration-150 origin-top-right">
                   <button
                     onClick={() => {
-                      setSortStage(null);
+                      setStageFilter(null);
                       setIsSortMenuOpen(false);
                     }}
                     className="w-full flex items-center justify-between px-3 py-2 text-xs text-left hover:bg-muted transition-colors text-muted-foreground"
                   >
-                    Без сортировки по этапу
-                    {!sortStage && <Check size={12} className="text-primary animate-in fade-in zoom-in duration-150" />}
+                    Все этапы
+                    {!stageFilter && <Check size={12} className="text-primary animate-in fade-in zoom-in duration-150" />}
                   </button>
                   <div className="h-px bg-muted my-1" />
-                  {SORT_MENU_STAGES.map((stageName, i) => (
+                  {STAGE_FILTER_OPTIONS.map((stageName, i) => (
                     <button
                       key={stageName}
                       onClick={() => {
-                        setSortStage(stageName);
+                        setStageFilter(stageFilter === stageName ? null : stageName);
                         setIsSortMenuOpen(false);
                       }}
                       style={{ animationDelay: `${i * 20}ms` }}
                       className="w-full flex items-center justify-between px-3 py-2 text-xs text-left hover:bg-muted transition-colors text-foreground animate-in fade-in slide-in-from-top-1 duration-150 fill-mode-both"
                     >
                       {stageName}
-                      {sortStage === stageName && <Check size={12} className="text-primary animate-in fade-in zoom-in duration-150" />}
+                      {stageFilter === stageName && <Check size={12} className="text-primary animate-in fade-in zoom-in duration-150" />}
                     </button>
                   ))}
                 </div>
@@ -1054,28 +1076,7 @@ const handleSave = async () => {
               </tr>
               </thead>
               <tbody className="divide-y divide-border">
-              {projects
-                .filter((p: any) => showAllProjects || !HIDDEN_BY_DEFAULT_STATUSES.has(p.status?.status_name))
-                .filter((p: any) => {
-                  if (!projectSearch.trim()) return true;
-                  const q = projectSearch.trim().toLowerCase();
-                  return (
-                    (p.name ?? "").toLowerCase().includes(q) ||
-                    (p.client?.client_name ?? "").toLowerCase().includes(q)
-                  );
-                })
-                .slice()
-                .sort((a: any, b: any) => {
-                  if (sortStage) {
-                    // Выбранный этап — наверх; остальные — в обычном порядке следом
-                    const aMatches = a.status?.status_name === sortStage ? 0 : 1;
-                    const bMatches = b.status?.status_name === sortStage ? 0 : 1;
-                    if (aMatches !== bMatches) return aMatches - bMatches;
-                  }
-                  return (
-                    projectStatusOrderIndex(a.status?.status_name) - projectStatusOrderIndex(b.status?.status_name)
-                  );
-                })
+              {visibleProjects
                 .map((p: any) => {
                   return (
                       <tr key={p.id} className="hover:bg-background/50 transition-colors animate-in fade-in slide-in-from-top-1 duration-200 fill-mode-both">
@@ -1211,6 +1212,25 @@ const handleSave = async () => {
                       </tr>
                   );
               })}
+              {visibleProjects.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    {stageHasNoProjects ? (
+                      <>
+                        <p>Нет проектов с этапом «{stageFilter}»</p>
+                        <button
+                          onClick={() => setStageFilter(null)}
+                          className="mt-2 text-xs text-primary hover:underline"
+                        >
+                          Сбросить фильтр
+                        </button>
+                      </>
+                    ) : (
+                      <p>Ничего не найдено</p>
+                    )}
+                  </td>
+                </tr>
+              )}
               </tbody>
           </table>
       </div>
