@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { SupplySourceBadge, SUPPLY_SOURCE_SHIPPED_LABELS, SUPPLY_SOURCE_PENDING_SHIPMENT_LABELS } from "../app/components/common/SupplySourceControl";
 import { ShipmentModal } from "../app/components/modals/ShipmentModal";
 import { IncomeRequestModal, IncomeRequestPrefill } from "../app/components/modals/IncomeRequestModal";
 import { ConfirmDialog } from "../app/components/modals/ConfirmDialog";
+import { NewProductModal } from "../app/components/modals/NewProductModal";
 import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
 import { Chip } from "../app/components/common/Chip";
 import { PartnerIssueSection } from "./warehouse/PartnerIssueSection";
@@ -36,6 +37,8 @@ import {
   Check,
   PackagePlus,
   Trash2,
+  Pencil,
+  Plus,
   Package,
   Truck,
   User,
@@ -105,6 +108,10 @@ type StockRow = {
   reserved: number;
   defective: number;
   available: number;
+  // Бэк пометил товар как используемый (is_referenced) — удалять нельзя.
+  isReferenced: boolean;
+  // Товар-комплект (GET /warehouse/stocks отдаёт is_kit)
+  isKit: boolean;
 };
 
 // Понятный текст вместо сырого «Позиция «X» имеет источник поставки «stock»,
@@ -535,6 +542,8 @@ function mapStock(item: WarehouseStockResponse): StockRow {
     reserved,
     defective: item.defective_quantity || 0,
     available: total - reserved,
+    isReferenced: item.is_referenced === true,
+    isKit: item.is_kit === true,
   };
 }
 
@@ -1570,6 +1579,144 @@ function ReservationsPopover({
   );
 }
 
+// Автоподгонка высоты <textarea> под содержимое: однострочный инпут обрезал
+// бы длинные названия по ширине. Вызывается один раз при разблокировке и на
+// вводе — textarea существует только у одной редактируемой строки.
+const autoResizeNameTextarea = (el: HTMLTextAreaElement | null) => {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight}px`;
+};
+
+type StockTableRowProps = {
+  item: StockRow;
+  warehouses: WarehouseInfo[];
+  /** Комдир и pm: переименование и удаление товара */
+  canManageProducts: boolean;
+  /** Видна ли разбивка резерва по проектам (pm, комдир, кладовщик) */
+  canSeeReservations: boolean;
+  isUnlocked: boolean;
+  isRenaming: boolean;
+  isDeleting: boolean;
+  onOpenProject?: (projectId: number) => void;
+  onOpenRename: (item: StockRow) => void;
+  onNameBlur: (item: StockRow, event: React.FocusEvent<HTMLTextAreaElement>) => void;
+  onOpenDelete: (item: StockRow) => void;
+};
+
+// Строка таблицы остатков. Обёрнута в memo: диалоги и состояния страницы не
+// должны перерисовывать все строки — для этого сюда не передаются
+// renameUnlockTarget/deleteProductTarget/deleteProductError, а колбэки
+// стабильны (useCallback в WarehousePage).
+const StockTableRow = memo(function StockTableRow({
+  item,
+  warehouses,
+  canManageProducts,
+  canSeeReservations,
+  isUnlocked,
+  isRenaming,
+  isDeleting,
+  onOpenProject,
+  onOpenRename,
+  onNameBlur,
+  onOpenDelete,
+}: StockTableRowProps) {
+  const nameRef = useRef<HTMLTextAreaElement>(null);
+
+  // Фокус и автовысота — один раз, когда строка разблокирована (textarea
+  // в DOM только в этот момент).
+  useEffect(() => {
+    if (!isUnlocked) return;
+    const el = nameRef.current;
+    if (!el) return;
+    autoResizeNameTextarea(el);
+    el.focus();
+  }, [isUnlocked]);
+
+  const blocksDelete =
+    item.reserved !== 0 || item.defective !== 0 || item.total !== 0 || item.isReferenced;
+
+  return (
+    <tr className="hover:bg-background/50 transition-colors">
+      <td className="px-4 py-3 text-xs font-mono text-muted-foreground whitespace-nowrap">{item.sku}</td>
+      <td className="px-4 py-3 text-sm font-medium text-foreground">
+        {!canManageProducts ? (
+          item.name
+        ) : isUnlocked ? (
+          <textarea
+            ref={nameRef}
+            rows={1}
+            defaultValue={item.name}
+            disabled={isRenaming}
+            onInput={(event) => autoResizeNameTextarea(event.currentTarget)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.currentTarget.blur();
+              }
+            }}
+            onBlur={(event) => onNameBlur(item, event)}
+            className="-mx-2 w-[calc(100%+1rem)] resize-none overflow-hidden px-2 py-1 text-sm font-medium border border-primary rounded-md bg-card cursor-text focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => onOpenRename(item)}
+            title="Изменить название"
+            className="group inline-flex max-w-full items-center gap-1.5 text-left text-sm font-medium text-foreground whitespace-normal break-words px-2 py-1.5 -mx-2 rounded-md hover:bg-muted transition-colors"
+          >
+            {item.name}
+            <Pencil size={12} className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-70 transition-opacity" />
+          </button>
+        )}
+      </td>
+      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap min-w-[88px]">{item.isKit ? "комплект" : item.unit}</td>
+      {warehouses.map((wh) => (
+        <td key={wh.id} className="px-4 py-3 text-sm font-mono text-foreground text-right whitespace-nowrap">
+          {(item.perWarehouse[wh.id] || 0).toLocaleString("ru-RU")}
+        </td>
+      ))}
+      <td className="px-4 py-3 text-sm font-mono text-foreground text-right font-bold bg-background whitespace-nowrap">
+        {item.total.toLocaleString("ru-RU")}
+      </td>
+      <td className="px-4 py-3 text-sm font-mono text-violet-600 dark:text-violet-400 text-right whitespace-nowrap">
+        {item.reserved > 0 && canSeeReservations ? (
+          <ReservationsPopover row={item} onOpenProject={onOpenProject} />
+        ) : (
+          item.reserved.toLocaleString("ru-RU")
+        )}
+      </td>
+      <td className="px-4 py-3 text-sm font-mono text-right whitespace-nowrap">
+        {item.defective > 0 ? (
+          <span className="text-destructive font-semibold">{item.defective.toLocaleString("ru-RU")}</span>
+        ) : (
+          <span className="text-slate-300">0</span>
+        )}
+      </td>
+      <td className="px-4 py-3 text-right font-mono text-sm text-green-600 dark:text-green-400 font-semibold whitespace-nowrap">
+        {item.available.toLocaleString("ru-RU")}
+      </td>
+      {canManageProducts && (
+        <td className="px-4 py-3 whitespace-nowrap">
+          {blocksDelete ? null : (
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={() => onOpenDelete(item)}
+                disabled={isDeleting}
+                aria-label={`Удалить товар ${item.name}`}
+                className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-400/20 transition-colors disabled:opacity-50"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          )}
+        </td>
+      )}
+    </tr>
+  );
+});
+
 export function WarehousePage({
   role,
   projectState,
@@ -1593,6 +1740,18 @@ export function WarehousePage({
   // Отметка "отправлено со склада поставщика" — решение PM и Комдира,
   // а не кладовщика (у таких позиций нет резерва на нашем складе).
   const canShipDirect = isPm || isCommercialDirector;
+  // Переименование и удаление товара в таблице остатков — комдир и pm.
+  const canManageProducts = isCommercialDirector || role === "pm";
+  // Создание товара с нулевым остатком — pm, admin и комдир.
+  const canCreateProduct = isPm || isCommercialDirector;
+  // Переход в проект из popover резервов: стабильная обёртка, чтобы
+  // memo-строки остатков не перерисовывались из-за нового onOpenProject.
+  const onOpenProjectRef = useRef(onOpenProject);
+  onOpenProjectRef.current = onOpenProject;
+  const handleOpenProject = useCallback((projectId: number) => {
+    onOpenProjectRef.current?.(projectId);
+  }, []);
+  const canSeeReservations = isPm || isCommercialDirector || isWarehouseUser;
 
   const [tab, setTab] = useState<"stock" | "arrivals" | "shipments">(initialTab ?? "stock");
   // Сколько партнёрских карточек/строк истории сейчас показано (0 у ролей без доступа) —
@@ -1612,20 +1771,17 @@ export function WarehousePage({
   const [stockSortField, setStockSortField] = useState<StockQuantityField | null>("available");
   const [stockSortDir, setStockSortDir] = useState<"asc" | "desc">("desc");
   const [isStockSortMenuOpen, setIsStockSortMenuOpen] = useState(false);
-  // Поле "Наименование" по умолчанию readOnly для директора; клик/фокус на
-  // нём не редактирует его напрямую, а открывает renameUnlockTarget —
-  // диалог подтверждения ДО того, как директор начал печатать (см.
+  // Название (комдир и pm) показывается текстом-кнопкой; клик открывает
+  // renameUnlockTarget — диалог подтверждения ДО начала редактирования (см.
   // openRenameUnlock/confirmRenameUnlock ниже). unlockedRenameProductId —
-  // строка (по item.id), для которой это подтверждение уже получено и
-  // textarea реально редактируема; nameTextareaRefs нужен, чтобы
-  // программно сфокусировать её сразу после подтверждения.
+  // строка (по item.id), для которой это подтверждение уже получено: только
+  // в ней рисуется textarea (фокус и автовысоту ставит сама строка).
   const [renameUnlockTarget, setRenameUnlockTarget] = useState<{
     rowId: number;
     productId: number;
     name: string;
   } | null>(null);
   const [unlockedRenameProductId, setUnlockedRenameProductId] = useState<number | null>(null);
-  const nameTextareaRefs = useRef<Map<number, HTMLTextAreaElement>>(new Map());
   const [renamingProductId, setRenamingProductId] = useState<number | null>(null);
   const [deleteProductTarget, setDeleteProductTarget] = useState<StockRow | null>(null);
   const [deletingProductId, setDeletingProductId] = useState<number | null>(null);
@@ -1704,6 +1860,7 @@ export function WarehousePage({
   const [showShipmentModal, setShowShipmentModal] = useState(false);
   const [showAddStockModal, setShowAddStockModal] = useState(false);
   const [showIncomeRequestModal, setShowIncomeRequestModal] = useState(false);
+  const [showNewProductModal, setShowNewProductModal] = useState(false);
 
   const [downloadingChecklistId, setDownloadingChecklistId] = useState<number | null>(null);
 
@@ -1742,33 +1899,17 @@ export function WarehousePage({
     }
   };
 
-  // Автоподгонка высоты <textarea> под содержимое — без неё однострочный
-  // инпут либо обрезал длинные названия по ширине, либо заставлял листать
-  // текст внутри узкого поля (см. баг: "Набор резцов по дереву Китай
-  // компл" — конец не влезал). Textarea вместо <input> переносит текст на
-  // несколько строк, как уже сделано для "Исходный товар"/триггера
-  // "Совпавший товар" на ProjectPage; высота растёт по scrollHeight и на
-  // вводе, и сразу после revert (см. ниже), чтобы поле не оставалось
-  // "растянутым" под уже не показываемый текст.
-  const autoResizeNameTextarea = (el: HTMLTextAreaElement | null) => {
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  };
-
-  // Инлайн-переименование товара (только commercial_director). Поле
-  // readOnly, пока строка не в unlockedRenameProductId — клик/фокус на нём
-  // не редактирует его напрямую, а сразу открывает диалог подтверждения
-  // (см. openRenameUnlock ниже), ДО того как директор вообще начал
-  // печатать. Только после явного "Изменить" в этом диалоге поле
-  // становится редактируемым и получает фокус (см. useEffect по
-  // unlockedRenameProductId ниже) — а вот САМО сохранение при уходе с
-  // поля (blur/Enter) происходит уже без второго диалога, напрямую (см.
+  // Инлайн-переименование товара (commercial_director и pm). Клик по названию
+  // сразу открывает диалог подтверждения (openRenameUnlock), ДО того как
+  // пользователь начал печатать. Только после явного "Изменить" строка
+  // получает textarea (см. StockTableRow) — а САМО сохранение при уходе с
+  // поля (blur/Enter) происходит без второго диалога, напрямую (см.
   // handleProductNameBlur), раз подтверждение на вход в редактирование
-  // уже было получено.
-  const openRenameUnlock = (item: StockRow) => {
+  // уже было получено. Колбэки стабильны (useCallback), чтобы memo-строки
+  // не перерисовывались при открытии диалогов.
+  const openRenameUnlock = useCallback((item: StockRow) => {
     setRenameUnlockTarget({ rowId: item.id, productId: item.productId, name: item.name });
-  };
+  }, []);
 
   const closeRenameUnlock = () => {
     setRenameUnlockTarget(null);
@@ -1780,15 +1921,6 @@ export function WarehousePage({
     setRenameUnlockTarget(null);
   };
 
-  // Фокус переносим сюда (а не сразу в confirmRenameUnlock), потому что на
-  // момент вызова confirmRenameUnlock textarea в DOM ещё readOnly —
-  // readOnly=false применится только после ре-рендера с новым
-  // unlockedRenameProductId, и .focus() нужно вызывать уже после него.
-  useEffect(() => {
-    if (unlockedRenameProductId === null) return;
-    nameTextareaRefs.current.get(unlockedRenameProductId)?.focus();
-  }, [unlockedRenameProductId]);
-
   // Сохранение по blur/Enter — без диалога (подтверждение уже получено на
   // входе в редактирование, см. openRenameUnlock/confirmRenameUnlock
   // выше). Как и раньше у cost_price-подобных полей: сохраняем, только
@@ -1796,7 +1928,7 @@ export function WarehousePage({
   // занято" — см. throwWithDetail в api.ts) — toast + revert значения.
   // В любом случае (сохранили, ошиблись или ничего не поменяли) поле
   // возвращается в readOnly.
-  const handleProductNameBlur = async (
+  const handleProductNameBlur = useCallback(async (
     item: StockRow,
     event: React.FocusEvent<HTMLTextAreaElement>,
   ) => {
@@ -1830,16 +1962,16 @@ export function WarehousePage({
       setRenamingProductId(null);
       setUnlockedRenameProductId(null);
     }
-  };
+  }, []);
 
-  // Удаление товара (только commercial_director) — кнопка всегда видна,
-  // но задизейблена, пока на складе есть остаток/резерв/брак (см. условие
-  // в рендере таблицы). Подтверждение — тот же ConfirmDialog, что и у
+  // Удаление товара (commercial_director и pm) — кнопка скрывается, пока на
+  // складе есть остаток/резерв/брак (см. blocksDelete в рендере таблицы).
+  // Подтверждение — тот же ConfirmDialog, что и у
   // удаления заявки на приход (openDeleteReceipt выше), не window.confirm.
-  const openDeleteProduct = (item: StockRow) => {
+  const openDeleteProduct = useCallback((item: StockRow) => {
     setDeleteProductError(null);
     setDeleteProductTarget(item);
-  };
+  }, []);
 
   const closeDeleteProduct = () => {
     if (deletingProductId !== null) return;
@@ -2640,6 +2772,8 @@ export function WarehousePage({
     return Array.from(new Set([...expandedShipmentGroups, ...allHistoryKeys]));
   }, [isSearchingShipments, expandedShipmentGroups, shipmentHistoryGroups]);
 
+  // Поиск не блокирует ввод: таблица пересчитывается с отложенным значением.
+  const deferredStockSearch = useDeferredValue(stockSearch);
   const filteredStock = useMemo(() => {
     return stock
       .filter((item) => {
@@ -2653,10 +2787,10 @@ export function WarehousePage({
         item.reserved > 0
       )
       .filter((item) =>
-        stockSearch.trim() === ""
+        deferredStockSearch.trim() === ""
           ? true
-          : item.name.toLowerCase().includes(stockSearch.trim().toLowerCase()) ||
-            item.sku.toLowerCase().includes(stockSearch.trim().toLowerCase())
+          : item.name.toLowerCase().includes(deferredStockSearch.trim().toLowerCase()) ||
+            item.sku.toLowerCase().includes(deferredStockSearch.trim().toLowerCase())
       )
       .slice()
       .sort((a, b) => {
@@ -2664,7 +2798,7 @@ export function WarehousePage({
         const diff = a[stockSortField] - b[stockSortField];
         return stockSortDir === "asc" ? diff : -diff;
       });
-  }, [stock, selectedWarehouseId, stockFilter, stockSearch, stockSortField, stockSortDir]);
+  }, [stock, selectedWarehouseId, stockFilter, deferredStockSearch, stockSortField, stockSortDir]);
 
   // Дерево приходов склад → проект → дата. Одна и та же разметка рисует и
   // активный список, и историю — отличаются только набором групп и
@@ -2784,7 +2918,7 @@ export function WarehousePage({
                                   <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">Артикул</th>
                                   <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Название товара</th>
                                   <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Количество</th>
-                                  <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Ед. изм.</th>
+                                  <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">Ед. изм.</th>
                                   <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Статус приема</th>
                                   <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center">Действия</th>
                                 </tr>
@@ -2850,7 +2984,7 @@ export function WarehousePage({
                                         )}
                                       </td>
 
-                                      <td className="px-4 py-3.5 text-xs text-muted-foreground">
+                                      <td className="px-4 py-3.5 text-xs text-muted-foreground whitespace-nowrap">
                                         {a.unit}
                                       </td>
 
@@ -2995,16 +3129,48 @@ export function WarehousePage({
       title="Склад"
       subtitle={`Управление остатками, резервом и отгрузками по ${warehouses.length} складам`}
       actions={
-        isPm && (
-          <button
-            onClick={() => setShowIncomeRequestModal(true)}
-            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.97]"
-          >
-            <PackagePlus size={14} /> Заявка на приход
-          </button>
+        (canCreateProduct || isPm) && (
+          <div className="flex items-center gap-2">
+            {canCreateProduct && (
+              <button
+                onClick={() => setShowNewProductModal(true)}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg border border-border text-foreground hover:bg-background transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.97]"
+              >
+                <Plus size={14} /> Новый товар
+              </button>
+            )}
+            {isPm && (
+              <button
+                onClick={() => setShowIncomeRequestModal(true)}
+                className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 transition-[color,background-color,border-color,transform] duration-150 ease-out active:scale-[0.97]"
+              >
+                <PackagePlus size={14} /> Заявка на приход
+              </button>
+            )}
+          </div>
         )
       }
     >
+      <NewProductModal
+        open={showNewProductModal}
+        onClose={() => setShowNewProductModal(false)}
+        onPickExisting={(pickedName) => {
+          setShowNewProductModal(false);
+          setStockSearch(pickedName);
+        }}
+        onCreated={async (product, { withComponents }) => {
+          toast.success(
+            product.is_kit
+              ? withComponents
+                ? `Комплект «${product.name}» создан с нулевым остатком`
+                : `Комплект «${product.name}» создан. Состав можно выбрать на странице проекта.`
+              : `Товар «${product.name}» создан с нулевым остатком`,
+          );
+          setShowNewProductModal(false);
+          await loadStock();
+        }}
+      />
+
       {showAddStockModal && (
         <AddStockModal warehouses={warehouses} onClose={() => setShowAddStockModal(false)} onSuccess={() => { loadStock(); loadArrivals(); }} />
       )}
@@ -3289,7 +3455,7 @@ export function WarehousePage({
                     <tr className="border-b border-border bg-background/60">
                       <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">Артикул</th>
                       <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left">Наименование</th>
-                      <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap">Ед. изм.</th>
+                      <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-left whitespace-nowrap min-w-[88px]">Ед. изм.</th>
                       {warehouses.map((wh) => (
                         <th key={wh.id} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right whitespace-nowrap">{wh.code || wh.name}</th>
                       ))}
@@ -3297,114 +3463,28 @@ export function WarehousePage({
                       <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right whitespace-nowrap">В резерве</th>
                       <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right whitespace-nowrap">Брак</th>
                       <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right whitespace-nowrap">Доступно</th>
-                      {isCommercialDirector && (
+                      {canManageProducts && (
                         <th className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-center whitespace-nowrap"></th>
                       )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {filteredStock.map((item) => {
-                      const blocksDelete = item.reserved !== 0 || item.defective !== 0 || item.total !== 0;
-                      return (
-                      <tr key={item.id} className="hover:bg-background/50 transition-colors">
-                        <td className="px-4 py-3 text-xs font-mono text-muted-foreground whitespace-nowrap">{item.sku}</td>
-                        <td className="px-4 py-3 text-sm font-medium text-foreground">
-                          {isCommercialDirector ? (() => {
-                            const isUnlocked = unlockedRenameProductId === item.id;
-                            return (
-                              <textarea
-                                  key={`${item.id}-name-${item.name}`}
-                                  ref={(el) => {
-                                    if (el) {
-                                      nameTextareaRefs.current.set(item.id, el);
-                                      autoResizeNameTextarea(el);
-                                    } else {
-                                      nameTextareaRefs.current.delete(item.id);
-                                    }
-                                  }}
-                                  rows={1}
-                                  defaultValue={item.name}
-                                  readOnly={!isUnlocked}
-                                  disabled={renamingProductId === item.productId}
-                                  onMouseDown={(event) => {
-                                    if (!isUnlocked) {
-                                      event.preventDefault();
-                                      openRenameUnlock(item);
-                                    }
-                                  }}
-                                  onFocus={(event) => {
-                                    if (!isUnlocked) {
-                                      event.target.blur();
-                                      openRenameUnlock(item);
-                                    }
-                                  }}
-                                  onInput={(event) => autoResizeNameTextarea(event.currentTarget)}
-                                  onKeyDown={(event) => {
-                                    if (event.key === "Enter") {
-                                      event.preventDefault();
-                                      event.currentTarget.blur();
-                                    }
-                                  }}
-                                  onBlur={(event) => {
-                                    if (isUnlocked) void handleProductNameBlur(item, event);
-                                  }}
-                                  className={`w-full resize-none overflow-hidden px-2 py-1 text-sm font-medium border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted ${
-                                    isUnlocked ? "border-primary cursor-text" : "border-border cursor-pointer"
-                                  }`}
-                              />
-                            );
-                          })() : (
-                            item.name
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{item.unit}</td>
-                        {warehouses.map((wh) => (
-                          <td key={wh.id} className="px-4 py-3 text-sm font-mono text-foreground text-right whitespace-nowrap">
-                            {(item.perWarehouse[wh.id] || 0).toLocaleString("ru-RU")}
-                          </td>
-                        ))}
-                        <td className="px-4 py-3 text-sm font-mono text-foreground text-right font-bold bg-background whitespace-nowrap">
-                          {item.total.toLocaleString("ru-RU")}
-                        </td>
-                        <td className="px-4 py-3 text-sm font-mono text-violet-600 dark:text-violet-400 text-right whitespace-nowrap">
-                          {item.reserved > 0 && (isPm || isCommercialDirector || isWarehouseUser) ? (
-                            <ReservationsPopover
-                              row={item}
-                              onOpenProject={isPm || isCommercialDirector ? onOpenProject : undefined}
-                            />
-                          ) : (
-                            item.reserved.toLocaleString("ru-RU")
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-sm font-mono text-right whitespace-nowrap">
-                          {item.defective > 0 ? (
-                            <span className="text-destructive font-semibold">{item.defective.toLocaleString("ru-RU")}</span>
-                          ) : (
-                            <span className="text-slate-300">0</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono text-sm text-green-600 dark:text-green-400 font-semibold whitespace-nowrap">
-                          {item.available.toLocaleString("ru-RU")}
-                        </td>
-                        {isCommercialDirector && (
-                          <td className="px-4 py-3 whitespace-nowrap">
-                            {blocksDelete ? null : (
-                              <div className="flex justify-center">
-                                <button
-                                    type="button"
-                                    onClick={() => openDeleteProduct(item)}
-                                    aria-label={`Удалить товар ${item.name}`}
-                                    className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-400/20 transition-colors"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        )}
-                      </tr>
-                      );
-                    })}
+                    {filteredStock.map((item) => (
+                      <StockTableRow
+                        key={item.id}
+                        item={item}
+                        warehouses={warehouses}
+                        canManageProducts={canManageProducts}
+                        canSeeReservations={canSeeReservations}
+                        isUnlocked={unlockedRenameProductId === item.id}
+                        isRenaming={renamingProductId === item.productId}
+                        isDeleting={deletingProductId === item.productId}
+                        onOpenProject={(isPm || isCommercialDirector) && onOpenProject ? handleOpenProject : undefined}
+                        onOpenRename={openRenameUnlock}
+                        onNameBlur={handleProductNameBlur}
+                        onOpenDelete={openDeleteProduct}
+                      />
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -3717,7 +3797,7 @@ export function WarehousePage({
                                   </div>
                                 </td>
                                 <td className="px-5 py-3 text-sm font-mono text-foreground text-center">{it.quantity}</td>
-                                <td className="px-5 py-3 text-xs text-muted-foreground">{it.unit}</td>
+                                <td className="px-5 py-3 text-xs text-muted-foreground whitespace-nowrap">{it.unit}</td>
                                 <td className="px-5 py-3">
                                   {it.availableWarehouses.length === 0 ? (
                                     // supplier_direct не резервируется на нашем складе по
