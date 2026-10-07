@@ -1330,6 +1330,59 @@ export async function fetchProjectDocuments(
   );
   return data;
 }
+// ==========================================
+// СОСТОЯНИЕ ДОКУМЕНТОВ ПРОЕКТА («Не требуется»)
+// ==========================================
+export type DocCategoryState = "uploaded" | "not_required" | "empty";
+export type NotRequiredCategory = "power_of_attorney" | "waybill" | "payment_invoice";
+
+export interface DocCategoryInfo {
+  state: DocCategoryState;
+  marked_by?: number | null;
+  marked_at?: string | null;
+}
+
+export interface ProjectDocumentsState {
+  documents: ProjectDocumentResponse[];
+  categories: Partial<Record<"contract" | NotRequiredCategory, DocCategoryInfo>>;
+  procurement_required: boolean;
+  review_stage: DocReviewStage;
+}
+
+export async function fetchProjectDocumentsState(
+  projectId: number | string,
+): Promise<ProjectDocumentsState> {
+  const { data } = await api.get<ProjectDocumentsState>(
+    `/documents/project/${projectId}/state`,
+  );
+  return data;
+}
+
+// Отметить категорию «не требуется» (идемпотентно).
+export async function setDocumentNotRequired(
+  projectId: number | string,
+  category: NotRequiredCategory,
+): Promise<void> {
+  await api.post(`/projects/${projectId}/documents/${category}/not-required`);
+}
+
+// «Отменить» отметку.
+export async function unsetDocumentNotRequired(
+  projectId: number | string,
+  category: NotRequiredCategory,
+): Promise<void> {
+  await api.delete(`/projects/${projectId}/documents/${category}/not-required`);
+}
+
+// Текст ошибки для диалога: русский `detail` от бэкенда (409/403), иначе запасной.
+export function documentActionErrorMessage(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    const detail: unknown = error.response?.data?.detail;
+    if (typeof detail === "string" && detail.trim()) return detail;
+  }
+  return "Не удалось выполнить действие. Попробуйте ещё раз.";
+}
+
 export async function uploadProjectDocument(
   projectId: string | number,
   // ИСПРАВЛЕНО: раньше тип не включал "waybill", хотя DocumentsPage.tsx уже
