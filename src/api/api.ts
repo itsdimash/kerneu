@@ -329,6 +329,26 @@ export async function createProduct(
   }
 }
 
+// Создаёт товар с нулевым остатком: POST /products/new → 201 ProductOut.
+// При дубликате названия backend отвечает 409 с detail — throwWithDetail
+// пробрасывает его как Error.message.
+// Комплект: is_kit=true и components (product_id + quantity) — состав
+// обязателен, единицу «комплект» backend ставит сам; без is_kit поля
+// components передавать нельзя (422).
+export async function createNewProduct(payload: {
+  name: string;
+  unit: string;
+  is_kit?: boolean;
+  components?: { product_id: number; quantity: number }[];
+}): Promise<ProductOut> {
+  try {
+    const { data } = await api.post<ProductOut>("/products/new", payload);
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось создать товар");
+  }
+}
+
 // Отмечая чекбоксами несколько товаров сразу в дропдауне «Совпавший
 // товар», ПМ фактически говорит "эта строка — комплект из этих товаров".
 // /products/resolve-kit по сырому названию строки (name) сам решает,
@@ -404,8 +424,7 @@ export async function updateProductKitFlag(
   }
 }
 
-// ПРЕДПОЛОЖЕНИЕ (backend реализуется отдельно): PATCH /products/{id}/name
-// принимает { name } и возвращает обновлённый товар. При конфликте имени
+// PATCH /products/{id}/name принимает { name } и возвращает обновлённый товар. При конфликте имени
 // backend отвечает 400 с detail — throwWithDetail пробрасывает detail как
 // есть, поэтому UI покажет ровно то сообщение, которое пришлёт backend
 // (например, "Имя уже занято"), без отдельного разбора статус-кода.
@@ -424,10 +443,10 @@ export async function updateProductName(
   }
 }
 
-// ПРЕДПОЛОЖЕНИЕ: DELETE /products/{id} удаляет товар из каталога. Наличие
-// остатка/резерва/брака — авторитетная проверка backend'а; фронт (см.
-// WarehousePage) дублирует её на уровне disabled-кнопки только для UX,
-// чтобы не давать пользователю впустую открывать диалог подтверждения.
+// DELETE /products/{id} удаляет товар из каталога. Наличие остатка/резерва/
+// брака — авторитетная проверка backend'а (409 с detail); фронт (см.
+// WarehousePage) дублирует её скрытием кнопки только для UX, чтобы не давать
+// пользователю впустую открывать диалог подтверждения.
 export async function deleteProduct(productId: number): Promise<void> {
   try {
     await api.delete(`/products/${productId}`);
@@ -618,6 +637,13 @@ export function throwWithDetail(error: unknown, fallback: string): never {
     const detail = error.response?.data?.detail;
     if (typeof detail === "string" && detail.trim()) {
       throw new Error(detail);
+    }
+    // 422 валидации: detail — массив { msg, loc, … }; склеиваем msg в строку.
+    if (Array.isArray(detail)) {
+      const messages = detail
+        .map((entry) => (typeof entry === "string" ? entry : entry?.msg))
+        .filter((msg): msg is string => typeof msg === "string" && msg.trim().length > 0);
+      if (messages.length > 0) throw new Error(messages.join("; "));
     }
   }
 
@@ -906,6 +932,10 @@ export interface WarehouseStockResponse {
   actual_quantity: number;
   reserved_quantity: number;
   defective_quantity: number;
+  is_kit?: boolean;
+  // Товар используется (проекты, документы и т.п.) — удалять нельзя.
+  // Пока бэк поле не отдаёт, undefined трактуется как false.
+  is_referenced?: boolean;
   stocks: WarehouseStockDetail[];
 }
 
@@ -1495,6 +1525,8 @@ export interface ProductInfo {
   cost_price: number | string | null;
   current_stock?: number | string | null;
   external_id?: string | null;
+  // Товар-комплект (GET /products/ отдаёт его, как и /products/ на ProjectPage).
+  is_kit?: boolean;
 }
 
 export interface StatusInfo {
@@ -2511,15 +2543,19 @@ export interface ProductSearchResult {
   name: string;
   unit: string | null;
   available_quantity: number;
+  // Общий остаток: сумма actual_quantity по складам без вычета резерва.
+  // Опционально — старые ответы бэка поля не содержат.
+  quantity?: number;
 }
 
 // Поиск товара по названию для комбобокса «Заявка на склад» — в отличие от
 // fetchProducts (весь каталог целиком), фильтрует и считает остаток на
 // бэкенде.
-export async function searchProducts(query: string): Promise<ProductSearchResult[]> {
+// limit — необязательный предел числа результатов (передаётся, только если задан).
+export async function searchProducts(query: string, limit?: number): Promise<ProductSearchResult[]> {
   try {
     const { data } = await api.get<ProductSearchResult[]>("/products/search", {
-      params: { q: query },
+      params: limit !== undefined ? { q: query, limit } : { q: query },
     });
     return data;
   } catch (error) {
