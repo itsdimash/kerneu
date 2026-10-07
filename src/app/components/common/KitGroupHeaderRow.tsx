@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { AlertTriangle, ChevronDown, Loader2, Package, Pencil } from "lucide-react";
 import { patchKitGroupPrices } from "../../../api/api";
 
@@ -23,6 +23,8 @@ interface KitGroupHeaderRowProps {
   // подчиняется ровно тому же правилу.
   canEdit: boolean;
   onPricesSaved: () => void;
+  // Маркер «Комдир менял компоненты» (DirectorChangeMarker) рядом с названием.
+  changeMarker?: ReactNode;
 }
 
 export function KitGroupHeaderRow({
@@ -39,6 +41,7 @@ export function KitGroupHeaderRow({
   itemsTotalSum,
   canEdit,
   onPricesSaved,
+  changeMarker,
 }: KitGroupHeaderRowProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [saleInput, setSaleInput] = useState("");
@@ -115,6 +118,7 @@ export function KitGroupHeaderRow({
           </span>
 
           <span className="text-sm font-medium text-foreground">{kitName}</span>
+          {changeMarker}
           <span className="text-xs text-muted-foreground">× {formatQty(kitQuantity)}</span>
 
           {showPrices && (

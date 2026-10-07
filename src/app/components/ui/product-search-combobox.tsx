@@ -40,8 +40,6 @@ interface ProductSearchComboboxProps {
   className?: string;
   // Контекст для остатка «для этой строки» (см. SearchProductsContext).
   mlImportId?: number;
-  projectId?: number | string;
-  itemId?: number;
 }
 
 // Строкой поиска товара — при открытии попапа сразу дёргает
@@ -59,8 +57,6 @@ export function ProductSearchCombobox({
   disabled,
   className,
   mlImportId,
-  projectId,
-  itemId,
 }: ProductSearchComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState(value.name);
@@ -85,7 +81,7 @@ export function ProductSearchCombobox({
     setLoading(true);
 
     const timer = setTimeout(() => {
-      searchProducts(trimmed, undefined, { mlImportId, projectId, itemId })
+      searchProducts(trimmed, undefined, { mlImportId })
         .then((items) => {
           if (requestId !== requestIdRef.current) return;
           setResults(items);
@@ -103,7 +99,7 @@ export function ProductSearchCombobox({
     }, SEARCH_DEBOUNCE_MS);
 
     return () => clearTimeout(timer);
-  }, [query, open, mlImportId, projectId, itemId]);
+  }, [query, open, mlImportId]);
 
   const trimmedQuery = query.trim();
   const hasExactMatch = results.some(

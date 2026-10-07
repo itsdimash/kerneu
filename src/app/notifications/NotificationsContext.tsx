@@ -62,6 +62,20 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     return connectNotificationsSocket((notification) => {
+      // Служебное сообщение {"type": "notification_deleted", "ids": [...]} —
+      // уведомления удалены на backend (например, ПМ отменил отправку
+      // проекта): убираем их из списка. Счётчик непрочитанных считается из
+      // items, поэтому пересчитывается сам.
+      const message = notification as unknown as { type?: string; ids?: unknown };
+      if (message.type === "notification_deleted") {
+        const removed = new Set(
+          (Array.isArray(message.ids) ? message.ids : []).map((id) => String(id)),
+        );
+        if (removed.size > 0) {
+          setItems((prev) => prev.filter((n) => !removed.has(String(n.id))));
+        }
+        return;
+      }
       setItems((prev) => {
         const next = [notification, ...prev];
         return PARTNER_SETTLED_CATEGORIES.has(notification.category) && notification.partnerRequestId !== undefined

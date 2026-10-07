@@ -121,8 +121,8 @@ interface SupplySourceSelectProps {
   options?: SupplySource[];
 }
 
-// Выбор источника позиции для PM у позиции проекта (после одобрения). Как и
-// FixProductButton — точечный PATCH позиции; причину отказа backend'а
+// Выбор источника позиции для PM у позиции проекта (после одобрения).
+// Точечный PATCH позиции; причину отказа backend'а
 // показываем под селектом, потому что заранее её не знаем.
 export function SupplySourceSelect({ projectId, itemId, value, onUpdated, options }: SupplySourceSelectProps) {
   const [saving, setSaving] = useState(false);
