@@ -12,6 +12,8 @@ import { PartnerIssueSection } from "./warehouse/PartnerIssueSection";
 import { PartnerShipmentHistoryRows } from "./warehouse/PartnerIssueHistory";
 import { PartnerReservationRows } from "./warehouse/PartnerReservationRows";
 import { StockLoadError } from "./warehouse/StockLoadError";
+import { RenameableName, autoResizeNameTextarea } from "./warehouse/RenameableName";
+import { KitsTab } from "./warehouse/KitsTab";
 import { describeLoadError, type LoadFailure } from "../lib/loadError";
 import { Popover, PopoverContent, PopoverTrigger } from "../app/components/ui/popover";
 import {
@@ -1579,15 +1581,6 @@ function ReservationsPopover({
   );
 }
 
-// Автоподгонка высоты <textarea> под содержимое: однострочный инпут обрезал
-// бы длинные названия по ширине. Вызывается один раз при разблокировке и на
-// вводе — textarea существует только у одной редактируемой строки.
-const autoResizeNameTextarea = (el: HTMLTextAreaElement | null) => {
-  if (!el) return;
-  el.style.height = "auto";
-  el.style.height = `${el.scrollHeight}px`;
-};
-
 type StockTableRowProps = {
   item: StockRow;
   warehouses: WarehouseInfo[];
@@ -1621,18 +1614,6 @@ const StockTableRow = memo(function StockTableRow({
   onNameBlur,
   onOpenDelete,
 }: StockTableRowProps) {
-  const nameRef = useRef<HTMLTextAreaElement>(null);
-
-  // Фокус и автовысота — один раз, когда строка разблокирована (textarea
-  // в DOM только в этот момент).
-  useEffect(() => {
-    if (!isUnlocked) return;
-    const el = nameRef.current;
-    if (!el) return;
-    autoResizeNameTextarea(el);
-    el.focus();
-  }, [isUnlocked]);
-
   const blocksDelete =
     item.reserved !== 0 || item.defective !== 0 || item.total !== 0 || item.isReferenced;
 
@@ -1642,32 +1623,14 @@ const StockTableRow = memo(function StockTableRow({
       <td className="px-4 py-3 text-sm font-medium text-foreground">
         {!canManageProducts ? (
           item.name
-        ) : isUnlocked ? (
-          <textarea
-            ref={nameRef}
-            rows={1}
-            defaultValue={item.name}
-            disabled={isRenaming}
-            onInput={(event) => autoResizeNameTextarea(event.currentTarget)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                event.currentTarget.blur();
-              }
-            }}
-            onBlur={(event) => onNameBlur(item, event)}
-            className="-mx-2 w-[calc(100%+1rem)] resize-none overflow-hidden px-2 py-1 text-sm font-medium border border-primary rounded-md bg-card cursor-text focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted"
-          />
         ) : (
-          <button
-            type="button"
-            onClick={() => onOpenRename(item)}
-            title="Изменить название"
-            className="group inline-flex max-w-full items-center gap-1.5 text-left text-sm font-medium text-foreground whitespace-normal break-words px-2 py-1.5 -mx-2 rounded-md hover:bg-muted transition-colors"
-          >
-            {item.name}
-            <Pencil size={12} className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-70 transition-opacity" />
-          </button>
+          <RenameableName
+            name={item.name}
+            isUnlocked={isUnlocked}
+            isSaving={isRenaming}
+            onOpen={() => onOpenRename(item)}
+            onCommit={(event) => onNameBlur(item, event)}
+          />
         )}
       </td>
       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap min-w-[88px]">{item.isKit ? "комплект" : item.unit}</td>
@@ -1729,7 +1692,7 @@ export function WarehousePage({
   /** Opens the project page — called after a project is reverted to editing. */
   onOpenProject?: (projectId: number) => void;
   /** Вкладка, открытая при монтировании (клик по уведомлению о партнёрской заявке). */
-  initialTab?: "stock" | "arrivals" | "shipments";
+  initialTab?: "stock" | "arrivals" | "shipments" | "kits";
   /** Партнёрская заявка, которую подсветить в блоке выдачи на вкладке «Отгрузка». */
   partnerFocusRequestId?: number | null;
 }) {
@@ -1753,7 +1716,13 @@ export function WarehousePage({
   }, []);
   const canSeeReservations = isPm || isCommercialDirector || isWarehouseUser;
 
-  const [tab, setTab] = useState<"stock" | "arrivals" | "shipments">(initialTab ?? "stock");
+  // «Комплекты» — только для pm и комдира: чужой initialTab: "kits" откатывается на «Остатки».
+  const [tab, setTab] = useState<"stock" | "arrivals" | "shipments" | "kits">(
+    initialTab === "kits" && !canManageProducts ? "stock" : initialTab ?? "stock",
+  );
+  // Вкладка «Комплекты» монтируется при первом открытии (там же грузятся комплекты и каталог)
+  // и дальше остаётся в DOM скрытой, чтобы не терять черновики и раскрытые комплекты.
+  const [kitsTabVisited, setKitsTabVisited] = useState(tab === "kits");
   // Сколько партнёрских карточек/строк истории сейчас показано (0 у ролей без доступа) —
   // пустые сообщения вкладки «Отгрузка» не показываем, пока они есть.
   const [partnerIssueCount, setPartnerIssueCount] = useState(0);
@@ -1962,6 +1931,12 @@ export function WarehousePage({
       setRenamingProductId(null);
       setUnlockedRenameProductId(null);
     }
+  }, []);
+
+  // Комплект переименован на вкладке «Комплекты» — комплекты есть и в
+  // таблице остатков, обновляем там название по productId.
+  const handleKitRenamed = useCallback((productId: number, name: string) => {
+    setStock((prev) => prev.map((row) => (row.productId === productId ? { ...row, name } : row)));
   }, []);
 
   // Удаление товара (commercial_director и pm) — кнопка скрывается, пока на
@@ -3331,10 +3306,18 @@ export function WarehousePage({
       )}
 
       <div className="flex items-center gap-1 mb-6 border-b border-border">
-        {[{ key: "stock" as const, label: "Остатки" }, { key: "arrivals" as const, label: "Приход" }, { key: "shipments" as const, label: "Отгрузка" }].map((t) => (
+        {[
+          { key: "stock" as const, label: "Остатки" },
+          { key: "arrivals" as const, label: "Приход" },
+          { key: "shipments" as const, label: "Отгрузка" },
+          ...(canManageProducts ? [{ key: "kits" as const, label: "Комплекты" }] : []),
+        ].map((t) => (
           <button
             key={t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => {
+              if (t.key === "kits") setKitsTabVisited(true);
+              setTab(t.key);
+            }}
             className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${tab === t.key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           >
             {t.label}
@@ -3491,6 +3474,12 @@ export function WarehousePage({
             )}
           </div>
         </>
+      )}
+
+      {canManageProducts && kitsTabVisited && (
+        <div hidden={tab !== "kits"}>
+          <KitsTab onKitRenamed={handleKitRenamed} />
+        </div>
       )}
 
       {tab === "arrivals" && (

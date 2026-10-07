@@ -406,6 +406,49 @@ export async function getKitComponents(
   }
 }
 
+// Вкладка «Комплекты» на странице склада (pm и комдир): все комплекты с
+// составом по умолчанию. Только каталог — уже созданные позиции проектов
+// хранят свой снимок состава и названия и не меняются.
+export interface KitComponentDetail {
+  component_product_id: number;
+  component_name: string;
+  component_unit: string;
+  default_quantity: number;
+}
+
+export interface KitListItem {
+  id: number;
+  name: string;
+  unit: string;
+  components: KitComponentDetail[];
+}
+
+export async function fetchKits(): Promise<KitListItem[]> {
+  try {
+    const { data } = await api.get<KitListItem[]>("/products/kits");
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось загрузить комплекты");
+  }
+}
+
+// PUT заменяет состав целиком (пустой массив допустим) и возвращает
+// обновлённый комплект в той же форме, что и fetchKits.
+export async function updateKitComponents(
+  productId: number,
+  components: { component_product_id: number; default_quantity: number }[],
+): Promise<KitListItem> {
+  try {
+    const { data } = await api.put<KitListItem>(
+      `/products/${productId}/kit-components`,
+      { components },
+    );
+    return data;
+  } catch (error) {
+    throwWithDetail(error, "Не удалось сохранить состав комплекта");
+  }
+}
+
 // ПРЕДПОЛОЖЕНИЕ: PATCH /products/{id}/kit-flag принимает { is_kit } и
 // возвращает обновлённый товар (используем только то, что реально нужно
 // фронту — id и is_kit).
