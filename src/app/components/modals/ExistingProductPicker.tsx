@@ -124,7 +124,13 @@ export function ExistingProductPicker({ stock, warehouses, value, onChange, disa
   if (value && selectedItem) {
     const onlyOne = selectedLiving.length === 1;
     const nowhere = selectedLiving.length === 0;
-    const allowed = nowhere ? warehouses.map((w) => w.id) : selectedLiving;
+    // Приход можно оформить на любой склад — не только на тот, где товар уже лежит.
+    // Склады, где товар есть, идут первыми и показывают остаток.
+    const allowed = [
+      ...selectedLiving,
+      ...warehouses.map((w) => w.id).filter((id) => !selectedLiving.includes(id)),
+    ];
+    const hasStockHere = selectedLiving.includes(value.warehouseId);
 
     return (
       <div className="rounded-lg border border-primary/40 bg-primary/5 p-3">
@@ -147,7 +153,11 @@ export function ExistingProductPicker({ stock, warehouses, value, onChange, disa
 
         <div className="mt-3">
           <p className="text-xs font-medium text-muted-foreground mb-1.5">
-            {onlyOne ? "Товар лежит на складе" : nowhere ? "Остатков пока нет — выберите склад" : "Товар лежит на складах — выберите куда"}
+            {nowhere
+              ? "Остатков пока нет — выберите склад"
+              : onlyOne
+                ? "Товар лежит на одном складе — выберите, куда оформить приход"
+                : "Товар лежит на складах — выберите куда"}
           </p>
 
           <div className="flex flex-wrap gap-2">
@@ -185,12 +195,12 @@ export function ExistingProductPicker({ stock, warehouses, value, onChange, disa
               <Info size={12} className="mt-0.5 shrink-0" />
               Склад зафиксирован — совпадает со складом, на котором отклонили приход.
             </p>
-          ) : !nowhere && (
+          ) : !nowhere && !hasStockHere ? (
             <p className="mt-2 flex items-start gap-1.5 text-[11px] text-muted-foreground">
               <Info size={12} className="mt-0.5 shrink-0" />
-              Приход можно оформить только на склад, где этот товар уже хранится.
+              На этом складе товара пока нет — после прихода он появится и здесь.
             </p>
-          )}
+          ) : null}
         </div>
       </div>
     );
