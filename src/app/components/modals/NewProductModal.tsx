@@ -219,8 +219,8 @@ export function NewProductModal({
                       <span className="min-w-0 break-words text-foreground">{item.name}</span>
                       <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">
                         {item.unit?.trim() || "—"}
-                        {typeof item.quantity === "number" &&
-                          ` · ${item.quantity > 0 ? `Остаток: ${item.quantity.toLocaleString("ru-RU")}` : "Нет на складе"}`}
+                        {typeof (item.available_quantity ?? item.quantity) === "number" &&
+                          ` · ${(item.available_quantity ?? item.quantity ?? 0) > 0 ? `Остаток: ${(item.available_quantity ?? item.quantity ?? 0).toLocaleString("ru-RU")}` : "Нет на складе"}`}
                       </span>
                     </button>
                   </li>

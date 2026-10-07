@@ -38,6 +38,10 @@ interface ProductSearchComboboxProps {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  // Контекст для остатка «для этой строки» (см. SearchProductsContext).
+  mlImportId?: number;
+  projectId?: number | string;
+  itemId?: number;
 }
 
 // Строкой поиска товара — при открытии попапа сразу дёргает
@@ -54,6 +58,9 @@ export function ProductSearchCombobox({
   placeholder = "Наименование позиции",
   disabled,
   className,
+  mlImportId,
+  projectId,
+  itemId,
 }: ProductSearchComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState(value.name);
@@ -78,7 +85,7 @@ export function ProductSearchCombobox({
     setLoading(true);
 
     const timer = setTimeout(() => {
-      searchProducts(trimmed)
+      searchProducts(trimmed, undefined, { mlImportId, projectId, itemId })
         .then((items) => {
           if (requestId !== requestIdRef.current) return;
           setResults(items);
@@ -96,7 +103,7 @@ export function ProductSearchCombobox({
     }, SEARCH_DEBOUNCE_MS);
 
     return () => clearTimeout(timer);
-  }, [query, open]);
+  }, [query, open, mlImportId, projectId, itemId]);
 
   const trimmedQuery = query.trim();
   const hasExactMatch = results.some(
@@ -177,6 +184,10 @@ export function ProductSearchCombobox({
                       <span className="truncate">{result.name}</span>
                       <span className="flex-shrink-0 text-xs text-muted-foreground">
                         {result.available_quantity} {result.unit ?? ""}
+                        {result.product_free_stock != null &&
+                          result.product_free_stock !== result.available_quantity && (
+                            <span className="ml-1 opacity-70">из {result.product_free_stock}</span>
+                          )}
                       </span>
                     </CommandItem>
                   ))}

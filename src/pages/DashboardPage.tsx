@@ -33,6 +33,7 @@ import {
   type RecentActivity,
 } from "../api/api";
 import { useBackgroundJobs } from "../app/context/BackgroundJobsContext";
+import { getMe } from "../api/user";
 
 // Тип клиента, который приходит с бэкенда: только id и name используются для отображения
 type ClientDTO = {
@@ -154,6 +155,17 @@ export function DashboardPM({ role, onNavigate, onOpenProject }: { role: string;
   const [statsError, setStatsError] = useState<string | null>(null);
   const [deadlines, setDeadlines] = useState<UpcomingDeadline[]>([]);
   const [activity, setActivity] = useState<RecentActivity[]>([]);
+
+  // Текущий пользователь — нужен, чтобы показывать «Удалить» ПМ только на
+  // его собственных проектах (backend отдаёт 403 на чужие).
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getMe()
+      .then((me) => { if (!cancelled && typeof me?.id === "number") setCurrentUserId(me.id); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     loadProjects();
@@ -546,7 +558,16 @@ const handleSave = async () => {
         );
 
         if (!response.ok) {
-            throw new Error(`Ошибка ${response.status}`);
+            // Backend объясняет отказ в detail (403 «чужой проект», 409 «есть
+            // приходы», 400 «архивируемый статус») — показываем его как есть.
+            let detail = "";
+            try {
+                const body = await response.json();
+                if (typeof body?.detail === "string") detail = body.detail.trim();
+            } catch {
+                // тело не JSON — остаётся общее сообщение
+            }
+            throw new Error(detail || "Ошибка удаления");
         }
 
         setProjectToDelete(null);
@@ -554,7 +575,7 @@ const handleSave = async () => {
         await loadStats();
     } catch (error) {
         console.error(error);
-        alert("Ошибка удаления");
+        alert(error instanceof Error && error.message ? error.message : "Ошибка удаления");
     } finally {
         setIsDeleting(false);
     }
@@ -582,7 +603,15 @@ const handleSave = async () => {
         );
 
         if (!response.ok) {
-            throw new Error(`Ошибка ${response.status}`);
+            // Backend объясняет отказ в detail — показываем его как есть.
+            let detail = "";
+            try {
+                const body = await response.json();
+                if (typeof body?.detail === "string") detail = body.detail.trim();
+            } catch {
+                // тело не JSON — остаётся общее сообщение
+            }
+            throw new Error(detail || "Ошибка архивации");
         }
 
         setProjectToArchive(null);
@@ -590,7 +619,7 @@ const handleSave = async () => {
         await loadStats();
     } catch (error) {
         console.error(error);
-        alert("Ошибка архивации");
+        alert(error instanceof Error && error.message ? error.message : "Ошибка архивации");
     } finally {
         setIsArchiving(false);
     }
@@ -1197,7 +1226,8 @@ const handleSave = async () => {
                                                       </button>
                                                   </>
                                               )
-                                          ) : (
+                                          ) : (role === "commercial_director" ||
+                                                (role === "pm" && currentUserId != null && p.pm?.id === currentUserId)) && (
                                               <>
                                                   <div className="h-px bg-muted"/>
                                                   <button
@@ -1338,7 +1368,7 @@ const handleSave = async () => {
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">Отправить в архив?</h3>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Проект «{projectToArchive.name}» получит статус «Договор расторгнут». Данные сохранятся, но проект перестанет считаться активной сделкой.
+                    Договор будет расторгнут, зарезервированный товар вернётся на склад. Продолжить?
                   </p>
                 </div>
               </div>

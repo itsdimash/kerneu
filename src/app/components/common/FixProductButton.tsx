@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { toast } from "sonner";
 import { Pencil, Loader2 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import {
@@ -65,7 +66,10 @@ export function FixProductButton({
       onUpdated(updated);
       setOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось изменить товар");
+      const message = err instanceof Error ? err.message : "Не удалось изменить товар";
+      setError(message);
+      // Например 409: backend не даёт сменить товар у позиции под бронью.
+      toast.error(message);
     } finally {
       setSaving(false);
     }
@@ -84,7 +88,14 @@ export function FixProductButton({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 space-y-2.5">
         <p className="text-xs font-medium text-foreground">Исправить товар позиции</p>
-        <ProductSearchCombobox value={value} onChange={setValue} disabled={saving} className="w-full" />
+        <ProductSearchCombobox
+          value={value}
+          onChange={setValue}
+          disabled={saving}
+          className="w-full"
+          projectId={projectId}
+          itemId={itemId}
+        />
         {error && <p className="text-xs text-destructive">{error}</p>}
         <div className="flex items-center justify-end gap-2 pt-1">
           <button

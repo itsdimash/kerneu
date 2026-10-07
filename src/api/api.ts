@@ -185,6 +185,20 @@ export interface KitComponentStatus {
 // undefined (старый backend без поля) трактуется как "stock".
 export type SupplySource = "stock" | "supplier_direct";
 
+// Пересчитанные backend'ом остатки одной строки черновика. Мутации
+// ml-импорта возвращают такой список по ВСЕМ строкам импорта: одна и та же
+// позиция на нескольких строках делит остаток, поэтому правка одной строки
+// меняет доступность соседних. Фронт ничего не считает сам — только
+// накладывает эти значения на mlImport.items.
+export interface MlImportStockUpdate {
+  id: number;
+  available_quantity: number;
+  ml_status: string;
+  product_free_stock?: number | null;
+  stock_covered_quantity?: number | null;
+  stock_shortfall_quantity?: number | null;
+}
+
 export interface MlImportItemResponse {
   id: number;
 
@@ -202,7 +216,14 @@ export interface MlImportItemResponse {
   total_amount: number | string;
   margin: number | string;
 
+  // «Осталось для ЭТОЙ строки» — с учётом остальных строк импорта,
+  // привязанных к тому же товару.
   available_quantity: number;
+  // Опциональные — старый backend их не отдаёт.
+  product_free_stock?: number | null;
+  stock_covered_quantity?: number | null;
+  stock_shortfall_quantity?: number | null;
+  stock_updates?: MlImportStockUpdate[];
 
   unit: string | null;
   category: string | null;
@@ -650,7 +671,19 @@ export async function saveMlImportKitComponents(
 
 export interface ProductAvailability {
   product_id: number;
+  // С контекстом (mlImportId/projectId + itemId) — сколько осталось для
+  // этой строки после предыдущих; без контекста — свободный остаток товара.
   available_quantity: number;
+  // Весь свободный остаток товара независимо от других строк. Опционально —
+  // старый backend поля не отдаёт.
+  product_free_stock?: number;
+}
+
+// Контекст строки, для которой считается остаток (см. SearchProductsContext).
+export interface ProductsAvailabilityContext {
+  mlImportId?: number;
+  projectId?: number | string;
+  itemId?: number;
 }
 
 // Живые остатки по товарам (без разбивки по складам, в отличие от
@@ -660,12 +693,17 @@ export interface ProductAvailability {
 // трактуются на фронте как остаток 0 (см. контракт эндпоинта).
 export async function fetchProductsAvailability(
   productIds: number[],
+  context?: ProductsAvailabilityContext,
 ): Promise<ProductAvailability[]> {
   if (productIds.length === 0) return [];
   try {
+    const body: Record<string, unknown> = { product_ids: productIds };
+    if (context?.mlImportId != null) body.ml_import_id = context.mlImportId;
+    if (context?.projectId != null) body.project_id = context.projectId;
+    if (context?.itemId != null) body.item_id = context.itemId;
     const { data } = await api.post<{ items: ProductAvailability[] }>(
       "/products/availability",
-      { product_ids: productIds },
+      body,
     );
     return data.items ?? [];
   } catch (error) {
@@ -728,13 +766,15 @@ export async function createMlImportItem(
   }
 }
 
-// ПОДТВЕРЖДЕНО backend'ом: DELETE отвечает 204 без тела; если строка была
-// под бронью и бронь снята, признак приходит в заголовке
-// X-Reservation-Released: true. Если фронт и API на разных origin, backend
-// должен отдать его в Access-Control-Expose-Headers, иначе заголовок
-// не виден из браузера.
+// ПОДТВЕРЖДЕНО backend'ом: DELETE отвечает 200 с JSON-телом
+// {reservation_released, stock_updates}; признак снятой брони дублируется
+// в заголовке X-Reservation-Released: true. Если фронт и API на разных
+// origin, backend должен отдать заголовок в Access-Control-Expose-Headers,
+// иначе он не виден из браузера (тогда берём признак из тела).
 export interface MlImportItemDeleteResponse {
   reservation_released: boolean;
+  // Пересчитанные остатки оставшихся строк импорта из тела ответа.
+  stock_updates?: MlImportStockUpdate[];
 }
 
 export async function deleteMlImportItem(
@@ -744,7 +784,19 @@ export async function deleteMlImportItem(
   try {
     const response = await api.delete(`/ml-imports/${importId}/items/${itemId}`);
     const header = response.headers?.["x-reservation-released"];
-    return { reservation_released: String(header).toLowerCase() === "true" };
+    const body = response.data as
+      | { reservation_released?: unknown; stock_updates?: MlImportStockUpdate[] }
+      | ""
+      | null
+      | undefined;
+    const bodyReleased =
+      body && typeof body === "object" && typeof body.reservation_released === "boolean"
+        ? body.reservation_released
+        : null;
+    return {
+      reservation_released: bodyReleased ?? String(header).toLowerCase() === "true",
+      stock_updates: body && typeof body === "object" ? body.stock_updates : undefined,
+    };
   } catch (error) {
     throwWithDetail(error, "Не удалось удалить позицию");
   }
@@ -2585,21 +2637,40 @@ export interface ProductSearchResult {
   id: number;
   name: string;
   unit: string | null;
+  // Сколько осталось для строки (если передан контекст импорта/проекта),
+  // иначе — свободный остаток товара.
   available_quantity: number;
+  // Весь свободный остаток товара независимо от других строк.
+  product_free_stock?: number;
   // Общий остаток: сумма actual_quantity по складам без вычета резерва.
   // Опционально — старые ответы бэка поля не содержат.
   quantity?: number;
+}
+
+// Контекст для расчёта остатка «для этой строки»: backend вычитает
+// количества других строк того же импорта/проекта с тем же товаром.
+export interface SearchProductsContext {
+  mlImportId?: number;
+  projectId?: number | string;
+  itemId?: number;
 }
 
 // Поиск товара по названию для комбобокса «Заявка на склад» — в отличие от
 // fetchProducts (весь каталог целиком), фильтрует и считает остаток на
 // бэкенде.
 // limit — необязательный предел числа результатов (передаётся, только если задан).
-export async function searchProducts(query: string, limit?: number): Promise<ProductSearchResult[]> {
+export async function searchProducts(
+  query: string,
+  limit?: number,
+  context?: SearchProductsContext,
+): Promise<ProductSearchResult[]> {
   try {
-    const { data } = await api.get<ProductSearchResult[]>("/products/search", {
-      params: limit !== undefined ? { q: query, limit } : { q: query },
-    });
+    const params: Record<string, string | number> = { q: query };
+    if (limit !== undefined) params.limit = limit;
+    if (context?.mlImportId != null) params.ml_import_id = context.mlImportId;
+    if (context?.projectId != null) params.project_id = context.projectId;
+    if (context?.itemId != null) params.item_id = context.itemId;
+    const { data } = await api.get<ProductSearchResult[]>("/products/search", { params });
     return data;
   } catch (error) {
     throwWithDetail(error, "Не удалось выполнить поиск товара");
