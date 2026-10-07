@@ -50,6 +50,7 @@ import type {
   MlImportItemCreate,
   MlImportItemCreateProduct,
   MlImportItemUpdate,
+  MlImportStockUpdate,
   KitComponentResponse,
   ConfirmMlImportKitSelection,
 } from "../api/api";
@@ -472,6 +473,9 @@ export function ProjectPagePM({
   // открытии пикера и каждом изменении набора выбранных компонентов —
   // заменяют собой несуществующий ml_status у CatalogProduct.
   const [kitAvailability, setKitAvailability] = useState<Record<string, number>>({});
+  // Весь свободный остаток компонента независимо от других строк (если
+  // backend его отдаёт) — для подписи «из N» рядом с остатком для строки.
+  const [kitFreeStock, setKitFreeStock] = useState<Record<string, number>>({});
   const [kitAvailabilityLoading, setKitAvailabilityLoading] = useState(false);
   const [kitAvailabilityError, setKitAvailabilityError] = useState<string | null>(null);
   // Счётчик запросов остатков — увеличивается на каждый новый запрос,
@@ -624,9 +628,16 @@ export function ProjectPagePM({
   // меняет НАБОР id, только требуемое количество, которое считается на
   // фронте от уже загруженных остатков — пересчитывать доступность заново
   // не нужно.
+  const kitStockSignature = kitPickerItem
+    ? (mlImport?.items ?? [])
+        .map((row) => `${row.id}:${row.available_quantity}:${row.product_free_stock ?? ""}:${row.selected_product_id ?? ""}`)
+        .join("|")
+    : "";
+
   useEffect(() => {
     if (!kitPickerItem || kitSelectedIds.length === 0) {
       setKitAvailability({});
+      setKitFreeStock({});
       setKitAvailabilityError(null);
       setKitAvailabilityLoading(false);
       return;
@@ -637,15 +648,28 @@ export function ProjectPagePM({
 
     const timer = setTimeout(() => {
       const productIds = kitSelectedIds.map((id) => Number(id));
-      fetchProductsAvailability(productIds)
+      // Контекст строки: backend отдаёт остаток «для этой строки» с учётом
+      // предыдущих строк импорта. Без поддержки на backend параметры
+      // игнорируются, и приходит свободный остаток, как раньше.
+      fetchProductsAvailability(productIds, {
+        mlImportId: mlImport?.id,
+        itemId: kitPickerItem.id,
+      })
         .then((items) => {
           if (requestId !== kitAvailabilityRequestRef.current) return;
           const next: Record<string, number> = {};
+          const nextFree: Record<string, number> = {};
           // Товары, отсутствующие в ответе, трактуются как остаток 0 — см.
           // контракт /products/availability.
           kitSelectedIds.forEach((id) => { next[id] = 0; });
-          items.forEach((entry) => { next[String(entry.product_id)] = entry.available_quantity; });
+          items.forEach((entry) => {
+            next[String(entry.product_id)] = entry.available_quantity;
+            if (typeof entry.product_free_stock === "number") {
+              nextFree[String(entry.product_id)] = entry.product_free_stock;
+            }
+          });
           setKitAvailability(next);
+          setKitFreeStock(nextFree);
           setKitAvailabilityError(null);
         })
         .catch((error) => {
@@ -661,7 +685,10 @@ export function ProjectPagePM({
 
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kitPickerItem?.id, kitSelectedIds.join("|")]);
+    // kitStockSignature — остатки строк таблицы (приходят в stock_updates
+    // после любой мутации импорта): при их смене модалка перезапрашивает
+    // свои числа, чтобы не показывать данные старше таблицы.
+  }, [kitPickerItem?.id, mlImport?.id, kitStockSignature, kitSelectedIds.join("|")]);
 
   const currentStatus = project?.status?.status_name || "Новый";
 
@@ -896,6 +923,55 @@ export function ProjectPagePM({
           ["Менеджер", "А. Петров"], ["Клиент", "ООО «СтройТех»"],
         ];
 
+  // Накладывает пересчитанные backend'ом остатки на строки черновика —
+  // только available_quantity / ml_status / product_free_stock /
+  // stock_covered_quantity / stock_shortfall_quantity, остальные поля
+  // строки (в т.ч. то, что ПМ прямо сейчас правит) не трогаем. Одна и та
+  // же позиция на нескольких строках делит остаток, поэтому правка одной
+  // строки меняет соседние. Если backend не прислал stock_updates (старая
+  // версия), один раз перечитываем импорт и берём остатки из него.
+  // Ничего не считаем на фронте — сервер единственный источник.
+  const applyStockUpdates = async (
+    importId: number,
+    updates: MlImportStockUpdate[] | undefined,
+  ) => {
+    let list = updates;
+    if (!list) {
+      try {
+        const fresh = await getMlImport(importId);
+        list = fresh.items.map((row) => ({
+          id: row.id,
+          available_quantity: row.available_quantity,
+          ml_status: row.ml_status,
+          product_free_stock: row.product_free_stock,
+          stock_covered_quantity: row.stock_covered_quantity,
+          stock_shortfall_quantity: row.stock_shortfall_quantity,
+        }));
+      } catch {
+        return;
+      }
+    }
+    const byId = new Map(list.map((entry) => [entry.id, entry]));
+    setMlImport((current) => {
+      if (!current || current.id !== importId) return current;
+      return {
+        ...current,
+        items: current.items.map((row) => {
+          const u = byId.get(row.id);
+          if (!u) return row;
+          return {
+            ...row,
+            available_quantity: u.available_quantity,
+            ml_status: u.ml_status,
+            product_free_stock: u.product_free_stock,
+            stock_covered_quantity: u.stock_covered_quantity,
+            stock_shortfall_quantity: u.stock_shortfall_quantity,
+          };
+        }),
+      };
+    });
+  };
+
   const handleMlItemUpdate = async (itemId: number, payload: MlImportItemUpdate) => {
     if (!mlImport) return;
     try {
@@ -907,6 +983,7 @@ export function ProjectPagePM({
         return { ...current, items: current.items.map((item) => item.id === updatedItem.id ? updatedItem : item) };
       });
       applyReservationFeedback(updatedItem, updatedItem.input_product);
+      void applyStockUpdates(mlImport.id, updatedItem.stock_updates);
       // Строка-комплект: смена КОЛ-ВО меняет required_quantity каждого
       // компонента на backend (kit_components в ответе) — обновляем и
       // локальный kitComponentsByItemId, иначе buildKitSelectionsPayload на
@@ -1175,6 +1252,7 @@ export function ProjectPagePM({
         if (!current) return current;
         return { ...current, items: current.items.map((item) => item.id === updatedItem.id ? updatedItem : item) };
       });
+      void applyStockUpdates(mlImport.id, updatedItem.stock_updates);
       setKitComponentsByItemId((current) => ({
         ...current,
         [updatedItem.id]: (updatedItem.kit_components ?? []).map((c) => ({
@@ -1226,6 +1304,7 @@ export function ProjectPagePM({
         if (!current) return current;
         return { ...current, items: current.items.filter((row) => row.id !== item.id) };
       });
+      void applyStockUpdates(mlImport.id, deleteFeedback.stock_updates);
       setOpenVariantPickerId((current) => (current === item.id ? null : current));
       setKitComponentsByItemId((current) => {
         if (!(item.id in current)) return current;
@@ -1327,6 +1406,7 @@ export function ProjectPagePM({
         if (!current) return current;
         return { ...current, items: [...current.items, createdItem] };
       });
+      void applyStockUpdates(mlImport.id, createdItem.stock_updates);
       // Форму оставляем открытой: позиции обычно добавляют пачкой.
       setNewRowForm({ input_product: "", input_quantity: "1", selected_product_id: null, unit: null });
     } catch (error) {
@@ -1444,6 +1524,7 @@ export function ProjectPagePM({
           ),
         };
       });
+      void applyStockUpdates(mlImport.id, updatedItem.stock_updates);
 
       // Локально дописываем созданный товар в каталог: иначе селект
       // "Совпавший товар" не сможет показать его название (каталог
@@ -2252,6 +2333,12 @@ export function ProjectPagePM({
                                     setLiveItems((current) =>
                                       current.map((existing) => existing.id === updated.id ? updated : existing),
                                     );
+                                    // Backend пересчитал покрытие и статус позиции (и,
+                                    // возможно, соседних) — перечитываем позиции и проект.
+                                    fetchProjectItems(resolvedProjectId)
+                                      .then(setLiveItems)
+                                      .catch(() => {});
+                                    refreshProject().catch(() => {});
                                   }}
                                 />
                               )}
@@ -2816,6 +2903,12 @@ export function ProjectPagePM({
                                 )}
                                 <td className="px-4 py-3 text-sm font-mono text-foreground">
                                   {item.available_quantity}
+                                  {item.product_free_stock != null &&
+                                    item.product_free_stock !== item.available_quantity && (
+                                      <span className="ml-1 text-[10px] font-sans text-muted-foreground">
+                                        из {item.product_free_stock}
+                                      </span>
+                                    )}
                                   {item.is_kit && (
                                     <span className="ml-1 text-[10px] font-sans text-muted-foreground">компл.</span>
                                   )}
@@ -2915,6 +3008,7 @@ export function ProjectPagePM({
                           <td className="px-4 py-3">
                             <ProductSearchCombobox
                                 disabled={savingNewRow}
+                                mlImportId={mlImport.id}
                                 value={{
                                   productId: newRowForm.selected_product_id,
                                   name: newRowForm.input_product,
@@ -3422,11 +3516,18 @@ export function ProjectPagePM({
                                     Проверка остатков…
                                   </span>
                                 ) : (
-                                  <StockStatusBadge
-                                      status={sufficient ? "На складе" : "Есть в системе (недостаточно)"}
-                                      label={sufficient ? "На складе" : `Не хватает ${shortfall}`}
-                                      className="mt-1 px-2 py-0.5 text-[11px]"
-                                  />
+                                  <div className="mt-1 flex items-center gap-1.5">
+                                    <StockStatusBadge
+                                        status={sufficient ? "На складе" : "Есть в системе (недостаточно)"}
+                                        label={sufficient ? "На складе" : `Не хватает ${shortfall}`}
+                                        className="px-2 py-0.5 text-[11px]"
+                                    />
+                                    {kitFreeStock[id] != null && kitFreeStock[id] !== available && (
+                                      <span className="text-[11px] text-muted-foreground">
+                                        осталось {available} из {kitFreeStock[id]}
+                                      </span>
+                                    )}
+                                  </div>
                                 )}
                               </div>
                               <input
@@ -3960,6 +4061,8 @@ const [itemSaveError, setItemSaveError] =
                               setProjectItems((current) =>
                                 current.map((existing) => existing.id === updated.id ? updated : existing),
                               );
+                              void refreshProjectItems();
+                              fetchProjectDetails(resolvedProjectId).then(setProject).catch(() => {});
                             }}
                           />
                         )}
