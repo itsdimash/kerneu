@@ -1,5 +1,5 @@
 import { useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from "react";
-import { Loader2, Lock, Upload } from "lucide-react";
+import { FileX, Loader2, Lock, Upload } from "lucide-react";
 
 /**
  * Карточка загрузки документа с зоной «выберите файл или перетащите».
@@ -21,6 +21,8 @@ export function DocumentDropzone({
   onFile,
   accept,
   enterDelayMs = 0,
+  footer,
+  notRequired,
 }: {
   title: string;
   icon: ReactNode;
@@ -28,17 +30,21 @@ export function DocumentDropzone({
   locked: boolean;
   uploading: boolean;
   /** Вторая строка в заблокированном состоянии: чего именно не хватает. */
-  lockedHint: string;
+  lockedHint?: string;
   /** Тултип на всю зону — объясняет блокировку, если она снимаемая. */
   hoverTooltip?: string;
   onFile: (file: File) => void;
   accept?: string;
   /** Сдвиг появления карточки — для stagger-а в сетке. */
   enterDelayMs?: number;
+  /** Контент прямо под зоной загрузки (например, кнопка «Не требуется»). */
+  footer?: ReactNode;
+  /** Категория отмечена «Не требуется»: зона неактивна, «из 1С» скрыта. */
+  notRequired?: { date?: string };
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [draggingOver, setDraggingOver] = useState(false);
-  const disabled = locked || uploading;
+  const disabled = locked || uploading || !!notRequired;
 
   const handleDrop = (event: ReactDragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -63,10 +69,19 @@ export function DocumentDropzone({
           {icon}
           <span className="truncate">{title}</span>
         </h3>
-        {action}
+        {!notRequired && action}
       </div>
 
       <div className="group/zone relative w-full">
+        {notRequired ? (
+          <div
+            title={notRequired.date ? `Отмечено · ${notRequired.date}` : undefined}
+            className="flex min-h-[124px] w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border bg-muted/40 px-4 text-center"
+          >
+            <FileX size={20} className="text-muted-foreground" />
+            <p className="text-xs font-medium text-muted-foreground">Не требуется</p>
+          </div>
+        ) : (
         <div
           role="button"
           tabIndex={disabled ? -1 : 0}
@@ -135,13 +150,16 @@ export function DocumentDropzone({
             )}
           </div>
         </div>
+        )}
 
-        {hoverTooltip && (
+        {hoverTooltip && !notRequired && (
           <span className="pointer-events-none absolute left-1/2 top-0 z-10 -translate-x-1/2 -translate-y-[calc(100%+4px)] whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1.5 text-xs text-white opacity-0 shadow-lg transition-[opacity,transform] duration-150 ease-out-strong group-hover/zone:-translate-y-[calc(100%+8px)] group-hover/zone:opacity-100">
             {hoverTooltip}
           </span>
         )}
       </div>
+
+      {footer && <div className="mt-3">{footer}</div>}
     </div>
   );
 }

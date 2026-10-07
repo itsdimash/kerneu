@@ -1,10 +1,12 @@
-import { useEffect, useState, useRef, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useRef, useSyncExternalStore } from "react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { PageWrap } from "../app/components/common/PageWrap";
 import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
 import { DocumentDropzone } from "../app/components/common/DocumentDropzone";
 import { DocStatusPill, docStatusLabel } from "../app/components/common/DocStatusPill";
 import { OnecImportButton } from "../app/components/common/OnecImportButton";
+import { NotRequiredMark } from "../app/components/common/NotRequiredMark";
+import { useDocumentsState } from "../hooks/useDocumentsState";
 import type { Page, ProjectState, Role } from "../types";
 import {
   CheckCircle2, Clock, Download, Loader2, Upload, Check, FileCheck,
@@ -18,12 +20,12 @@ import {
 } from "../store/documentsStore";
 import {
   downloadProjectDocument,
-  fetchProjectDocuments,
   uploadProjectDocument,
   deleteProjectDocument,
   markContractUploaded,
   markNoContract,
   type ContractMode,
+  type NotRequiredCategory,
   type ProjectDocumentResponse,
 } from "../api/api";
 import { type OnecDocType } from "../api/onec";
@@ -127,6 +129,27 @@ function normalizeProject(item: ProjectApiItem): ProjectSummary {
   };
 }
 
+// Статус счёта поставщика из «Закупок» (draft → на проверке → одобрен → приход).
+// В прогресс идут только «Одобрен» и «В приходе».
+const INVOICE_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
+  draft:                  { label: "Черновик",   cls: "text-muted-foreground bg-muted ring-border" },
+  pending_accountant:     { label: "На проверке", cls: "text-info bg-info-muted ring-info/25" },
+  pending_director:       { label: "На проверке", cls: "text-info bg-info-muted ring-info/25" },
+  rejected_by_accountant: { label: "Отклонён",   cls: "text-destructive bg-destructive-muted ring-destructive/20" },
+  rejected_by_director:   { label: "Отклонён",   cls: "text-destructive bg-destructive-muted ring-destructive/20" },
+  approved:               { label: "Одобрен",    cls: "text-success bg-success-muted ring-success/25" },
+  income:                 { label: "В приходе",  cls: "text-success bg-success-muted ring-success/25" },
+};
+
+function InvoiceStatusBadge({ status }: { status: string }) {
+  const v = INVOICE_STATUS_LABEL[status] ?? INVOICE_STATUS_LABEL.draft;
+  return (
+    <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-medium ring-1 ${v.cls}`}>
+      {v.label}
+    </span>
+  );
+}
+
 export function DocumentsPage({
   onNavigate,
   projectState,
@@ -146,10 +169,6 @@ export function DocumentsPage({
   // НОВОЕ СОСТОЯНИЕ: Показывать ли завершенные проекты
   const [showAllProjects, setShowAllProjects] = useState(false);
 
-  const [archivedKps, setArchivedKps] = useState<ProjectDocument[]>([]);
-  const [archiveLoading, setArchiveLoading] = useState(false);
-  const [archiveError, setArchiveError] = useState<string | null>(null);
-
   const [uploadingPoa, setUploadingPoa] = useState(false);
   const [uploadingWaybill, setUploadingWaybill] = useState(false);
   // Счёт на оплату покупателю — новая, необязательная категория (см.
@@ -162,41 +181,11 @@ export function DocumentsPage({
   // сделке — PM, бухгалтер или директор.
   const [uploadingContract, setUploadingContract] = useState(false);
 
-  // NEW: если у проекта ВСЕ позиции полностью покрыты складом (procurement
-  // не требовался вообще) — счёт на оплату (category="invoice") физически
-  // неоткуда взяться, т.к. он создаётся только через закупку у поставщика.
-  // needsProcurement=null, пока не загрузили — в этом состоянии требуем
-  // документ по умолчанию (как раньше), чтобы не мигать UI.
-  const [needsProcurement, setNeedsProcurement] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadProcurementNeed = async () => {
-      if (!selectedProjectId) {
-        setNeedsProcurement(null);
-        return;
-      }
-      try {
-        const response = await fetch(`${API_BASE}/project-items/${selectedProjectId}`, {
-          credentials: "include",
-        });
-        if (!response.ok) throw new Error("Не удалось загрузить позиции проекта");
-        const items: Array<{ procurement_quantity?: number }> = await response.json();
-        if (!cancelled) {
-          setNeedsProcurement(items.some(item => (item.procurement_quantity ?? 0) > 0));
-        }
-      } catch (error) {
-        console.error("Не удалось определить, нужна ли закупка для проекта:", error);
-        // При ошибке безопаснее считать, что закупка нужна (не разблокируем
-        // завершение проекта по ошибке сети) — как было раньше.
-        if (!cancelled) setNeedsProcurement(true);
-      }
-    };
-
-    loadProcurementNeed();
-    return () => { cancelled = true; };
-  }, [selectedProjectId]);
+  // Состояние документов (категории, нужна ли закупка, стадия проверки) —
+  // из GET /documents/project/{id}/state. Пока не загружено (null), требуем
+  // документы по умолчанию, как раньше, чтобы не мигать UI.
+  const { state: docState, refetch: refetchState, setNotRequired, unsetNotRequired } =
+    useDocumentsState(selectedProjectId);
 
   useEffect(() => {
     let cancelled = false;
@@ -243,102 +232,59 @@ export function DocumentsPage({
     return () => { cancelled = true; };
   }, [projectId]);
 
+  const mapBackendDoc = (item: ProjectDocumentResponse): Omit<ProjectDocument, "projectId"> => ({
+    id: `backend-${item.id}`,
+    name: item.name,
+    category: item.category as DocCategory,
+    status: "uploaded",
+    date: new Date(item.created_at).toLocaleDateString("ru-RU"),
+    fileName: item.file_name,
+    backendDocument: item,
+  });
+
+  const archivedKps = useMemo<ProjectDocument[]>(
+    () =>
+      (docState?.documents ?? [])
+        .filter((item) => item.category === "kp")
+        .map((item) => ({
+          ...mapBackendDoc(item),
+          projectId: String(item.project_id),
+          status: (item.status === "approved"
+            ? "approved"
+            : item.status === "rejected"
+            ? "rejected"
+            : "generated") as DocStatus,
+        })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [docState],
+  );
+
+  // Каждый ответ /state сверяется со стором: новые документы добавляются,
+  // изменившиеся (статус счёта, имя) обновляются, удалённые (например, в
+  // «Закупках») пропадают.
   useEffect(() => {
-    let cancelled = false;
+    if (!docState || !selectedProjectId) return;
 
-    const loadArchivedKps = async (showLoading = false) => {
-      if (!selectedProjectId) {
-        setArchivedKps([]);
-        setArchiveError(null);
-        return;
-      }
+    const apiContract = docState.documents.find(d => d.category === "contract");
+    if (apiContract) {
+      documentsStore.updateDocument(selectedProjectId, `${selectedProjectId}-contract`, {
+        status: "uploaded",
+        date: new Date(apiContract.created_at).toLocaleDateString("ru-RU"),
+        fileName: apiContract.file_name,
+        backendDocument: apiContract,
+      });
+    }
 
-      try {
-        if (showLoading) {
-          setArchiveLoading(true);
-          setArchivedKps([]);
-          setArchiveError(null);
-        }
-
-        const data = await fetchProjectDocuments(selectedProjectId);
-
-        const kpDocs = data
-          .filter((item) => item.category === "kp")
-          .map<ProjectDocument>((item) => ({
-            id: `backend-${item.id}`,
-            projectId: String(item.project_id),
-            name: item.name,
-            category: item.category as DocCategory,
-            status:
-              item.status === "approved"
-                ? "approved"
-                : item.status === "rejected"
-                ? "rejected"
-                : "generated",
-            date: new Date(item.created_at).toLocaleDateString("ru-RU"),
-            fileName: item.file_name,
-            backendDocument: item,
-          }));
-
-        if (!cancelled) {
-          setArchivedKps(kpDocs);
-          setArchiveError(null);
-
-          const apiContract = data.find(d => d.category === "contract");
-          if (apiContract) {
-            documentsStore.updateDocument(selectedProjectId, `${selectedProjectId}-contract`, {
-              status: "uploaded",
-              date: new Date(apiContract.created_at).toLocaleDateString("ru-RU"),
-              fileName: apiContract.file_name,
-              backendDocument: apiContract,
-            });
-          }
-
-          const localDocs = documentsStore.getSnapshot(selectedProjectId);
-          const otherDocs = data.filter(
-            item =>
-              item.category === "power_of_attorney" ||
-              item.category === "waybill" ||
-              (item.category === "invoice" && (item.status === "approved" || item.status === "income"))
-          );
-
-          otherDocs.forEach(apiDoc => {
-            const storeId = `backend-${apiDoc.id}`;
-            if (!localDocs.some(d => d.id === storeId)) {
-              documentsStore.addDocument(selectedProjectId, {
-                id: storeId,
-                name: apiDoc.name,
-                category: apiDoc.category as DocCategory,
-                status: "uploaded",
-                date: new Date(apiDoc.created_at).toLocaleDateString("ru-RU"),
-                fileName: apiDoc.file_name,
-                backendDocument: apiDoc,
-              });
-            }
-          });
-        }
-      } catch (error) {
-        console.error(error);
-        if (!cancelled) {
-          setArchiveError(error instanceof Error ? error.message : "Не удалось загрузить архив документов");
-        }
-      } finally {
-        if (!cancelled && showLoading) setArchiveLoading(false);
-      }
-    };
-
-    void loadArchivedKps(true);
-
-    const intervalId = window.setInterval(() => { void loadArchivedKps(); }, 5000);
-    const handleFocus = () => { void loadArchivedKps(); };
-    window.addEventListener("focus", handleFocus);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-      window.removeEventListener("focus", handleFocus);
-    };
-  }, [selectedProjectId]);
+    documentsStore.reconcileBackendDocuments(
+      selectedProjectId,
+      ["power_of_attorney", "waybill", "invoice", "payment_invoice"],
+      docState.documents
+        .filter(d => ["power_of_attorney", "waybill", "invoice", "payment_invoice"].includes(d.category))
+        .map(mapBackendDoc),
+    );
+    documentsStore.syncReviewStage(selectedProjectId, docState.review_stage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docState, selectedProjectId]);
 
   // Статус согласования документов (бухгалтер -> директор) теперь живёт на
   // бэкенде — подгружаем его при выборе проекта и опрашиваем, пока страница
@@ -417,19 +363,19 @@ export function DocumentsPage({
 
   const contractDoc = allDocs.find(d => d.category === "contract");
 
-  // contract_mode приходит с проекта, а не из списка документов: при «Без
-  // договора» бэкенд больше не создаёт Document-заглушку, так что по одному
-  // архиву документов этот случай не отличить от «договора ещё нет».
-  const contractMode = selectedProject?.contractMode ?? null;
-  const contractSkipped = contractMode === "no_contract";
-  const contractHasFile = contractDoc?.status === "uploaded";
-  // Для прогресса, разблокировки доверенностей/накладных и кнопки «Без
-  // договора» этап договора закрыт в обоих случаях. Для ВИДА карточки
-  // разница есть — там смотрим на contractSkipped / contractHasFile отдельно.
-  const contractUploaded = contractHasFile || contractSkipped;
-  const contractSkippedDate = selectedProject?.contractModeAt
-    ? new Date(selectedProject.contractModeAt).toLocaleDateString("ru-RU")
-    : "";
+  // Состояние категорий приходит из /state: «Загружен» / «Не требуется» /
+  // «Пусто». Для прогресса и разблокировки доверенностей/накладных этап
+  // договора закрыт в обоих первых случаях; для ВИДА карточки смотрим на
+  // contractSkipped / contractHasFile отдельно.
+  const fmtDate = (iso?: string | null) => (iso ? new Date(iso).toLocaleDateString("ru-RU") : "");
+  const contractState = docState?.categories.contract?.state ?? "empty";
+  const poaState = docState?.categories.power_of_attorney?.state ?? "empty";
+  const waybillState = docState?.categories.waybill?.state ?? "empty";
+  const paymentInvoiceState = docState?.categories.payment_invoice?.state ?? "empty";
+  const contractSkipped = contractState === "not_required";
+  const contractHasFile = contractState === "uploaded";
+  const contractUploaded = contractState !== "empty";
+  const contractSkippedDate = fmtDate(docState?.categories.contract?.marked_at);
   const poaDocs     = allDocs.filter(d => d.category === "power_of_attorney");
   const waybillDocs = allDocs.filter(d => d.category === "waybill");
   const invoiceDocs = allDocs.filter(d => d.category === "invoice");
@@ -440,7 +386,7 @@ export function DocumentsPage({
 
   // ИСПРАВЛЕНО: было ниже, но использовалось выше (displayDocs) — const не
   // хостится в TS/JS, нужно объявить перед первым использованием.
-  const invoiceRequired = needsProcurement !== false;
+  const invoiceRequired = docState?.procurement_required !== false;
 
 
   // Договор считается подписанным, если файл реально загружен и лежит в
@@ -522,37 +468,57 @@ export function DocumentsPage({
       ? { ...doc, status: "no_contract" as DocStatus, date: contractSkippedDate }
       : doc
   );
-  if (poaDocs.length === 0) displayDocs.push(poaPlaceholder);
+  // Для категории «Не требуется» вместо «Ожидается» — строка с этим статусом.
+  const withNotRequired = (
+    placeholder: ProjectDocument,
+    state: string,
+    category: "power_of_attorney" | "waybill" | "payment_invoice",
+  ): ProjectDocument =>
+    state === "not_required"
+      ? { ...placeholder, status: "not_required", date: fmtDate(docState?.categories[category]?.marked_at) }
+      : placeholder;
+  if (poaDocs.length === 0) displayDocs.push(withNotRequired(poaPlaceholder, poaState, "power_of_attorney"));
   // ИСПРАВЛЕНО: не показываем "Счета на оплату" как ожидающий документ,
   // если закупка для проекта вообще не нужна (весь товар со склада) —
   // иначе PM видит вечно висящий "Ожидается" пункт, который в принципе
   // никогда не закроется.
   if (invoiceDocs.length === 0 && invoiceRequired) displayDocs.push(invoicePlaceholder);
-  if (waybillDocs.length === 0) displayDocs.push(waybillPlaceholder);
+  if (waybillDocs.length === 0) displayDocs.push(withNotRequired(waybillPlaceholder, waybillState, "waybill"));
   // Показываем строку "Счет на оплату" в общем списке всегда (как
   // накладные/доверенности) — но, в отличие от них, этот документ
   // необязателен, поэтому не участвует в прогрессе/блокировке завершения
   // проекта (см. requiredDocCount/doneDocCount ниже).
-  if (paymentInvoiceDocs.length === 0) displayDocs.push(paymentInvoicePlaceholder);
+  if (paymentInvoiceDocs.length === 0) displayDocs.push(withNotRequired(paymentInvoicePlaceholder, paymentInvoiceState, "payment_invoice"));
 
-  const poaUploaded      = poaDocs.some(d => d.status === "uploaded");
-  const hasWaybill       = waybillDocs.some(d => d.status === "uploaded");
-  const hasInvoice       = invoiceDocs.some(d => d.status === "uploaded");
+  // Пустые слоты в списке: в архиве (проект завершён) и для необязательного
+  // счёта покупателю «Ожидается» вводит в заблуждение — показываем «Не загружен».
+  // «Не требуется» (выставлено выше) сохраняет приоритет.
+  const listDocs = displayDocs.map(doc =>
+    doc.status === "pending" && (completed || doc.category === "payment_invoice")
+      ? { ...doc, status: "not_uploaded" as DocStatus }
+      : doc
+  );
+
+  // Доверенность/накладная выполнены, если загружены ИЛИ отмечены «Не
+  // требуется». Счёт поставщику считается только после одобрения директором.
+  const poaDone          = poaState !== "empty";
+  const waybillDone      = waybillState !== "empty";
+  const hasInvoice       = invoiceDocs.some(d => d.backendDocument?.status === "approved" || d.backendDocument?.status === "income");
 
   // ИСПРАВЛЕНО: requiredDocCount был всегда захардкожен в 5, включая
   // "Счета на оплату" — но если у проекта ВСЕ позиции покрыты складом
-  // (needsProcurement === false), закупки не было и счёта неоткуда
+  // (procurement_required === false), закупки не было и счёта неоткуда
   // взяться, документ никогда не появится, и "Завершить проект" был бы
-  // заблокирован навсегда. Пока needsProcurement ещё не загружен (null),
+  // заблокирован навсегда. Пока /state ещё не загружен,
   // ведём себя как раньше — требуем 5 (безопасный дефолт).
   const requiredDocCount =
     3 + (invoiceRequired ? 1 : 0) + (kpRequired ? 1 : 0);
   const doneDocCount = [
     ...(kpRequired ? [hasApprovedKp] : []),
     contractUploaded,
-    poaUploaded,
+    poaDone,
     ...(invoiceRequired ? [hasInvoice] : []),
-    hasWaybill,
+    waybillDone,
   ].filter(Boolean).length;
   const allUploaded = doneDocCount === requiredDocCount;
   const remainingDocCount = Math.max(requiredDocCount - doneDocCount, 0);
@@ -629,6 +595,7 @@ export function DocumentsPage({
     });
     if (docType === "power_of_attorney") setShowPoaReminder(true);
     if (docType === "waybill") setShowWaybillReminder(true);
+    void refetchState();
   };
 
   const handleDeleteDoc = (doc: ProjectDocument) => {
@@ -648,6 +615,7 @@ export function DocumentsPage({
       }
       documentsStore.removeDocument(selectedProjectId, docToDelete.id);
       setDocToDelete(null);
+      void refetchState();
     } catch (e) {
       console.error(e);
       alert("Не удалось удалить документ. Проверьте соединение с сервером.");
@@ -681,6 +649,7 @@ export function DocumentsPage({
       // напоминание нужно и при обычной ручной загрузке, не только «Из 1С».
       if (category === "power_of_attorney") setShowPoaReminder(true);
       if (category === "waybill") setShowWaybillReminder(true);
+      void refetchState();
     } catch (error) {
       console.error(error);
       alert(`Не удалось загрузить документ. Попробуйте еще раз.`);
@@ -693,17 +662,17 @@ export function DocumentsPage({
   // файл — здесь остаётся только та же проверка блокировки, что была в
   // handlePoaDrop/handlePoaInput, и вызов загрузки.
   const handlePoaFile = (file: File) => {
-    if (docsLocked || uploadingPoa) return;
+    if (docsLocked || uploadingPoa || poaState === "not_required") return;
     void handleDocUpload(file, "power_of_attorney", "Доверенность", poaDocs.length, setUploadingPoa);
   };
 
   const handleWaybillFile = (file: File) => {
-    if (docsLocked || uploadingWaybill) return;
+    if (docsLocked || uploadingWaybill || waybillState === "not_required") return;
     void handleDocUpload(file, "waybill", "Накладная", waybillDocs.length, setUploadingWaybill);
   };
 
   const handlePaymentInvoiceFile = (file: File) => {
-    if (paymentInvoiceLocked || uploadingPaymentInvoice) return;
+    if (paymentInvoiceLocked || uploadingPaymentInvoice || paymentInvoiceState === "not_required") return;
     void handleDocUpload(file, "payment_invoice", "Счет на оплату", paymentInvoiceDocs.length, setUploadingPaymentInvoice);
   };
 
@@ -755,9 +724,8 @@ export function DocumentsPage({
         fileName: file.name,
         backendDocument: uploadedDoc,
       });
-      // Сразу снимаем «Без договора» локально, не дожидаясь перезапроса, —
-      // иначе на долю секунды карточка показывала бы оба состояния.
-      patchProject(projectIdAtStart, { contractMode: "uploaded", contractModeAt: new Date().toISOString() });
+      // Бэкенд сам переводит contract в «uploaded» — подтягиваем /state.
+      await refetchState();
 
       try {
         await markContractUploaded(projectIdAtStart);
@@ -773,32 +741,11 @@ export function DocumentsPage({
     }
   };
 
-  // «Без договора» — для сделок, где договора физически не будет. Файл и
-  // запись в архиве документов не создаются: бэкенд просто выставляет
-  // project.contract_mode = "no_contract" (и сам двигает статус проекта),
-  // а страница считает этап договора закрытым по этому полю (см.
-  // contractUploaded выше). Если договор всё-таки понадобится — «Загрузить
-  // договор» работает как обычно и возвращает contract_mode в "uploaded".
-  const handleSkipContract = async () => {
-    if (!selectedProjectId) return;
-    const projectIdAtStart = selectedProjectId;
-    setUploadingContract(true);
-    try {
-      await markNoContract(projectIdAtStart);
-      patchProject(projectIdAtStart, { contractMode: "no_contract", contractModeAt: new Date().toISOString() });
-      void refreshProject(projectIdAtStart);
-    } catch (error) {
-      console.error(error);
-      alert("Не удалось отметить проект как «без договора». Попробуйте еще раз.");
-    } finally {
-      setUploadingContract(false);
-    }
-  };
-
   const handleSubmitForReview = async () => {
     setSubmittingReview(true);
     try {
       await documentsStore.submitForReview(selectedProjectId);
+      void refetchState();
     } catch (error) {
       console.error(error);
       alert("Не удалось отправить документы на проверку. Проверьте соединение с сервером.");
@@ -811,6 +758,7 @@ export function DocumentsPage({
     setDecidingReview(true);
     try {
       await documentsStore.directorApprove(selectedProjectId);
+      void refetchState();
     } catch (error) {
       console.error(error);
       alert("Не удалось подтвердить документы. Проверьте соединение с сервером.");
@@ -823,6 +771,7 @@ export function DocumentsPage({
     setDecidingReview(true);
     try {
       await documentsStore.directorReject(selectedProjectId, rejectDraft.trim() || undefined);
+      void refetchState();
       setRejectDraft("");
       setShowRejectBox(false);
     } catch (error) {
@@ -838,6 +787,7 @@ export function DocumentsPage({
     setCompleting(true);
     try {
       await documentsStore.completeProject(selectedProjectId);
+      void refetchState();
     } catch (error) {
       console.error(error);
       alert("Не удалось завершить проект. Проверьте соединение с сервером.");
@@ -950,14 +900,14 @@ export function DocumentsPage({
           </p>
         </div>
         <span className="flex-shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
-          {displayDocs.length}
+          {listDocs.length}
         </span>
       </div>
-      {displayDocs.length === 0 ? (
+      {listDocs.length === 0 ? (
         <p className="px-5 py-6 text-sm text-muted-foreground text-center">Документов пока нет</p>
       ) : (
         <div className="divide-y divide-border">
-          {displayDocs.map((doc, index) => (
+          {listDocs.map((doc, index) => (
             <div
               key={doc.id}
               // Stagger появления строк при открытии страницы/смене проекта:
@@ -977,8 +927,12 @@ export function DocumentsPage({
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
-                <DocStatusPill status={doc.status} />
-                {doc.status !== "pending" && doc.status !== "no_contract" && (
+                {doc.category === "invoice" && doc.backendDocument ? (
+                  <InvoiceStatusBadge status={doc.backendDocument.status} />
+                ) : (
+                  <DocStatusPill status={doc.status} />
+                )}
+                {doc.status !== "pending" && doc.status !== "no_contract" && doc.status !== "not_required" && doc.status !== "not_uploaded" && (
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => handleDownload(doc)}
@@ -1007,6 +961,28 @@ export function DocumentsPage({
         </div>
       )}
     </div>
+  );
+
+  // «Не требуется» для доверенностей/накладных/счёта покупателю. Доступно по
+  // тому же правилу, что и загрузка доверенности/накладной (договор подписан,
+  // нет проверки/согласования/завершения) — иначе бэкенд отклонит вызов.
+  const renderNotRequiredMark = (
+    docLabel: string,
+    buttonLabel: string,
+    category: NotRequiredCategory,
+    state: "uploaded" | "not_required" | "empty",
+  ) => (
+    <NotRequiredMark
+      docLabel={docLabel}
+      buttonLabel={buttonLabel}
+      state={state}
+      markedAt={docState?.categories[category]?.marked_at}
+      allowUndo
+      disabled={!docState || docsLocked}
+      disabledHint={uploadsLocked ? "Доступно только после подписания договора" : "Недоступно на этапе проверки документов"}
+      onSet={() => setNotRequired(category)}
+      onUnset={() => unsetNotRequired(category)}
+    />
   );
 
   // Карточка загрузки/замены финального договора — общая для страницы
@@ -1047,19 +1023,23 @@ export function DocumentsPage({
             )}
 
             {/* «Без договора» — только пока этап договора ещё не закрыт (ни
-                файл, ни отметка). После отметки остаётся один путь —
-                «Загрузить договор», если договор всё-таки понадобился. */}
-            {!completed && !contractUploaded && (
-              <button
-                onClick={() => !uploadingContract && handleSkipContract()}
-                disabled={uploadingContract}
-                className={`flex h-9 items-center gap-1.5 px-3 text-xs font-medium rounded-lg border border-border bg-card text-foreground shadow-card transition-[color,background-color,border-color,box-shadow,transform] duration-150 ease-out-strong flex-shrink-0 cursor-pointer hover:border-primary/40 hover:bg-accent hover:shadow-elevated active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
-                  uploadingContract ? "opacity-60 cursor-wait" : ""
-                }`}
-              >
-                <X size={13} />
-                Без договора
-              </button>
+                файл, ни отметка). Отметка необратима: снять её можно только
+                загрузкой настоящего договора. */}
+            {!completed && contractState === "empty" && (
+              <NotRequiredMark
+                docLabel="Договор"
+                buttonLabel="Без договора"
+                state="empty"
+                allowUndo={false}
+                disabled={!docState || uploadingContract || reviewInFlight || reviewStage === "approved"}
+                disabledHint="Недоступно на этапе проверки документов"
+                confirmText="Отметить проект как «Без договора»? Договор будет считаться не требуемым. Снять отметку можно только загрузкой договора."
+                onSet={async () => {
+                  await markNoContract(selectedProjectId);
+                  await refetchState();
+                  void refreshProject(selectedProjectId);
+                }}
+              />
             )}
 
             {!completed && (
@@ -1267,23 +1247,18 @@ export function DocumentsPage({
               {completed
                 ? "Проект завершён — документы доступны в архиве."
                 : allUploaded
-                ? "Все документы загружены."
+                ? "Все документы готовы."
                 : `Осталось ${remainingDocCount} ${remainingDocCount === 1 ? "документ" : remainingDocCount < 5 ? "документа" : "документов"}`}
             </p>
           </div>
 
-          {/* Зоны ручной загрузки. Доверенность и накладная требуют
-              подписанного договора (docsLocked), счёт на оплату покупателю —
-              нет, поэтому он остаётся в сетке даже когда две первые зоны
-              скрыты на этапе проверки/после завершения. Раньше из-за этого
-              счёт жил в отдельной сетке под первой и висел одинокой карточкой
-              в треть ширины, разрывая ряд; теперь это одна сетка, а условие
-              осталось тем же. Необязательный документ — в прогресс и
-              блокировку завершения проекта не входит (см.
-              requiredDocCount/doneDocCount выше). */}
+          {/* Зоны ручной загрузки (доверенности, накладные, счёт покупателю)
+              показываются только пока документы можно менять: не на проверке,
+              не после согласования и не после завершения. Иначе блок целиком
+              скрыт, без пустой обёртки. Необязательный счёт покупателю в
+              прогресс и блокировку завершения не входит. */}
+          {showManualUploadZones && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {showManualUploadZones && (
-              <>
                 <DocumentDropzone
                   title="Доверенности"
                   icon={<Lock size={14} className="text-destructive flex-shrink-0" />}
@@ -1292,6 +1267,8 @@ export function DocumentsPage({
                   lockedHint={uploadsLocked ? "до подписания договора" : "проверка документов"}
                   hoverTooltip={uploadsLocked ? "Доступно только после подписания договора" : undefined}
                   onFile={handlePoaFile}
+                  notRequired={poaState === "not_required" ? { date: fmtDate(docState?.categories.power_of_attorney?.marked_at) } : undefined}
+                  footer={renderNotRequiredMark("Доверенности", "Без доверенностей", "power_of_attorney", poaState)}
                   action={!docsLocked && (
                     <OnecImportButton
                       tooltip="Импортировать доверенность из 1С"
@@ -1309,6 +1286,8 @@ export function DocumentsPage({
                   hoverTooltip={uploadsLocked ? "Доступно только после подписания договора" : undefined}
                   onFile={handleWaybillFile}
                   enterDelayMs={45}
+                  notRequired={waybillState === "not_required" ? { date: fmtDate(docState?.categories.waybill?.marked_at) } : undefined}
+                  footer={renderNotRequiredMark("Накладные", "Без накладных", "waybill", waybillState)}
                   action={!docsLocked && (
                     <OnecImportButton
                       tooltip="Импортировать накладную из 1С"
@@ -1316,18 +1295,17 @@ export function DocumentsPage({
                     />
                   )}
                 />
-              </>
-            )}
 
             <DocumentDropzone
               title="Счет на оплату покупателю"
               icon={<FileCheck size={14} className="text-teal-500 dark:text-teal-400 flex-shrink-0" />}
-              locked={paymentInvoiceLocked}
+              locked={false}
               uploading={uploadingPaymentInvoice}
-              lockedHint="проверка документов"
               onFile={handlePaymentInvoiceFile}
-              enterDelayMs={showManualUploadZones ? 90 : 0}
-              action={!paymentInvoiceLocked && (
+              enterDelayMs={90}
+              notRequired={paymentInvoiceState === "not_required" ? { date: fmtDate(docState?.categories.payment_invoice?.marked_at) } : undefined}
+              footer={renderNotRequiredMark("Счет на оплату покупателю", "Без счёта", "payment_invoice", paymentInvoiceState)}
+              action={(
                 <OnecImportButton
                   tooltip="Импортировать счёт на оплату из 1С"
                   onClick={() => setOnecModal({ docType: "payment_invoice", docLabel: "Счет на оплату покупателю" })}
@@ -1335,6 +1313,7 @@ export function DocumentsPage({
               )}
             />
           </div>
+          )}
 
         </div>
 

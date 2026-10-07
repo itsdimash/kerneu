@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, CheckCircle2, Clock, FileText, FileX, XCircle } from "lucide-react";
+import { Check, CheckCircle2, Clock, FileMinus, FileText, FileX, XCircle } from "lucide-react";
 import type { DocStatus } from "../../../store/documentsStore";
 
 export function docStatusLabel(status: DocStatus) {
@@ -7,6 +7,8 @@ export function docStatusLabel(status: DocStatus) {
   if (status === "rejected")  return "Отклонено клиентом";
   if (status === "generated") return "Сгенерирован";
   if (status === "no_contract") return "Без договора";
+  if (status === "not_uploaded") return "Не загружен";
+  if (status === "not_required") return "Не требуется";
   if (status === "uploaded")  return "Загружен";
   return "Ожидается";
 }
@@ -23,6 +25,8 @@ const VARIANT: Record<DocStatus, { cls: string; icon: typeof Check }> = {
   // Нейтральный: договор осознанно не нужен — это штатное состояние, не
   // «успех» (как «Загружен») и не «ждём» (как «Ожидается»).
   no_contract: { cls: "text-muted-foreground bg-muted ring-border", icon: FileX },
+  not_uploaded: { cls: "text-muted-foreground bg-muted ring-border", icon: FileMinus },
+  not_required: { cls: "text-muted-foreground bg-muted ring-border", icon: FileX },
 };
 
 /**

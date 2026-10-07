@@ -1095,12 +1095,15 @@ const handleSave = async () => {
                           </td>
 
                           {/* Клиент */}
-                          <td className="px-4 py-3 text-sm text-muted-foreground">
+                          <td
+                              className="px-4 py-3 text-sm text-muted-foreground max-w-[14rem] truncate"
+                              title={p.client?.client_name}
+                          >
                               {p.client?.client_name}
                           </td>
 
                           {/* Этап: ИСПОЛЬЗУЕМ НАШ НОВЫЙ CHIP! */}
-                          <td className="px-4 py-3">
+                          <td className="px-4 py-3 whitespace-nowrap">
                               <Chip status={p.status?.status_name} />
                           </td>
 
@@ -1108,18 +1111,20 @@ const handleSave = async () => {
                               считается на бэкенде (project_service._get_budget_map),
                               а не invoice.amount (тот всегда 0, см. handleSave payload).
                               0/отсутствует — себестоимость ещё не проставлена в Закупках. */}
-                          <td className="px-4 py-3 text-sm text-foreground font-mono text-right">
+                          <td className="px-4 py-3 text-sm text-foreground font-mono tabular-nums text-right whitespace-nowrap">
                               {Number(p.budget ?? 0) > 0 ? (
-                                  fmt(Number(p.budget))
+                                  // fmt() ставит перед «₸» обычный пробел — подменяем на
+                                  // неразрывный, чтобы «₸» не уезжал на вторую строку.
+                                  fmt(Number(p.budget)).replace(" ₸", "\u00A0₸")
                               ) : (
                                   <span title="Себестоимость ещё не указана">—</span>
                               )}
                           </td>
 
                           {/* Дедлайн */}
-                          <td className="px-4 py-3">
+                          <td className="px-4 py-3 whitespace-nowrap">
                             <span
-                                className={`text-xs font-semibold px-2 py-0.5 rounded ${deadlineBadge(
+                                className={`text-xs font-semibold px-2 py-0.5 rounded whitespace-nowrap ${deadlineBadge(
                                     p.deadline
                                 )}`}
                             >
