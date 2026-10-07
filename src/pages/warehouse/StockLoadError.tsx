@@ -3,7 +3,15 @@ import { forceRelogin } from "../../api/sessionGuard";
 import { isAuthFailure, type LoadFailure } from "../../lib/loadError";
 
 // Состояние ошибки загрузки остатков вместо вечного спиннера.
-export function StockLoadError({ failure, onRetry }: { failure: LoadFailure; onRetry: () => void }) {
+export function StockLoadError({
+  failure,
+  onRetry,
+  title = "Не удалось загрузить остатки",
+}: {
+  failure: LoadFailure;
+  onRetry: () => void;
+  title?: string;
+}) {
   const authProblem = isAuthFailure(failure);
   return (
     <div role="alert" className="flex flex-col items-center gap-3 px-4 py-12 text-center">
@@ -12,7 +20,7 @@ export function StockLoadError({ failure, onRetry }: { failure: LoadFailure; onR
         <p className="text-sm font-medium text-foreground">Сессия изменилась. Войдите заново.</p>
       ) : (
         <>
-          <p className="text-sm font-medium text-foreground">Не удалось загрузить остатки</p>
+          <p className="text-sm font-medium text-foreground">{title}</p>
           <p className="text-xs text-muted-foreground">{failure.message}</p>
         </>
       )}

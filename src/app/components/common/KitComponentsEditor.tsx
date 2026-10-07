@@ -15,23 +15,29 @@ export function KitComponentsEditor({
   excludeProductId,
   disabled,
   title = "Состав комплекта",
+  products: providedProducts,
 }: {
   value: KitComponentValue[];
   onChange: (next: KitComponentValue[]) => void;
   excludeProductId?: number;
   disabled?: boolean;
   title?: string;
+  /** Каталог уже загружен снаружи (вкладка «Комплекты») — тогда fetchProducts() не вызывается */
+  products?: ProductInfo[];
 }) {
-  const [products, setProducts] = useState<ProductInfo[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [fetchedProducts, setFetchedProducts] = useState<ProductInfo[]>([]);
+  const [fetching, setFetching] = useState(providedProducts === undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const products = providedProducts ?? fetchedProducts;
+  const loading = providedProducts === undefined && fetching;
 
-  // Каталог грузим один раз при монтировании
+  // Каталог грузим один раз при монтировании (если не передан снаружи)
   useEffect(() => {
+    if (providedProducts !== undefined) return;
     let cancelled = false;
     fetchProducts()
       .then((list) => {
-        if (!cancelled) setProducts(Array.isArray(list) ? list : []);
+        if (!cancelled) setFetchedProducts(Array.isArray(list) ? list : []);
       })
       .catch((err) => {
         if (!cancelled) {
@@ -39,12 +45,12 @@ export function KitComponentsEditor({
         }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setFetching(false);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [providedProducts]);
 
   const options = useMemo(
     () =>
@@ -64,7 +70,7 @@ export function KitComponentsEditor({
 
   const handleSelect = (ids: string[]) => {
     onChange(
-      ids.map((id) => {
+      Array.from(new Set(ids)).map((id) => {
         const existing = value.find((item) => String(item.productId) === id);
         return { productId: Number(id), quantity: existing?.quantity ?? 1 };
       }),
