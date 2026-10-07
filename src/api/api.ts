@@ -75,7 +75,9 @@ export interface ProjectResponse {
   id: number;
   name?: string;
   client?: { id: number; client_name: string };
-  pm?: { id: number; name: string };
+  // Backend отдаёт у менеджера только name — id приходит отдельным pm_id.
+  pm?: { name: string };
+  pm_id?: number | null;
   status?: { id: number; status_name: string };
   invoice?: { amount: number };
   planned_margin?: number;

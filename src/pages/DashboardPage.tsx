@@ -1227,7 +1227,7 @@ const handleSave = async () => {
                                                   </>
                                               )
                                           ) : (role === "commercial_director" ||
-                                                (role === "pm" && currentUserId != null && p.pm?.id === currentUserId)) && (
+                                                (role === "pm" && currentUserId != null && p.pm_id != null && p.pm_id === currentUserId)) && (
                                               <>
                                                   <div className="h-px bg-muted"/>
                                                   <button
