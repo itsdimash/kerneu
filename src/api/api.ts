@@ -1272,6 +1272,38 @@ export async function startProjectEditing(projectId: number): Promise<WorkflowRe
   return data;
 }
 
+// Ошибка workflow-вызова с HTTP-статусом — чтобы вызывающий мог отличить,
+// например, 409 («Комдир уже принял решение») от остальных отказов.
+export class WorkflowError extends Error {
+  status?: number;
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "WorkflowError";
+    this.status = status;
+  }
+}
+
+// «Отменить отправку»: ПМ забирает проект у Комдира, пока тот не принял
+// решение. Только ПМ проекта; 409 — Комдир уже отреагировал. Backend
+// возвращает проект в «В редактировании» и снова делает импорт черновиком.
+export async function cancelProjectSubmission(projectId: number): Promise<ProjectResponse> {
+  try {
+    const { data } = await api.post<ProjectResponse>(
+      `/projects/${projectId}/cancel-submission`
+    );
+    return data;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const detail = error.response?.data?.detail;
+      throw new WorkflowError(
+        typeof detail === "string" && detail.trim() ? detail : "Не удалось отменить отправку",
+        error.response?.status,
+      );
+    }
+    throw error;
+  }
+}
+
 export async function approveProjectDirector(projectId: number): Promise<WorkflowResponse> {
   const { data } = await api.post<WorkflowResponse>(
     `/projects/${projectId}/approve`
@@ -1637,8 +1669,21 @@ export interface SupplierInfo {
   supplier_name: string;
 }
 
+// Правка позиции Комдиром — backend отдаёт список в director_changes;
+// пустой список или отсутствие поля (старый backend) = правок нет.
+export interface DirectorChange {
+  field: "name" | "quantity" | "price" | "supplier" | "cost_price";
+  from_value: string | number | null;
+  to_value: string | number | null;
+  changed_at?: string | null;
+  changed_by_name?: string | null;
+}
+
 export interface ProjectItemResponse extends ProjectItemKitFields {
   id: number;
+  // Название, заданное Комдиром в таблице; null — показываем product.name.
+  display_name?: string | null;
+  director_changes?: DirectorChange[] | null;
   supply_source?: SupplySource;
   // Сколько реально нужно закупить (required минус покрытое складом);
   // для supplier_direct backend пересчитывает его при смене источника.
@@ -1739,43 +1784,12 @@ export async function updateProjectItemCostPrice(
   }
 }
 
-export interface UpdateProjectItemProductPayload {
-  product_id: number;
-}
-
-// "Исправить товар" — привязка позиции к другому товару каталога независимо
-// от статуса проекта (Variant C: ошибка сопоставления, найденная уже после
-// подтверждения ML-импорта). Backend отклоняет запрос (409/400), если у
-// позиции уже есть приход или строка отгрузки — тогда detail из ответа и
-// показывается пользователю как причина отказа.
-export async function updateProjectItemProduct(
-  projectId: number | string,
-  itemId: number,
-  payload: UpdateProjectItemProductPayload,
-): Promise<ProjectItemResponse> {
-  try {
-    const { data } = await api.patch<ProjectItemResponse>(
-      `/project-items/${projectId}/${itemId}/product`,
-      payload,
-    );
-    return data;
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      const detail = error.response?.data?.detail;
-      if (typeof detail === "string" && detail.trim()) {
-        throw new Error(detail);
-      }
-    }
-    throw error;
-  }
-}
-
 export interface UpdateProjectItemSourcePayload {
   supply_source: SupplySource;
 }
 
 // PM помечает позицию как "Закупка" (stock) или "Со склада поставщика"
-// (supplier_direct). Как и updateProjectItemProduct — точечный PATCH позиции, в ответе актуальный
+// (supplier_direct). Точечный PATCH позиции, в ответе актуальный
 // ProjectItemResponse.
 export async function updateProjectItemSource(
   projectId: number | string,

@@ -8,7 +8,7 @@ import { Tooltip as AppTooltip } from "../app/components/common/Tooltip";
 import { fmt } from "../lib/format";
 import { INVOICES_INIT } from "../data/invoices";
 import { STOCK_INIT } from "../data/stock";
-import { AlertTriangle, Calculator, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText, ChevronDown, Plus, Pencil, Search, Trash2, PackageCheck } from "lucide-react";
+import { AlertTriangle, Calculator, CheckCircle2, Loader2, Send, Truck, Check, XCircle, Download, FileText, ChevronDown, Plus, Pencil, Search, Trash2, PackageCheck, RotateCcw } from "lucide-react";
 import {
   fetchProjectDetails,
   fetchProjectItems,
@@ -26,6 +26,8 @@ import {
   saveMlImportKitComponents,
   fetchProductsAvailability,
   startProjectEditing,
+  cancelProjectSubmission,
+  WorkflowError,
   sendProjectToDirector,
   reserveProjectStock,
   releaseProjectStock,
@@ -37,7 +39,6 @@ import {
   rejectProjectClient,
   downloadProjectExcel,
   downloadKpDocument,
-  updateProjectItemProduct,
 } from "../api/api";
 
 import type {
@@ -57,12 +58,14 @@ import type {
 import { MultiSelectCombobox } from "../app/components/ui/multi-select";
 import { ProductSearchCombobox } from "../app/components/ui/product-search-combobox";
 import { Checkbox } from "../app/components/ui/checkbox";
-import { Popover, PopoverContent, PopoverTrigger } from "../app/components/ui/popover";
+import { Popover, PopoverTrigger } from "../app/components/ui/popover";
 import { StockStatusBadge } from "../app/components/common/StockStatusBadge";
 import { KitGroupHeaderRow } from "../app/components/common/KitGroupHeaderRow";
 import { ProjectRevertControl } from "../app/components/common/ProjectRevertControl";
-import { FixProductButton } from "../app/components/common/FixProductButton";
+import { DirectorChangeMarker } from "../app/components/common/DirectorChangeMarker";
+import { ResizablePopoverContent } from "../app/components/ui/resizable-popover-content";
 import { ConfirmDialog } from "../app/components/modals/ConfirmDialog";
+import { getMe } from "../api/user";
 import { SupplySourceBadge } from "../app/components/common/SupplySourceControl";
 import { ML_STATUS_STYLES, NEW_PRODUCT_ML_STATUS, UNKNOWN_ML_STATUS_STYLE, normalizeMlStatus } from "../lib/stockStatus";
 import { groupEntriesByKit } from "../lib/kitGroups";
@@ -198,6 +201,27 @@ const getMlRowState = (
   return { needsProduct, reasons, isReady: reasons.length === 0 };
 };
 
+// Подсветка совпадения с поисковой строкой в названии товара (query —
+// уже trim + lowercase).
+const highlightMatch = (text: string, query: string): React.ReactNode => {
+  if (!query) return text;
+  const index = text.toLowerCase().indexOf(query);
+  if (index < 0) return text;
+  return (
+    <>
+      {text.slice(0, index)}
+      <mark className="rounded-sm bg-yellow-200/70 dark:bg-yellow-400/30 text-inherit">
+        {text.slice(index, index + query.length)}
+      </mark>
+      {text.slice(index + query.length)}
+    </>
+  );
+};
+
+// Название строки: заданное Комдиром (display_name) либо название товара.
+const itemName = (item: ProjectItemResponse): string =>
+  item.display_name || item.product?.name || "—";
+
 const namesLooselyMatch = (catalogName: string, label: string): boolean => {
   const left = catalogName.trim().toLowerCase();
   const right = label.trim().toLowerCase();
@@ -312,6 +336,21 @@ export function ProjectPagePM({
   projectId: number;
 })  {
   const [sending, setSending] = useState(false);
+  // «Отменить отправку»: диалог, запрос и id текущего пользователя (для
+  // проверки, что отменяет именно ПМ проекта — как в DashboardPage).
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+  // Счётчик принудительного перерезолва mlImport (см. эффект резолва).
+  const [mlImportReloadKey, setMlImportReloadKey] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    getMe()
+      .then((me) => { if (!cancelled && typeof me?.id === "number") setCurrentUserId(me.id); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // Досрочная бронь (до отправки Комдиру). Источник истины — поля проекта
   // (pre_reserved / reserved_quantity / required_quantity); локальные
@@ -589,7 +628,10 @@ export function ProjectPagePM({
       })
       .finally(() => { if (!cancelled) setMlImportLoading(false); });
     return () => { cancelled = true; };
-  }, [resolvedProjectId, hasValidProjectId]);
+    // mlImportReloadKey — ручной перерезолв (например, после «Отменить
+    // отправку» импорт снова стал черновиком, а lookup на backend находит
+    // только черновик).
+  }, [resolvedProjectId, hasValidProjectId, mlImportReloadKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -791,7 +833,9 @@ export function ProjectPagePM({
   const isApproved = isKpApproved;
 
   useEffect(() => {
-    if (!hasValidProjectId || !isApproved) {
+    // На согласовании у Комдира импорт уже подтверждён (mlImport не
+    // резолвится), а позиции проекта существуют — показываем их read-only.
+    if (!hasValidProjectId || !(isApproved || isPendingDirector)) {
       setLiveItems([]);
       return;
     }
@@ -820,9 +864,13 @@ export function ProjectPagePM({
     // liveItems никогда не подгружались, хотя проект уже одобрен и
     // позиции реально есть — ПМ видел пустую таблицу вместо них.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedProjectId, hasValidProjectId, isApproved, mlImport?.id, currentStatus]);
+  }, [resolvedProjectId, hasValidProjectId, isApproved, isPendingDirector, mlImport?.id, currentStatus]);
 
   const sent = isPendingDirector;
+  // Отменять отправку может только ПМ проекта (backend: pm_id == null
+  // разрешает любому ПМ).
+  const isOwnPm =
+    project != null && (project.pm_id == null || (currentUserId != null && project.pm_id === currentUserId));
 
   const preReserved = project?.pre_reserved ?? preReservedLocal;
   // Локальные итоги (ответ reserve/release-stock или правки строки) свежее
@@ -1332,6 +1380,8 @@ export function ProjectPagePM({
   const ensureMlImport = async (): Promise<MlImportDetailResponse | null> => {
     if (mlImport) return mlImport;
     if (!hasValidProjectId) return null;
+    // Пока проект у Комдира, черновик заводить нельзя (backend ответит 409).
+    if (sent) return null;
 
     try {
       setCreatingEmptyImport(true);
@@ -1362,6 +1412,7 @@ export function ProjectPagePM({
   // Единая точка входа для кнопки «Добавить позицию» — и под таблицей, и в
   // пустом состоянии. Если импорта ещё нет, он создаётся здесь же.
   const handleStartAddingRow = async () => {
+    if (sent) return;
     const target = mlImport ?? (await ensureMlImport());
     if (!target || target.status !== "draft") return;
 
@@ -1762,6 +1813,34 @@ export function ProjectPagePM({
       alert("Ошибка при отправке Комдиру.");
     } finally {
       setSending(false);
+    }
+  };
+
+  // «Отменить отправку»: проект возвращается в «В редактировании», а его
+  // импорт снова становится черновиком — поэтому после перечитывания
+  // проекта заново резолвим mlImport (эффект резолва зависит от
+  // mlImportReloadKey) и сбрасываем позиции проекта.
+  const handleCancelSubmission = async () => {
+    if (!project) return;
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      await cancelProjectSubmission(project.id);
+      setCancelDialogOpen(false);
+      await refreshProject();
+      setLiveItems([]);
+      setMlImportReloadKey((key) => key + 1);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось отменить отправку";
+      setCancelDialogOpen(false);
+      toast.error(message);
+      // 409: Комдир уже принял решение — страница показывает устаревший статус.
+      if (error instanceof WorkflowError && error.status === 409) {
+        await refreshProject().catch(() => {});
+        setMlImportReloadKey((key) => key + 1);
+      }
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -2239,7 +2318,33 @@ export function ProjectPagePM({
                     />
                   )}
 
-                  {!isExpress && (
+                  {!isExpress && sent && isOwnPm && (
+                    <button
+                      type="button"
+                      onClick={() => { setCancelError(null); setCancelDialogOpen(true); }}
+                      disabled={cancelling}
+                      className="flex items-center gap-2 px-5 py-2.5 border border-border bg-card text-sm font-semibold text-foreground rounded-lg transition-[color,background-color,border-color,transform] duration-150 ease-out whitespace-nowrap enabled:hover:bg-red-50 enabled:hover:text-red-700 enabled:hover:border-red-200 dark:enabled:hover:bg-red-400/15 dark:enabled:hover:text-red-300 enabled:active:scale-[0.97] disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {cancelling ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                      {cancelling ? "Отмена…" : "Отменить отправку"}
+                    </button>
+                  )}
+
+                  {cancelDialogOpen && (
+                    <ConfirmDialog
+                      title="Отменить отправку?"
+                      description="Проект вернётся в редактирование, уведомление Комдиру будет удалено."
+                      confirmLabel="Отменить отправку"
+                      cancelLabel="Назад"
+                      tone="danger"
+                      loading={cancelling}
+                      error={cancelError}
+                      onConfirm={handleCancelSubmission}
+                      onCancel={() => { if (!cancelling) setCancelDialogOpen(false); }}
+                    />
+                  )}
+
+                  {!isExpress && !(sent && isOwnPm) && (
                   <AppTooltip text={
                     !isMlImportConfirmed ? (isRejected ? "Сначала подтвердите изменённый импорт товаров" : "Сначала подтвердите импорт товаров") :
                     ""
@@ -2293,7 +2398,7 @@ export function ProjectPagePM({
                 <Loader2 size={26} className="animate-spin text-primary mb-3" />
                 <p className="text-sm text-muted-foreground">Загружаем результаты ML…</p>
               </div>
-            ) : isApproved ? (() => {
+            ) : (isApproved || sent) ? (() => {
                   // Себестоимость/поставщик/маржа больше не показываются на
                   // ProjectPage ни одной роли — заполняются и видны только
                   // на ProcurementPage (см. перенос cost_price/supplier).
@@ -2306,7 +2411,6 @@ export function ProjectPagePM({
                     const qty = Number(item.required_quantity ?? 0);
                     const price = Number(item.sale_price ?? 0);
                     const total = item.total_sum != null ? Number(item.total_sum) : qty * price;
-                    const isEditedByDirector = Boolean((item as { edited_by_director?: boolean }).edited_by_director);
                     const stockStatusName = item.status?.status_name ?? "—";
                     // Компонент комплекта: визуально с отступом, с подписью
                     // количества "в комплекте" под наименованием — те же
@@ -2320,28 +2424,9 @@ export function ProjectPagePM({
                           <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
                           <td className={`px-4 py-3 text-sm text-foreground ${isKitComponent ? "pl-8 border-l-2 border-border/60" : ""}`}>
                             <div className="flex items-center gap-1.5">
-                              <span>{item.product?.name ?? "—"}</span>
+                              <span>{itemName(item)}</span>
                               <SupplySourceBadge source={item.supply_source} />
-                              {!isKitComponent && (
-                                <FixProductButton
-                                  projectId={resolvedProjectId}
-                                  itemId={item.id}
-                                  currentProductId={item.product?.id ?? null}
-                                  currentProductName={item.product?.name ?? ""}
-                                  currentUnit={item.product?.unit ?? null}
-                                  onUpdated={(updated) => {
-                                    setLiveItems((current) =>
-                                      current.map((existing) => existing.id === updated.id ? updated : existing),
-                                    );
-                                    // Backend пересчитал покрытие и статус позиции (и,
-                                    // возможно, соседних) — перечитываем позиции и проект.
-                                    fetchProjectItems(resolvedProjectId)
-                                      .then(setLiveItems)
-                                      .catch(() => {});
-                                    refreshProject().catch(() => {});
-                                  }}
-                                />
-                              )}
+                              <DirectorChangeMarker changes={item.director_changes} />
                             </div>
                             {isKitComponent && quantityPerKit > 0 && (
                               <p className="mt-0.5 text-[11px] text-muted-foreground">
@@ -2360,11 +2445,6 @@ export function ProjectPagePM({
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1.5">
                               <ItemStatusBadge statusName={stockStatusName} color={item.status?.color} />
-                              {isEditedByDirector && (
-                                <span title="Изменено Комдиром">
-                                  <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
-                                </span>
-                              )}
                             </div>
                           </td>
                         </tr>
@@ -2374,7 +2454,9 @@ export function ProjectPagePM({
                   return (
                   <div className="bg-card rounded-lg border border-border overflow-x-auto">
                     <div className="px-4 py-2.5 text-xs text-muted-foreground border-b border-border bg-background/60">
-                      Финальные значения по проекту, с учётом правок Комдира (если он их вносил).
+                      {sent
+                        ? "Проект отправлен Комдиру на согласование — позиции доступны только для просмотра."
+                        : "Финальные значения по проекту, с учётом правок Комдира (если он их вносил)."}
                     </div>
                     <table className={`w-full border-collapse ${isWarehouseRequest ? "min-w-[600px]" : "min-w-[950px]"}`}>
                       <thead>
@@ -2442,6 +2524,14 @@ export function ProjectPagePM({
                                     itemsTotalSum={itemsTotalSum}
                                     canEdit={false}
                                     onPricesSaved={() => {}}
+                                    changeMarker={
+                                      <DirectorChangeMarker
+                                        components={row.entries.map((entry) => ({
+                                          name: itemName(entry.item),
+                                          changes: entry.item.director_changes ?? [],
+                                        }))}
+                                      />
+                                    }
                                 />
                                 {expanded && row.entries.map((entry) => renderLiveItemRow(entry.item, entry.index))}
                               </React.Fragment>
@@ -2590,7 +2680,7 @@ export function ProjectPagePM({
                                     )}
                                   </td>
                                 )}
-                                <td className="px-4 py-3">
+                                <td className="min-w-[260px] px-4 py-3">
                                   {canPickProduct ? (() => {
                                       const isPickerOpen = openVariantPickerId === item.id;
                                       const query = productSearch.trim().toLowerCase();
@@ -2668,6 +2758,42 @@ export function ProjectPagePM({
                                         kitComponentsByItemId[item.id]?.length ??
                                         0;
 
+                                      // Строка списка товаров: чекбокс, название (до 3 строк,
+                                      // полное — в title), справа тег «Комплект». Остаток
+                                      // (шт) не показываем: /products/ его не отдаёт.
+                                      const renderProductRow = (product: CatalogProduct, keyPrefix: string) => {
+                                        const isChecked = selectedProductIdsInDropdown.includes(String(product.id));
+                                        return (
+                                          <div
+                                              key={`${keyPrefix}-${product.id}`}
+                                              role="button"
+                                              tabIndex={0}
+                                              onClick={() => toggleProductIdInDropdown(product.id)}
+                                              onKeyDown={(event) => {
+                                                if (event.key === "Enter" || event.key === " ") {
+                                                  event.preventDefault();
+                                                  toggleProductIdInDropdown(product.id);
+                                                }
+                                              }}
+                                              className={`w-full flex items-start gap-2 text-left px-3 py-2.5 text-sm hover:bg-background transition-colors cursor-pointer ${
+                                                isChecked
+                                                  ? "bg-blue-50 dark:bg-blue-400/15 text-primary font-medium"
+                                                  : "text-foreground"
+                                              }`}
+                                          >
+                                            <Checkbox checked={isChecked} className="pointer-events-none mt-0.5 shrink-0" />
+                                            <span title={product.name} className="min-w-0 flex-1 break-words line-clamp-3">
+                                              {highlightMatch(product.name, query)}
+                                              {product.is_kit && (
+                                                <span className="ml-2 inline-block rounded-md bg-blue-50 dark:bg-blue-400/15 px-1.5 py-0.5 align-middle text-[10px] font-semibold uppercase tracking-wide text-primary">
+                                                  Комплект
+                                                </span>
+                                              )}
+                                            </span>
+                                          </div>
+                                        );
+                                      };
+
                                       return (
                                         <div className="relative">
                                           <Popover
@@ -2685,7 +2811,10 @@ export function ProjectPagePM({
                                                     item.selected_product_id != null ? "border-border" : "border-orange-300 dark:border-orange-400/30"
                                                   }`}
                                               >
-                                                <span className={`min-w-0 flex-1 whitespace-normal break-words ${selectedProductName ? "text-foreground" : "text-muted-foreground"}`}>
+                                                <span
+                                                    title={selectedProductName ?? undefined}
+                                                    className={`min-w-0 flex-1 break-words line-clamp-2 ${selectedProductName ? "text-foreground" : "text-muted-foreground"}`}
+                                                >
                                                   {selectedProductName ??
                                                     (productCatalogLoading
                                                       ? "Загрузка каталога…"
@@ -2700,12 +2829,13 @@ export function ProjectPagePM({
                                               </button>
                                             </PopoverTrigger>
 
-                                            <PopoverContent
+                                            <ResizablePopoverContent
                                                 align="start"
+                                                avoidCollisions
                                                 collisionPadding={8}
-                                                className="w-[416px] max-h-[min(28rem,var(--radix-popover-content-available-height))] overflow-y-auto bg-card border border-border rounded-lg shadow-lg p-0 py-1"
+                                                className="bg-card border border-border rounded-lg shadow-lg p-0"
                                             >
-                                              <div className="sticky top-0 bg-card px-2 pb-1.5 pt-1">
+                                              <div className="shrink-0 bg-card px-2 pb-1.5 pt-2">
                                                 <div className="relative">
                                                   <Search
                                                       size={14}
@@ -2722,89 +2852,33 @@ export function ProjectPagePM({
                                                 </div>
                                               </div>
 
-                                              {shownSuggested.length > 0 && (
-                                                <>
-                                                  <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                                    Похожие по данным склада
-                                                  </p>
-                                                  {shownSuggested.map((product) => {
-                                                    const isChecked = selectedProductIdsInDropdown.includes(String(product.id));
-                                                    return (
-                                                      <div
-                                                          key={`suggested-${product.id}`}
-                                                          role="button"
-                                                          tabIndex={0}
-                                                          onClick={() => toggleProductIdInDropdown(product.id)}
-                                                          onKeyDown={(event) => {
-                                                            if (event.key === "Enter" || event.key === " ") {
-                                                              event.preventDefault();
-                                                              toggleProductIdInDropdown(product.id);
-                                                            }
-                                                          }}
-                                                          className={`w-full flex items-center gap-1.5 text-left px-3 py-2.5 text-sm hover:bg-background transition-colors cursor-pointer ${
-                                                            isChecked
-                                                              ? "bg-blue-50 dark:bg-blue-400/15 text-primary font-medium"
-                                                              : "text-foreground"
-                                                          }`}
-                                                      >
-                                                        <Checkbox checked={isChecked} className="pointer-events-none shrink-0" />
-                                                        <span className="truncate">{product.name}</span>
-                                                        {product.is_kit && (
-                                                          <span className="shrink-0 rounded-md bg-blue-50 dark:bg-blue-400/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-                                                            Комплект
-                                                          </span>
-                                                        )}
-                                                      </div>
-                                                    );
-                                                  })}
-                                                </>
-                                              )}
+                                              <div className="min-h-0 flex-1 overflow-y-auto py-1">
+                                                {shownSuggested.length > 0 && (
+                                                  <>
+                                                    <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                                      Похожие по данным склада
+                                                    </p>
+                                                    {shownSuggested.map((product) => renderProductRow(product, "suggested"))}
+                                                  </>
+                                                )}
 
-                                              <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                                {query ? "Найдено в каталоге" : "Весь каталог"}
-                                              </p>
-                                              {shownRest.length === 0 ? (
-                                                <p className="px-3 py-2 text-xs text-muted-foreground">
-                                                  {productCatalogLoading
-                                                    ? "Загрузка каталога…"
-                                                    : query
-                                                    ? "Ничего не найдено — уточните запрос"
-                                                    : "Каталог пуст"}
+                                                <p className="px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                                  {query ? "Найдено в каталоге" : "Весь каталог"}
                                                 </p>
-                                              ) : (
-                                                shownRest.map((product) => {
-                                                  const isChecked = selectedProductIdsInDropdown.includes(String(product.id));
-                                                  return (
-                                                    <div
-                                                        key={`catalog-${product.id}`}
-                                                        role="button"
-                                                        tabIndex={0}
-                                                        onClick={() => toggleProductIdInDropdown(product.id)}
-                                                        onKeyDown={(event) => {
-                                                          if (event.key === "Enter" || event.key === " ") {
-                                                            event.preventDefault();
-                                                            toggleProductIdInDropdown(product.id);
-                                                          }
-                                                        }}
-                                                        className={`w-full flex items-center gap-1.5 text-left px-3 py-2.5 text-sm hover:bg-background transition-colors cursor-pointer ${
-                                                          isChecked
-                                                            ? "bg-blue-50 dark:bg-blue-400/15 text-primary font-medium"
-                                                            : "text-foreground"
-                                                        }`}
-                                                    >
-                                                      <Checkbox checked={isChecked} className="pointer-events-none shrink-0" />
-                                                      <span className="truncate">{product.name}</span>
-                                                      {product.is_kit && (
-                                                        <span className="shrink-0 rounded-md bg-blue-50 dark:bg-blue-400/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-                                                          Комплект
-                                                        </span>
-                                                      )}
-                                                    </div>
-                                                  );
-                                                })
-                                              )}
+                                                {shownRest.length === 0 ? (
+                                                  <p className="px-3 py-2 text-xs text-muted-foreground">
+                                                    {productCatalogLoading
+                                                      ? "Загрузка каталога…"
+                                                      : query
+                                                      ? "Ничего не найдено — уточните запрос"
+                                                      : "Каталог пуст"}
+                                                  </p>
+                                                ) : (
+                                                  shownRest.map((product) => renderProductRow(product, "catalog"))
+                                                )}
+                                              </div>
 
-                                              <div className="sticky bottom-0 border-t border-border bg-card mt-1 pt-1">
+                                              <div className="shrink-0 border-t border-border bg-card px-1 pb-1 pt-1">
                                                 <button
                                                     type="button"
                                                     onClick={() => {
@@ -2847,7 +2921,7 @@ export function ProjectPagePM({
                                                     : "Применить"}
                                                 </button>
                                               </div>
-                                            </PopoverContent>
+                                            </ResizablePopoverContent>
                                           </Popover>
 
                                           {selectedCatalogProduct?.is_kit && (
@@ -3691,7 +3765,7 @@ const [itemSaveError, setItemSaveError] =
 
     return {
       id: item.id,
-      name: item.product?.name ?? "—",
+      name: itemName(item),
       code: item.matched_external_id ?? item.product?.external_id ?? null,
       quantity: Number(item.required_quantity ?? 0),
       estimatedPrice: parsedPrice != null && Number.isFinite(parsedPrice)
@@ -3836,15 +3910,16 @@ const [itemSaveError, setItemSaveError] =
 
   const PROJECT_ITEMS_API_BASE = "/api/v1/project-items";
 
-  // Единственное поле, которое Комдир правит на ProjectPage, — sale_price.
-  // cost_price/supplier теперь заполняются в Закупках (см. перенос); сигнатура
-  // сужена намеренно, чтобы сюда нельзя было случайно передать другое поле
-  // и затереть значение, проставленное Закупкой.
+  // Комдир правит на ProjectPage только sale_price, display_name и
+  // required_quantity (пока проект на согласовании). cost_price/supplier
+  // заполняются в Закупках; сигнатура сужена намеренно, чтобы сюда нельзя
+  // было случайно передать другое поле и затереть значение, проставленное
+  // Закупкой. Возвращает true, если backend принял правку.
   const handleItemFieldUpdate = async (
     itemId: number,
-    payload: { sale_price: number },
-  ) => {
-    if (!project) return;
+    payload: { sale_price?: number; display_name?: string; required_quantity?: number },
+  ): Promise<boolean> => {
+    if (!project) return false;
 
     setUpdatingItemId(itemId);
     setItemSaveError(null);
@@ -3872,10 +3947,19 @@ const [itemSaveError, setItemSaveError] =
           existing.id === itemId ? { ...existing, ...updatedItem } : existing,
         ),
       );
+
+      // Смена количества может сдвинуть покрытие склада у соседних строк —
+      // перечитываем позиции и проект целиком, а не только эту строку.
+      if (payload.required_quantity !== undefined) {
+        await refreshProjectItems();
+        fetchProjectDetails(project.id).then(setProject).catch(() => {});
+      }
+      return true;
     } catch (error) {
       setItemSaveError(
         error instanceof Error ? error.message : "Не удалось сохранить изменения",
       );
+      return false;
     } finally {
       setUpdatingItemId(null);
     }
@@ -4023,7 +4107,7 @@ const [itemSaveError, setItemSaveError] =
           {(() => {
             // Себестоимость/поставщик/маржа больше не показываются и не
             // редактируются на ProjectPage — заполняются на ProcurementPage.
-            // Комдир правит только sale_price (см. handleItemFieldUpdate).
+            // Комдир правит только название, количество и sale_price (см. handleItemFieldUpdate).
             const directorHeaders = isWarehouseRequest
               ? ["№", "Наименование", "Кол-во", "Ед.", "Статус"]
               : ["№", "Наименование", "Кол-во", "Ед.", "Цена", "Сумма", "Статус"];
@@ -4033,7 +4117,6 @@ const [itemSaveError, setItemSaveError] =
               const qty = Number(item.required_quantity ?? 0);
               const price = Number(item.sale_price ?? 0);
               const total = item.total_sum != null ? Number(item.total_sum) : qty * price;
-              const isEditedByDirector = Boolean((item as { edited_by_director?: boolean }).edited_by_director);
               const isSaving = updatingItemId === item.id;
               const disabled = !canEditItems || isSaving;
               const stockStatusName = item.status?.status_name ?? "—";
@@ -4048,24 +4131,32 @@ const [itemSaveError, setItemSaveError] =
                     <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{index + 1}</td>
                     <td className={`px-4 py-3 text-sm text-foreground ${isKitComponent ? "pl-8 border-l-2 border-border/60" : ""}`}>
                       <div className="flex items-center gap-1.5">
-                        <span>{item.product?.name ?? "—"}</span>
-                        <SupplySourceBadge source={item.supply_source} />
-                        {!isKitComponent && (
-                          <FixProductButton
-                            projectId={resolvedProjectId}
-                            itemId={item.id}
-                            currentProductId={item.product?.id ?? null}
-                            currentProductName={item.product?.name ?? ""}
-                            currentUnit={item.product?.unit ?? null}
-                            onUpdated={(updated) => {
-                              setProjectItems((current) =>
-                                current.map((existing) => existing.id === updated.id ? updated : existing),
-                              );
-                              void refreshProjectItems();
-                              fetchProjectDetails(resolvedProjectId).then(setProject).catch(() => {});
-                            }}
+                        {isKitComponent ? (
+                          <span>{itemName(item)}</span>
+                        ) : (
+                          <input
+                              key={`${item.id}-name-${itemName(item)}`}
+                              type="text"
+                              disabled={disabled}
+                              defaultValue={itemName(item)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") event.currentTarget.blur();
+                              }}
+                              onBlur={async (event) => {
+                                const input = event.currentTarget;
+                                const newName = input.value.trim();
+                                if (!newName || newName === itemName(item)) {
+                                  input.value = itemName(item);
+                                  return;
+                                }
+                                const saved = await handleItemFieldUpdate(item.id, { display_name: newName });
+                                if (!saved) input.value = itemName(item);
+                              }}
+                              className="w-64 px-2 py-1.5 text-sm border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
                           />
                         )}
+                        <SupplySourceBadge source={item.supply_source} />
+                        <DirectorChangeMarker changes={item.director_changes} />
                       </div>
                       {isKitComponent && quantityPerKit > 0 && (
                         <p className="mt-0.5 text-[11px] text-muted-foreground">
@@ -4073,7 +4164,36 @@ const [itemSaveError, setItemSaveError] =
                         </p>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-sm font-mono">{qty.toLocaleString("ru-RU")}</td>
+                    <td className="px-4 py-3 text-sm font-mono">
+                      {isKitComponent ? (
+                        qty.toLocaleString("ru-RU")
+                      ) : (
+                        <input
+                            key={`${item.id}-qty-${qty}`}
+                            type="number"
+                            min={1}
+                            step="1"
+                            disabled={disabled}
+                            defaultValue={qty}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") event.currentTarget.blur();
+                            }}
+                            onBlur={async (event) => {
+                              const input = event.currentTarget;
+                              const newQty = Number(input.value);
+                              if (!Number.isInteger(newQty) || newQty < 1) {
+                                setItemSaveError("Количество должно быть целым числом больше нуля");
+                                input.value = String(qty);
+                                return;
+                              }
+                              if (newQty === qty) return;
+                              const saved = await handleItemFieldUpdate(item.id, { required_quantity: newQty });
+                              if (!saved) input.value = String(qty);
+                            }}
+                            className="w-24 px-2 py-1.5 text-sm font-mono border border-border rounded-md bg-card focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:bg-muted disabled:cursor-not-allowed"
+                        />
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">{item.product?.unit ?? "шт"}</td>
                     {!isWarehouseRequest && (
                       <>
@@ -4113,11 +4233,6 @@ const [itemSaveError, setItemSaveError] =
                       ) : (
                         <div className="flex items-center gap-1.5">
                           <ItemStatusBadge statusName={stockStatusName} color={item.status?.color} />
-                          {isEditedByDirector && (
-                            <span title="Изменено Комдиром">
-                              <Pencil size={13} className="text-muted-foreground flex-shrink-0" />
-                            </span>
-                          )}
                         </div>
                       )}
                     </td>
@@ -4193,6 +4308,14 @@ const [itemSaveError, setItemSaveError] =
                             itemsTotalSum={itemsTotalSum}
                             canEdit={canEditItems}
                             onPricesSaved={() => { void refreshProjectItems(); }}
+                            changeMarker={
+                              <DirectorChangeMarker
+                                components={row.entries.map((entry) => ({
+                                  name: itemName(entry.item),
+                                  changes: entry.item.director_changes ?? [],
+                                }))}
+                              />
+                            }
                         />
                         {expanded && row.entries.map((entry) => renderDirectorItemRow(entry.item, entry.index))}
                       </React.Fragment>
