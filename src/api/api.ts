@@ -812,9 +812,20 @@ interface PresignedDownloadRedirect {
   expires_in: number;
 }
 
+function filenameFromDisposition(disposition: unknown): string | null {
+  if (typeof disposition !== "string") return null;
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+  if (star) return decodeURIComponent(star[1].trim());
+  const plain = /filename="?([^";]+)"?/i.exec(disposition);
+  return plain ? plain[1].trim() : null;
+}
+
+// Общий загрузчик для /download-эндпоинтов. Presigned-ссылку открываем через
+// window.location.assign (после await window.open режут попап-блокеры);
+// R2 отдаёт Content-Disposition: attachment, поэтому страница не уходит.
 async function downloadOrRedirect(
   url: string,
-  onBlob: (blob: Blob, headers: Record<string, any>) => void,
+  fallback: { fileName: string; mimeType?: string },
 ): Promise<void> {
   const response = await api.get(url, { responseType: "blob" });
   const contentType = String(response.headers["content-type"] || "");
@@ -822,29 +833,38 @@ async function downloadOrRedirect(
   if (contentType.includes("application/json")) {
     const text = await (response.data as Blob).text();
     const { download_url } = JSON.parse(text) as PresignedDownloadRedirect;
-    window.open(download_url, "_blank", "noopener,noreferrer");
+    window.location.assign(download_url);
     return;
   }
 
-  onBlob(response.data as Blob, response.headers);
+  const blob = fallback.mimeType
+    ? new Blob([response.data as Blob], { type: fallback.mimeType })
+    : (response.data as Blob);
+  const fileName = filenameFromDisposition(response.headers["content-disposition"]) ?? fallback.fileName;
+
+  const objectUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(objectUrl);
+}
+
+export async function downloadDocumentById(
+  documentId: number,
+  options: { fileName?: string; mimeType?: string } = {},
+): Promise<void> {
+  await downloadOrRedirect(`/documents/${documentId}/download`, {
+    fileName: options.fileName || `document_${documentId}`,
+    mimeType: options.mimeType,
+  });
 }
 
 export async function downloadParseJobResult(jobId: string): Promise<void> {
-  await downloadOrRedirect(`/parser/jobs/${jobId}/download`, (blob, headers) => {
-    let filename = `parse_result_${jobId}.xlsx`;
-    const disposition = headers["content-disposition"];
-    if (disposition && disposition.includes("filename*=UTF-8''")) {
-      filename = decodeURIComponent(disposition.split("filename*=UTF-8''")[1]);
-    }
-
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.setAttribute("download", filename);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(url);
+  await downloadOrRedirect(`/parser/jobs/${jobId}/download`, {
+    fileName: `parse_result_${jobId}.xlsx`,
   });
 }
 
@@ -1346,19 +1366,9 @@ export async function uploadProjectDocument(
 export async function downloadProjectDocument(
   projectDocument: ProjectDocumentResponse,
 ): Promise<void> {
-  await downloadOrRedirect(`/documents/${projectDocument.id}/download`, (rawBlob) => {
-    const blob = new Blob([rawBlob], {
-      type: projectDocument.mime_type || "application/octet-stream",
-    });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-
-    link.href = url;
-    link.download = projectDocument.file_name;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(url);
+  await downloadDocumentById(projectDocument.id, {
+    fileName: projectDocument.file_name,
+    mimeType: projectDocument.mime_type || "application/octet-stream",
   });
 }
 

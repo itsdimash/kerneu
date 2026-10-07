@@ -14,6 +14,7 @@ import type { Role, ProjectState } from "../types";
 import {
   getProjectItems,
   uploadProjectDocument,
+  downloadDocumentById,
   fetchProjectDocuments,
   fetchWarehouseList,
   WarehouseInfo,
@@ -734,13 +735,14 @@ export function ProcurementPage({
     }
   };
 
-  const downloadFile = (wfState: SupplierWorkflowState) => {
-    if (wfState.downloadUrl) {
-      const fullUrl = wfState.downloadUrl.startsWith("http")
-        ? wfState.downloadUrl
-        : wfState.downloadUrl;
-
-      window.open(fullUrl, '_blank');
+  const downloadFile = async (wfState: SupplierWorkflowState) => {
+    if (wfState.docId) {
+      try {
+        await downloadDocumentById(wfState.docId, { fileName: wfState.fileName });
+      } catch (error) {
+        console.error("Download failed", error);
+        toast.error("Не удалось скачать файл");
+      }
       return;
     }
 
